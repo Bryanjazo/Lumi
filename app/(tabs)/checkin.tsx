@@ -28,6 +28,7 @@ import {
   CheckinResponse,
 } from '../../lib/anthropic';
 import { TextInput, ActivityIndicator } from 'react-native';
+import { MicButton } from '../../components/MicButton';
 
 // ── Mood / Response data ─────────────────────────────────────────────
 // Ported verbatim from lumi-checkin.jsx — hardcoded responses keep the
@@ -515,7 +516,19 @@ export default function CheckinTab() {
             {/* Text input appears when "other" is the active mood */}
             {selected === 'other' && (
               <View style={styles.otherInputCard}>
-                <Text style={styles.otherInputLabel}>tell lumi what's up</Text>
+                <View style={styles.otherInputHeader}>
+                  <Text style={styles.otherInputLabel}>
+                    tell lumi what's up
+                  </Text>
+                  <MicButton
+                    size="small"
+                    onTranscribed={(t) =>
+                      setOtherText((prev) =>
+                        prev ? `${prev.trim()} ${t}` : t,
+                      )
+                    }
+                  />
+                </View>
                 <TextInput
                   placeholder="i feel something but i don't know what to call it…"
                   placeholderTextColor={colors.text3}
@@ -711,12 +724,21 @@ export default function CheckinTab() {
             {aiResponse && (
               <SlideUp delay={150}>
                 <View style={styles.followCard}>
-                  <Text style={styles.followLabel}>
-                    talk to lumi about it
-                  </Text>
+                  <View style={styles.followHeader}>
+                    <Text style={styles.followLabel}>
+                      talk to lumi about it
+                    </Text>
+                    <MicButton
+                      size="small"
+                      onTranscribed={(t) =>
+                        setFollowUp((prev) =>
+                          prev ? `${prev.trim()} ${t}` : t,
+                        )
+                      }
+                    />
+                  </View>
                   <Text style={styles.followPrompt}>
-                    say more or ask a different angle. lumi will respond
-                    with one focused tip.
+                    say more, ask a different angle, or hold the mic to speak.
                   </Text>
                   <TextInput
                     placeholder="what else is going on? ask anything…"
@@ -939,13 +961,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 16,
   },
+  otherInputHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
   otherInputLabel: {
     fontFamily: fonts.sansSemi,
     fontSize: 10,
     letterSpacing: 1.8,
     color: colors.text3,
     textTransform: 'uppercase',
-    marginBottom: 8,
   },
   otherInput: {
     fontFamily: fonts.sans,
@@ -1223,13 +1250,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     marginBottom: 18,
   },
+  followHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
   followLabel: {
     fontFamily: fonts.sansSemi,
     fontSize: 10,
     letterSpacing: 2,
     color: colors.terra,
     textTransform: 'uppercase',
-    marginBottom: 6,
   },
   followPrompt: {
     fontFamily: fonts.sansItalic,

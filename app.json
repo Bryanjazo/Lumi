@@ -9,10 +9,15 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.lumi.app"
+      "bundleIdentifier": "com.lumi.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Lumi uses your microphone so you can speak your check-ins instead of typing.",
+        "NSSpeechRecognitionUsageDescription": "Lumi transcribes your voice to text so Luna can respond."
+      }
     },
     "android": {
       "package": "com.lumi.app",
+      "permissions": ["android.permission.RECORD_AUDIO"],
       "adaptiveIcon": {
         "backgroundColor": "#141210",
         "foregroundImage": "./assets/android-icon-foreground.png",
