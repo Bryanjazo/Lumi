@@ -21,6 +21,7 @@ import { PasswordStrength } from '../../components/auth/PasswordStrength';
 import { signUp } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
+import { Alert } from 'react-native';
 
 type Errors = Partial<{
   name: string;
@@ -61,7 +62,9 @@ export default function SignUpScreen() {
       setName_(name.trim());
       await signUp(email, pass);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Root layout reroutes to /(tabs) or /paywall once the session lands.
+      // Skip directly to the celebratory Done screen; root layout will
+      // still pick up the session change in the background.
+      router.replace('/auth/done' as never);
     } catch (err) {
       setErrors({
         submit:
@@ -73,6 +76,14 @@ export default function SignUpScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSocial = (provider: 'apple' | 'google') => {
+    Haptics.selectionAsync();
+    Alert.alert(
+      `${provider === 'apple' ? 'Apple' : 'Google'} sign-in`,
+      "We're wiring this up. For now, use email — it's just as fast and we don't ask for a card.",
+    );
   };
 
   const skipOffline = () => {
@@ -122,6 +133,27 @@ export default function SignUpScreen() {
               <View style={styles.freePill}>
                 <Text style={styles.freePillText}>✦ Free</Text>
               </View>
+            </View>
+
+            <AuthButton
+              variant="social"
+              icon="🍎"
+              onPress={() => handleSocial('apple')}
+            >
+              Continue with Apple
+            </AuthButton>
+            <AuthButton
+              variant="social"
+              icon="G"
+              onPress={() => handleSocial('google')}
+            >
+              Continue with Google
+            </AuthButton>
+
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or sign up with email</Text>
+              <View style={styles.dividerLine} />
             </View>
 
             <AuthField
@@ -285,6 +317,18 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansSemi,
     fontSize: 11,
     color: colors.terra,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginVertical: 16,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: {
+    fontFamily: fonts.sans,
+    fontSize: 11,
+    color: colors.text3,
   },
   terms: {
     fontFamily: fonts.sans,

@@ -20,6 +20,7 @@ import { AuthButton } from '../../components/auth/AuthButton';
 import { signIn } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
+import { Alert } from 'react-native';
 
 type Errors = Partial<{
   email: string;
@@ -77,6 +78,14 @@ export default function SignInScreen() {
     router.replace('/(tabs)');
   };
 
+  const handleSocial = (provider: 'apple' | 'google') => {
+    Haptics.selectionAsync();
+    Alert.alert(
+      `${provider === 'apple' ? 'Apple' : 'Google'} sign-in`,
+      'Coming soon. For now, use your email and password.',
+    );
+  };
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" />
@@ -105,6 +114,27 @@ export default function SignInScreen() {
           <View style={styles.card}>
             <View style={styles.shimmer} />
             <Text style={styles.cardTitle}>Log in</Text>
+
+            <AuthButton
+              variant="social"
+              icon="🍎"
+              onPress={() => handleSocial('apple')}
+            >
+              Continue with Apple
+            </AuthButton>
+            <AuthButton
+              variant="social"
+              icon="G"
+              onPress={() => handleSocial('google')}
+            >
+              Continue with Google
+            </AuthButton>
+
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>or log in with email</Text>
+              <View style={styles.dividerLine} />
+            </View>
 
             <AuthField
               label="Email"
@@ -227,6 +257,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: colors.text,
     marginBottom: 18,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginVertical: 16,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: {
+    fontFamily: fonts.sans,
+    fontSize: 11,
+    color: colors.text3,
   },
   forgotWrap: { alignItems: 'flex-end', marginBottom: 16, marginTop: -4 },
   forgotText: {
