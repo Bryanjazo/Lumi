@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TextInput, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Screen } from '../../components/Screen';
-import { LunaCanvas } from '../../components/LunaCanvas';
+import { LunaHeader } from '../../components/LunaHeader';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useUserStore } from '../../store/userStore';
@@ -26,7 +26,7 @@ export default function PetName() {
       <Text style={styles.sub}>What's her name?</Text>
 
       <View style={styles.canvasWrap}>
-        <LunaCanvas state="thriving" size={280} />
+        <LunaHeader state="thriving" height={160} />
       </View>
 
       <TextInput

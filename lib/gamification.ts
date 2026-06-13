@@ -4,13 +4,13 @@ export const LEVEL_THRESHOLDS = [
 ];
 
 export const TITLES = [
-  'Just Starting',
+  'First Spark',
   'Finding Footing',
-  'Building Rhythm',
+  'Quiet Climb',
   'Steady Hands',
-  'In the Flow',
-  'Real Momentum',
-  'Practiced',
+  'Soft Momentum',
+  'Building Rhythm',
+  'Focused Wanderer',
   'Tuned In',
   'Lit Up',
   'Untamed',

@@ -94,14 +94,14 @@ export const useCheckinStore = create<CheckinState>()(
 );
 
 export const moodEmoji: Record<Mood, string> = {
-  Foggy: '🌫',
-  Stuck: '⚓',
-  Low: '🌧',
+  Foggy: '😶‍🌫️',
+  Stuck: '🧱',
+  Low: '😔',
   Wired: '⚡',
-  Anxious: '🌀',
-  Focused: '◎',
-  Drained: '🪫',
-  Good: '☀',
+  Anxious: '😰',
+  Focused: '🔥',
+  Drained: '😴',
+  Good: '🌿',
 };
 
 export const moodList: Mood[] = [

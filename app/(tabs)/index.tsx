@@ -13,7 +13,6 @@ import { Screen } from '../../components/Screen';
 import { XPBar } from '../../components/XPBar';
 import { QuestCard } from '../../components/QuestCard';
 import { Label } from '../../components/Label';
-import { TrialBanner } from '../../components/TrialBanner';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useUserStore } from '../../store/userStore';
@@ -23,16 +22,18 @@ import { XP } from '../../lib/gamification';
 
 const greeting = () => {
   const h = new Date().getHours();
-  if (h < 5) return 'Late night';
-  if (h < 12) return 'Morning';
-  if (h < 17) return 'Afternoon';
-  if (h < 21) return 'Evening';
-  return 'Night';
+  const day = new Date().toLocaleDateString(undefined, { weekday: 'long' });
+  if (h < 5) return `${day} late night 🌙`;
+  if (h < 12) return `${day} morning ☁️`;
+  if (h < 17) return `${day} afternoon ☀️`;
+  if (h < 21) return `${day} evening 🌅`;
+  return `${day} night 🌙`;
 };
 
 export default function Home() {
   const name = useUserStore((s) => s.name);
   const shieldAvailable = useUserStore((s) => s.shieldAvailable);
+  const streak = useUserStore((s) => s.streak);
   const addXp = useUserStore((s) => s.addXp);
   const registerActivity = useUserStore((s) => s.registerActivity);
 
@@ -64,7 +65,7 @@ export default function Home() {
       setDump('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
-      Alert.alert("Couldn't parse that", "Try a shorter line and resend.");
+      Alert.alert("Couldn't parse that", 'Try a shorter line and resend.');
     } finally {
       setParsing(false);
     }
@@ -75,43 +76,46 @@ export default function Home() {
       <View style={styles.greeting}>
         <Text style={styles.time}>{greeting()}</Text>
         <Text style={styles.h1}>
-          Hey <Text style={styles.italics}>{name || 'friend'}</Text>, ready?
+          Hey {name || 'friend'}, <Text style={styles.italics}>ready?</Text>
         </Text>
       </View>
 
-      <TrialBanner />
       <XPBar />
-
-      {shieldAvailable && (
-        <View style={styles.shield}>
-          <Text style={styles.shieldIcon}>◈</Text>
-          <Text style={styles.shieldText}>
-            <Text style={styles.shieldStrong}>Streak shield active.</Text>{' '}
-            One free miss this week.
-          </Text>
-        </View>
-      )}
 
       <Label style={{ marginTop: 8 }}>Today's quests</Label>
       <View style={styles.questList}>
         {todayQuests.length === 0 ? (
           <Text style={styles.empty}>
-            No quests yet. Dump some thoughts below and Lumi will turn them into
-            small ones.
+            No quests yet. Dump some thoughts below and Lumi will turn them
+            into small ones.
           </Text>
         ) : (
           todayQuests.map((q) => (
-            <QuestCard key={q.id} quest={q} onToggle={() => handleToggle(q.id)} />
+            <QuestCard
+              key={q.id}
+              quest={q}
+              onToggle={() => handleToggle(q.id)}
+            />
           ))
         )}
       </View>
+
+      {shieldAvailable && streak > 0 && (
+        <View style={styles.shield}>
+          <Text style={styles.shieldIcon}>🛡️</Text>
+          <Text style={styles.shieldText}>
+            <Text style={styles.shieldStrong}>Streak shield active.</Text>{' '}
+            Miss a day and your {streak}-day streak stays safe.
+          </Text>
+        </View>
+      )}
 
       <Label style={{ marginTop: 20 }}>Brain dump</Label>
       <View style={styles.dump}>
         <TextInput
           value={dump}
           onChangeText={setDump}
-          placeholder="anything in your head…"
+          placeholder="I need to remember…"
           placeholderTextColor={colors.text3}
           style={styles.input}
           multiline
@@ -124,7 +128,7 @@ export default function Home() {
           {parsing ? (
             <ActivityIndicator size="small" color={colors.plum} />
           ) : (
-            <Text style={styles.micText}>↑</Text>
+            <Text style={styles.micText}>🎙️</Text>
           )}
         </Pressable>
       </View>
@@ -160,14 +164,15 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     padding: 11,
     paddingHorizontal: 14,
-    marginBottom: 16,
+    marginTop: 12,
   },
-  shieldIcon: { color: colors.caramel, fontSize: 14 },
+  shieldIcon: { fontSize: 16 },
   shieldText: {
     fontFamily: fonts.sans,
     color: colors.text2,
     fontSize: 13,
     flex: 1,
+    lineHeight: 18,
   },
   shieldStrong: {
     fontFamily: fonts.sansSemi,
@@ -212,8 +217,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   micText: {
-    color: colors.plum,
-    fontFamily: fonts.sansSemi,
-    fontSize: 16,
+    fontSize: 14,
   },
 });

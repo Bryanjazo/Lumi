@@ -17,7 +17,6 @@ import { fonts } from '../../constants/fonts';
 import {
   Mood,
   useCheckinStore,
-  moodEmoji,
   selectWeekMoods,
 } from '../../store/checkinStore';
 import { useUserStore } from '../../store/userStore';
@@ -72,84 +71,95 @@ export default function CheckinTab() {
     <Screen>
       <View style={styles.top}>
         <Text style={styles.h2}>
-          How's it <Text style={styles.italics}>actually</Text> going?
+          How are you feeling{'\n'}
+          <Text style={styles.italics}>right now?</Text>
         </Text>
-        <Text style={styles.sub}>Pick what's loudest. Words can come after.</Text>
+        <Text style={styles.sub}>No right answer. Just be honest.</Text>
       </View>
 
-      <Label>Mood</Label>
+      <Label>Pick what fits</Label>
       <MoodGrid selected={mood} onSelect={setMood} />
 
-      <View style={{ height: 16 }} />
-      <Label>Words, if you have them</Label>
+      <View style={{ height: 20 }} />
+      <Label>Tell us more</Label>
       <View style={styles.inputCard}>
         <Text style={styles.prompt}>
-          <Text style={styles.promptStrong}>Tell us what's going on.</Text>{' '}
-          Messy is fine.
+          <Text style={styles.promptStrong}>What's going on?</Text>{' '}
+          Messy is fine — we'll make sense of it.
         </Text>
         <TextInput
           value={text}
           onChangeText={setText}
-          placeholder="anything…"
+          placeholder="I woke up feeling off. I have 3 things to do and I can't start any of them…"
           placeholderTextColor={colors.text3}
           style={styles.input}
           multiline
         />
         <View style={styles.row}>
-          <Text style={styles.mic}>◉ voice input</Text>
+          <Text style={styles.mic}>🎙️ Speak instead</Text>
           <Pressable
             onPress={send}
             disabled={loading || !mood}
             style={[styles.send, (!mood || loading) && { opacity: 0.5 }]}
           >
-            <Text style={styles.sendText}>{loading ? 'Reading…' : 'Send'}</Text>
+            <Text style={styles.sendText}>
+              {loading ? 'Reading…' : 'Make sense of this →'}
+            </Text>
           </Pressable>
         </View>
       </View>
 
-      <AICheckin loading={loading} response={response} />
-
-      <View style={{ height: 28 }} />
-      <Label>Last 7 days</Label>
-      <View style={styles.chart}>
-        {weekMoods.map((d) => {
-          const h = d.score === 0 ? 8 : 16 + d.score * 14;
-          return (
-            <View key={d.date} style={styles.chartCol}>
-              <View
-                style={[
-                  styles.bar,
-                  {
-                    height: h,
-                    backgroundColor:
-                      d.score >= 4
-                        ? colors.moss
-                        : d.score >= 3
-                          ? colors.caramel
-                          : d.score >= 2
-                            ? colors.terra
-                            : d.score >= 1
-                              ? colors.rose
-                              : colors.border2,
-                  },
-                ]}
-              />
-              <Text style={styles.day}>
-                {new Date(d.date + 'T00:00:00').toLocaleDateString(undefined, {
-                  weekday: 'narrow',
-                })}
-              </Text>
-              {d.mood && <Text style={styles.emoji}>{moodEmoji[d.mood]}</Text>}
-            </View>
-          );
-        })}
-      </View>
-      {pattern && (
-        <View style={styles.insight}>
-          <Text style={styles.insightTag}>PATTERN</Text>
-          <Text style={styles.insightText}>{pattern}</Text>
-        </View>
+      {(loading || response) && (
+        <>
+          <View style={{ height: 20 }} />
+          <Label>What's happening</Label>
+          <AICheckin loading={loading} response={response} />
+        </>
       )}
+
+      <View style={{ height: 22 }} />
+      <Label>Your pattern this week</Label>
+      <View style={styles.patternCard}>
+        <Text style={styles.patternTitle}>Mood · last 7 days</Text>
+        <View style={styles.chart}>
+          {weekMoods.map((d, i) => {
+            const h = d.score === 0 ? 6 : 12 + d.score * 10;
+            const good = d.score >= 3;
+            const day = ['M', 'T', 'W', 'T', 'F', 'S', 'S'][
+              new Date(d.date + 'T00:00:00').getDay() === 0
+                ? 6
+                : new Date(d.date + 'T00:00:00').getDay() - 1
+            ];
+            return (
+              <View key={d.date + i} style={styles.chartCol}>
+                <View
+                  style={[
+                    styles.bar,
+                    {
+                      height: h,
+                      backgroundColor: good
+                        ? 'rgba(139,191,150,0.2)'
+                        : 'rgba(212,144,106,0.2)',
+                      borderColor: good
+                        ? 'rgba(139,191,150,0.3)'
+                        : 'rgba(212,144,106,0.3)',
+                    },
+                  ]}
+                />
+                <Text style={styles.day}>{day}</Text>
+              </View>
+            );
+          })}
+        </View>
+        {pattern && (
+          <View style={styles.insight}>
+            <Text style={styles.insightIcon}>💡</Text>
+            <Text style={styles.insightText}>
+              <Text style={styles.insightStrong}>{pattern}</Text>
+            </Text>
+          </View>
+        )}
+      </View>
     </Screen>
   );
 }
@@ -178,9 +188,9 @@ const styles = StyleSheet.create({
   top: { marginBottom: 22 },
   h2: {
     fontFamily: fonts.serif,
-    fontSize: 25,
+    fontSize: 26,
     color: colors.text,
-    lineHeight: 32,
+    lineHeight: 34,
   },
   italics: { fontFamily: fonts.serifItalic, color: colors.cream },
   sub: {
@@ -194,13 +204,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 15,
-    padding: 16,
+    paddingVertical: 15,
+    paddingHorizontal: 17,
   },
   prompt: {
     fontFamily: fonts.sans,
     color: colors.text2,
     fontSize: 13,
-    lineHeight: 20,
+    lineHeight: 21,
     marginBottom: 10,
   },
   promptStrong: { fontFamily: fonts.sansSemi, color: colors.text },
@@ -215,6 +226,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     minHeight: 70,
     marginBottom: 10,
+    lineHeight: 21,
   },
   row: {
     flexDirection: 'row',
@@ -225,45 +237,56 @@ const styles = StyleSheet.create({
   send: {
     backgroundColor: colors.plumDark,
     borderRadius: 8,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingVertical: 9,
   },
   sendText: { fontFamily: fonts.sansSemi, color: '#fff', fontSize: 13 },
-  chart: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
+  patternCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderWidth: 1,
-    borderRadius: 13,
-    paddingHorizontal: 12,
-    paddingTop: 16,
-    paddingBottom: 10,
-    minHeight: 110,
+    borderRadius: 15,
+    padding: 17,
+    paddingHorizontal: 19,
   },
-  chartCol: { alignItems: 'center', flex: 1 },
-  bar: { width: 14, borderRadius: 4, marginBottom: 6 },
-  day: { fontFamily: fonts.sans, color: colors.text3, fontSize: 11 },
-  emoji: { fontSize: 12, marginTop: 2 },
-  insight: {
-    marginTop: 14,
-    backgroundColor: colors.plumBg,
-    borderColor: colors.plumBorder,
-    borderWidth: 1,
-    borderRadius: 11,
-    padding: 12,
-  },
-  insightTag: {
+  patternTitle: {
     fontFamily: fonts.sansSemi,
-    color: colors.plum,
-    fontSize: 10,
-    letterSpacing: 1.6,
-    marginBottom: 4,
-  },
-  insightText: {
-    fontFamily: fonts.sansMedium,
     color: colors.text,
-    fontSize: 13,
+    fontSize: 14,
+    marginBottom: 14,
   },
+  chart: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    height: 60,
+    gap: 6,
+    marginBottom: 12,
+  },
+  chartCol: { flex: 1, alignItems: 'center', gap: 4 },
+  bar: {
+    width: '100%',
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  day: { fontFamily: fonts.sans, color: colors.text3, fontSize: 10 },
+  insight: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    backgroundColor: colors.caramelBg,
+    borderColor: 'rgba(212,170,106,0.15)',
+    borderWidth: 1,
+    borderRadius: 9,
+    padding: 11,
+    paddingHorizontal: 13,
+  },
+  insightIcon: { fontSize: 13, lineHeight: 19 },
+  insightText: {
+    flex: 1,
+    fontFamily: fonts.sans,
+    color: colors.text2,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  insightStrong: { fontFamily: fonts.sansSemi, color: colors.cream },
 });

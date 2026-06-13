@@ -45,7 +45,8 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.border,
     borderRadius: 13,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 9,
     paddingHorizontal: 5,
     alignItems: 'center',
   },
@@ -53,7 +54,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(196,160,224,0.45)',
     backgroundColor: colors.plumBg,
   },
-  emoji: { fontSize: 20, marginBottom: 4 },
+  emoji: { fontSize: 22, marginBottom: 4 },
   label: {
     fontFamily: fonts.sansMedium,
     color: colors.text3,

@@ -11,6 +11,8 @@ export const XPBar = () => {
   const streak = useUserStore((s) => s.streak);
   const shield = useUserStore((s) => s.shieldAvailable);
 
+  const xpToNext = Math.max(0, next - xp);
+
   return (
     <LinearGradient
       colors={[colors.surface, '#2A2018']}
@@ -21,12 +23,12 @@ export const XPBar = () => {
       <View style={styles.top}>
         <View style={styles.ring}>
           <Text style={styles.ringNum}>{level}</Text>
-          <Text style={styles.ringWord}>LVL</Text>
+          <Text style={styles.ringWord}>LEVEL</Text>
         </View>
         <View style={styles.meta}>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.sub}>
-            {xp} / {next} XP
+            {xp} XP today · {xpToNext} to level up
           </Text>
         </View>
       </View>
@@ -39,8 +41,8 @@ export const XPBar = () => {
         />
       </View>
       <View style={styles.chips}>
-        <Pill tone="caramel">{`${streak}d streak`}</Pill>
-        {shield && <Pill tone="mist">Shield ready</Pill>}
+        <Pill tone="caramel">{`🔥 ${streak}-day streak`}</Pill>
+        {shield && <Pill tone="plum">🛡️ shield ready</Pill>}
       </View>
     </LinearGradient>
   );
@@ -49,7 +51,7 @@ export const XPBar = () => {
 const styles = StyleSheet.create({
   card: {
     borderRadius: 18,
-    padding: 17,
+    paddingVertical: 17,
     paddingHorizontal: 19,
     marginBottom: 14,
     borderWidth: 1,
@@ -67,7 +69,7 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     backgroundColor: colors.plumBg,
     borderWidth: 1.5,
-    borderColor: 'rgba(196,160,224,0.25)',
+    borderColor: colors.plumBorderStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },

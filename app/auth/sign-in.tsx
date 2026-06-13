@@ -10,7 +10,6 @@ import {
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Screen } from '../../components/Screen';
-import { CozyWindow } from '../../components/CozyWindow';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { signIn, signUp } from '../../lib/auth';
@@ -63,11 +62,7 @@ export default function SignInScreen() {
 
   return (
     <Screen scroll={false} style={styles.outer}>
-      <View style={styles.illustration}>
-        <CozyWindow size={150} />
-      </View>
-
-      <Text style={styles.eyebrow}>· LUMI ·</Text>
+      <Text style={[styles.eyebrow, { marginTop: 36 }]}>· LUMI ·</Text>
 
       <Text style={styles.h1}>
         {mode === 'signin' ? (

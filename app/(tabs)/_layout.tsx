@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Text, View, StyleSheet, Platform } from 'react-native';
+import { Text, StyleSheet, Platform } from 'react-native';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 
@@ -34,35 +34,42 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: () => <Icon ch="◐" />,
+          tabBarIcon: () => <Icon ch="🏠" />,
         }}
       />
       <Tabs.Screen
         name="checkin"
         options={{
           title: 'Check-in',
-          tabBarIcon: () => <Icon ch="♡" />,
+          tabBarIcon: () => <Icon ch="🧠" />,
         }}
       />
       <Tabs.Screen
         name="time"
         options={{
           title: 'Time',
-          tabBarIcon: () => <Icon ch="◷" />,
+          tabBarIcon: () => <Icon ch="⏳" />,
         }}
       />
       <Tabs.Screen
         name="sos"
         options={{
           title: 'SOS',
-          tabBarIcon: () => <Icon ch="✦" />,
+          tabBarIcon: () => <Icon ch="🆘" />,
         }}
       />
       <Tabs.Screen
-        name="me"
+        name="report"
         options={{
-          title: 'Me',
-          tabBarIcon: () => <Icon ch="◉" />,
+          title: 'Report',
+          tabBarIcon: () => <Icon ch="📊" />,
+        }}
+      />
+      <Tabs.Screen
+        name="luna"
+        options={{
+          title: 'Luna',
+          tabBarIcon: () => <Icon ch="🐾" />,
         }}
       />
     </Tabs>
@@ -73,6 +80,5 @@ const styles = StyleSheet.create({
   icon: {
     fontSize: 22,
     lineHeight: 24,
-    color: 'inherit' as never,
   },
 });

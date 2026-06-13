@@ -1,67 +1,58 @@
-// Lumi · lofi palette
-// Dusty, warm, slightly faded — like a worn study-room playlist cover.
-// Accents are pulled back from the prior crisp/saturated set to feel more
-// "tape", with text leaning a touch warmer so nothing reads as pure white.
+// Lumi · palette — taken directly from the focusquest-final.html mock.
+// These match the original spec; the brief lofi-desaturation pass on
+// Lumi-1003 was reverted to keep the mock's slightly more saturated feel.
 
 export const colors = {
-  // Surfaces — a hint warmer than the original pure-warm-dark.
-  bg: '#15110D',
-  bg2: '#1B1612',
-  surface: '#221D17',
-  card: '#28221A',
-  border: '#332C22',
-  border2: '#41382C',
+  bg: '#141210',
+  bg2: '#1A1714',
+  surface: '#1F1C18',
+  card: '#252118',
+  border: '#2E2920',
+  border2: '#3A332A',
 
-  // Warm neutrals
-  cream: '#E3D5B9',
-  cream2: '#CDB994',
-  cream3: '#9C8460',
+  cream: '#E8DCC8',
+  cream2: '#D4C4A8',
+  cream3: '#A89070',
 
-  // Plum — dustier, less candy.
-  plum: '#B093C6',
-  plumDark: '#7D55A4',
-  plumBg: 'rgba(176,147,198,0.08)',
-  plumBorder: 'rgba(176,147,198,0.18)',
+  plum: '#C4A0E0',
+  plumDark: '#8B5FB8',
+  plumBg: 'rgba(196,160,224,0.08)',
+  plumBorder: 'rgba(196,160,224,0.18)',
+  plumBorderStrong: 'rgba(196,160,224,0.25)',
 
-  // Terra — sun-faded ochre.
-  terra: '#C6855F',
-  terraBg: 'rgba(198,133,95,0.08)',
-  terraBorder: 'rgba(198,133,95,0.18)',
+  terra: '#D4906A',
+  terraBg: 'rgba(212,144,106,0.08)',
+  terraBorder: 'rgba(212,144,106,0.18)',
+  terraBorderStrong: 'rgba(212,144,106,0.25)',
 
-  // Moss — drier sage.
-  moss: '#82B58D',
-  mossBg: 'rgba(130,181,141,0.08)',
-  mossBorder: 'rgba(130,181,141,0.18)',
+  moss: '#8BBF96',
+  mossBg: 'rgba(139,191,150,0.08)',
+  mossBorder: 'rgba(139,191,150,0.18)',
+  mossBorderStrong: 'rgba(139,191,150,0.25)',
 
-  // Caramel — honey-amber.
-  caramel: '#C99E5E',
-  caramelBg: 'rgba(201,158,94,0.08)',
-  caramelBorder: 'rgba(201,158,94,0.18)',
+  caramel: '#D4AA6A',
+  caramelBg: 'rgba(212,170,106,0.08)',
+  caramelBorder: 'rgba(212,170,106,0.18)',
+  caramelBorderStrong: 'rgba(212,170,106,0.25)',
 
-  // Mist — dusty cornflower.
-  mist: '#7F9EBC',
-  mistBg: 'rgba(127,158,188,0.08)',
-  mistBorder: 'rgba(127,158,188,0.18)',
+  mist: '#8AACCF',
+  mistBg: 'rgba(138,172,207,0.08)',
+  mistBorder: 'rgba(138,172,207,0.18)',
+  mistBorderStrong: 'rgba(138,172,207,0.25)',
 
-  // Rose — old-print pink.
-  rose: '#D2737E',
-  roseBg: 'rgba(210,115,126,0.08)',
-  roseBorder: 'rgba(210,115,126,0.18)',
+  rose: '#E07A8A',
+  roseBg: 'rgba(224,122,138,0.08)',
+  roseBorder: 'rgba(224,122,138,0.18)',
+  roseBorderStrong: 'rgba(224,122,138,0.25)',
 
-  // Fog — desaturated steel.
-  fog: '#94A0AA',
-  fogBg: 'rgba(148,160,170,0.08)',
-  fogBorder: 'rgba(148,160,170,0.18)',
+  fog: '#9BAAB8',
+  fogBg: 'rgba(155,170,184,0.08)',
+  fogBorder: 'rgba(155,170,184,0.18)',
+  fogBorderStrong: 'rgba(155,170,184,0.20)',
 
-  // Text — warmer, slightly off-white.
-  text: '#E6DBC4',
-  text2: '#A0937F',
-  text3: '#6A5D4A',
-
-  // Lofi-only helpers
-  grain: 'rgba(230,219,196,0.025)', // ~2.5% warm grain
-  vignette: 'rgba(0,0,0,0.55)',
-  warmth: 'rgba(201,158,94,0.05)', // global warm tint
+  text: '#EDE4D4',
+  text2: '#A89A88',
+  text3: '#6A5E50',
 } as const;
 
 export type AccentKey =
