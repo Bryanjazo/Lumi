@@ -10,109 +10,90 @@ interface Props {
 }
 
 /**
- * Chunky 16×16 pixel-art Luna sprite. Strict integer grid — every Rect
- * is exactly one logical pixel wide/tall. Renders through react-native-svg
- * so it stays crisp at any size. Inspired by retro game sprites; designed
- * to read clearly even at small sizes (60–130px on auth screens).
+ * Chibi pixel-art Luna sprite. Strict 16×16 integer grid, single-color
+ * cream body with glasses as the only prominent feature. Matches the
+ * mock screenshots: small ears that blend into the head, no dark
+ * outline strokes, no white facial markings — just a soft cream
+ * silhouette with chunky glasses.
  */
 
 const GRID = 16;
 
 const FUR = colors.cream;
 const FUR_SHADE = '#C4B68F';
-const BELLY = '#F5EAD0';
-const STROKE = '#1A140C';
-const GLASS = '#8AACCF';
+const GLASS_RIM = '#1A140C';
+const GLASS_LENS = '#8AACCF';
+const PUPIL = '#1A140C';
 const SHINE = '#FFFFFF';
 const NOSE = '#D88878';
-const BLUSH = 'rgba(216,136,120,0.5)';
+const BLUSH = 'rgba(216,136,120,0.35)';
 const SPARK = '#D4AA6A';
 
-// Sprite pixel map. '.' = transparent, single chars map to a palette.
-// Frames let us swap mouth/eyes without re-laying out the rest.
 const PALETTE: Record<string, string> = {
-  '#': STROKE, // outline / pupils / mouth
-  'F': FUR,
-  'S': FUR_SHADE,
-  'B': BELLY,
-  'G': GLASS,
-  'W': SHINE,
-  'N': NOSE,
-  'P': BLUSH,
-  'X': SPARK,
+  F: FUR,
+  S: FUR_SHADE,
+  R: GLASS_RIM,
+  G: GLASS_LENS,
+  P: PUPIL,
+  W: SHINE,
+  N: NOSE,
+  B: BLUSH,
+  X: SPARK,
+  '#': PUPIL, // dark mouth/closed-eye line
 };
 
-// Base body sprite (no eyes/mouth).
-// Row index 0 = top.
-const BASE: string[] = [
-  // 0    1    2    3    4    5    6    7    8    9    10   11   12   13   14   15
+// Body silhouette — all cream, no dark outlines. Reads as a soft mascot.
+const BODY: string[] = [
+  // 0    1    2    3    4    5    6    7    8    9   10   11   12   13   14   15
   '................', // 0
-  '....#.....#.....', // 1 — ear tips
-  '...##....###....', // 2
-  '...####.####....', // 3
-  '..#FFFF#FFFF#...', // 4
-  '..#FFFFFFFFF#...', // 5
-  '..#FFFFFFFFF#...', // 6
-  '..#FFFFFFFFF#...', // 7
-  '..#FFFFFFFFF#...', // 8
-  '...#FFFFFFF#....', // 9
-  '....#FFFFF#.....', // 10
-  '....#FFFFF#.....', // 11
-  '...#FFFFFFF#....', // 12
-  '...#FFFFFFF#....', // 13
-  '...#F#...#F#....', // 14
-  '...###...###....', // 15
+  '....F.......F...', // 1  small ear tips
+  '...FF.......FF..', // 2
+  '...FF.......FF..', // 3
+  '..FFFFFFFFFFFFF.', // 4  top of head
+  '..FFFFFFFFFFFFF.', // 5
+  '..FFFFFFFFFFFFF.', // 6  glasses sit on this row
+  '..FFFFFFFFFFFFF.', // 7
+  '..FFFFFFFFFFFFF.', // 8  nose row
+  '...FFFFFFFFFFF..', // 9  chin
+  '....FFFFFFFFFF..', // 10 neck
+  '...FFFFFFFFFFF..', // 11 body
+  '...FFFFFFFFFFF..', // 12 body
+  '...FF.FFFFFF.F..', // 13 body w/ leg-gap
+  '...FF..FFF...F..', // 14 legs
+  '...FF..FFF......', // 15 feet
 ];
 
-// Overlay sprites — glasses, mouth, ears, accents.
+// Subtle belly highlight
+const BELLY: string[] = [
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '......SSSS......',
+  '......SSSS......',
+  '................',
+  '................',
+  '................',
+];
+
+// Glasses — the only prominent feature.
+// Two round-ish frames connected by a bridge, sitting on rows 5-7.
 const GLASSES: string[] = [
   '................',
   '................',
   '................',
   '................',
-  '................',
-  '..#GG#.#GG#.....',
-  '.#G##G#G##G#....',
-  '..#GG#.#GG#.....',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-];
-
-// Belly highlight
-const BELLY_OVERLAY: string[] = [
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '....BBBBB.......',
-  '....BBBBB.......',
-  '....BBBBB.......',
-  '................',
-  '................',
-  '................',
-];
-
-const earBlush = (mood: LunaMood): string[] => [
-  '................',
-  '................',
-  '....P.....P.....',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
+  '...RRR...RRR....', // 4 top of frames
+  '..RGGGR.RGGGR...', // 5 frame + lens
+  '..RGGGR.RGGGR...', // 6 lens
+  '...RRR...RRR....', // 7 bottom of frames
   '................',
   '................',
   '................',
@@ -129,8 +110,8 @@ const eyesIdle: string[] = [
   '................',
   '................',
   '................',
-  '...#..W..#..W...',
-  '................',
+  '....P....P......', // 5
+  '....PW...PW.....', // 6 pupil + shine
   '................',
   '................',
   '................',
@@ -149,7 +130,7 @@ const eyesHappy: string[] = [
   '................',
   '................',
   '................',
-  '..####..####....',
+  '..#PPR#.#PPR#...', // closed-arc happy eyes inside frames
   '................',
   '................',
   '................',
@@ -167,7 +148,7 @@ const eyesSleep: string[] = [
   '................',
   '................',
   '................',
-  '...####.####....',
+  '..############..', // closed-eye line across frames
   '................',
   '................',
   '................',
@@ -188,9 +169,9 @@ const mouthIdle: string[] = [
   '................',
   '................',
   '................',
+  '........N.......', // tiny nose
+  '.......#.#......', // small smile-line
   '................',
-  '......N.........',
-  '.....#.#........',
   '................',
   '................',
   '................',
@@ -207,28 +188,9 @@ const mouthHappy: string[] = [
   '................',
   '................',
   '................',
-  '................',
-  '......N.........',
-  '....#.#.#.......',
-  '.....###........',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-];
-
-const blushOverlay: string[] = [
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '.PP..........PP.',
-  '.PP..........PP.',
-  '................',
+  '........N.......',
+  '.......#.#......',
+  '........#.......', // little smile dot
   '................',
   '................',
   '................',
@@ -237,7 +199,26 @@ const blushOverlay: string[] = [
   '................',
 ];
 
-const sparkleOverlay: string[] = [
+const blushDots: string[] = [
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  'BB...........BB.',
+  'BB...........BB.',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+];
+
+const sparkles: string[] = [
   'X..............X',
   '................',
   '................',
@@ -275,9 +256,7 @@ const sleepZ: string[] = [
   '................',
 ];
 
-const compose = (layers: string[][]): string[][] => layers;
-
-const renderLayer = (layer: string[], cell: number, keyPrefix: string) => {
+const renderLayer = (layer: string[], keyPrefix: string) => {
   const rects: React.ReactNode[] = [];
   for (let r = 0; r < layer.length; r++) {
     const row = layer[r];
@@ -289,10 +268,10 @@ const renderLayer = (layer: string[], cell: number, keyPrefix: string) => {
       rects.push(
         <Rect
           key={`${keyPrefix}-${r}-${c}`}
-          x={c * cell}
-          y={r * cell}
-          width={cell + 0.5}
-          height={cell + 0.5}
+          x={c}
+          y={r}
+          width={1.02}
+          height={1.02}
           fill={fill}
         />,
       );
@@ -302,8 +281,6 @@ const renderLayer = (layer: string[], cell: number, keyPrefix: string) => {
 };
 
 export const LunaPixel = ({ mood = 'idle', size = 110 }: Props) => {
-  const cell = size / GRID;
-
   const eyes =
     mood === 'sleep'
       ? eyesSleep
@@ -315,24 +292,19 @@ export const LunaPixel = ({ mood = 'idle', size = 110 }: Props) => {
     mood === 'happy' || mood === 'excited' ? mouthHappy : mouthIdle;
 
   const layers = [
-    BASE,
-    BELLY_OVERLAY,
-    earBlush(mood),
+    BODY,
+    BELLY,
     GLASSES,
     eyes,
     mouth,
-    ...(mood === 'happy' || mood === 'excited'
-      ? [blushOverlay, sparkleOverlay]
-      : []),
+    ...(mood === 'happy' || mood === 'excited' ? [blushDots, sparkles] : []),
     ...(mood === 'sleep' ? [sleepZ] : []),
   ];
 
   return (
     <View style={[styles.wrap, { width: size, height: size }]}>
       <Svg width={size} height={size} viewBox={`0 0 ${GRID} ${GRID}`}>
-        {compose(layers).flatMap((layer, i) =>
-          renderLayer(layer, 1, `l${i}`),
-        )}
+        {layers.flatMap((layer, i) => renderLayer(layer, `l${i}`))}
       </Svg>
     </View>
   );
