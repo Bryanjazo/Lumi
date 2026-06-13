@@ -6,37 +6,45 @@ import { supabase, isSupabaseConfigured } from './supabase';
 const REDIRECT_PATH = 'auth/callback';
 export const getRedirectUrl = () => Linking.createURL(REDIRECT_PATH);
 
-/**
- * Send a 6-digit verification code to email. Supabase's signInWithOtp
- * delivers a token; the email template includes the code by default
- * ({{ .Token }}). We also pass emailRedirectTo so the link still works
- * as a fallback if the user taps it instead of typing the code.
- */
-export const sendEmailCode = async (email: string): Promise<void> => {
+const requireConfigured = () => {
   if (!isSupabaseConfigured) {
     throw new Error('Auth needs Supabase env vars. See .env.example.');
   }
-  const { error } = await supabase.auth.signInWithOtp({
+};
+
+// ── email + password ────────────────────────────────────────────────────
+
+/**
+ * Create a new account with email + password. The user gets a session
+ * immediately (assuming "Confirm email" is disabled in Supabase Auth
+ * settings — recommended, since phone verification is the security
+ * layer). After signup, route to phone enrollment.
+ */
+export const signUp = async (
+  email: string,
+  password: string,
+): Promise<void> => {
+  requireConfigured();
+  const { error } = await supabase.auth.signUp({
     email: email.trim().toLowerCase(),
-    options: {
-      emailRedirectTo: getRedirectUrl(),
-      shouldCreateUser: true,
-    },
+    password,
+    options: { emailRedirectTo: getRedirectUrl() },
   });
   if (error) throw error;
 };
 
 /**
- * Exchange the 6-digit code for a session.
+ * Sign in an existing user with email + password. Returns when the
+ * session is set.
  */
-export const verifyEmailCode = async (
+export const signIn = async (
   email: string,
-  code: string,
+  password: string,
 ): Promise<void> => {
-  const { error } = await supabase.auth.verifyOtp({
+  requireConfigured();
+  const { error } = await supabase.auth.signInWithPassword({
     email: email.trim().toLowerCase(),
-    token: code.trim(),
-    type: 'email',
+    password,
   });
   if (error) throw error;
 };
@@ -45,11 +53,94 @@ export const signOut = async (): Promise<void> => {
   await supabase.auth.signOut();
 };
 
+// ── phone MFA enrollment ────────────────────────────────────────────────
+
+export interface PhoneEnrollment {
+  factorId: string;
+  challengeId: string;
+}
+
 /**
- * Defensive fallback: if the user taps the link in the email instead of
- * typing the code, the magic-link tokens land in the URL and we still
- * sign them in.
+ * Enroll a new phone factor + immediately challenge it (sends SMS). The
+ * returned factorId + challengeId are what you pass back to
+ * verifyPhone() once the user types the code.
+ *
+ * Phone format must be E.164 ("+14155551234"). The screen formats it.
  */
+export const enrollAndChallengePhone = async (
+  phone: string,
+): Promise<PhoneEnrollment> => {
+  requireConfigured();
+
+  // If the user retries with a new number, unenroll any existing
+  // unverified phone factor first to avoid the "already enrolled" error.
+  const { data: factors } = await supabase.auth.mfa.listFactors();
+  const existing = factors?.phone ?? [];
+  for (const f of existing) {
+    if (f.status !== 'verified') {
+      await supabase.auth.mfa.unenroll({ factorId: f.id });
+    }
+  }
+
+  const { data: enrollData, error: enrollErr } =
+    await supabase.auth.mfa.enroll({
+      factorType: 'phone',
+      phone: phone.trim(),
+    });
+  if (enrollErr || !enrollData) throw enrollErr ?? new Error('enroll failed');
+  const factorId = enrollData.id;
+
+  const { data: challengeData, error: challengeErr } =
+    await supabase.auth.mfa.challenge({ factorId });
+  if (challengeErr || !challengeData)
+    throw challengeErr ?? new Error('challenge failed');
+
+  return { factorId, challengeId: challengeData.id };
+};
+
+/**
+ * Re-challenge an existing factor (used for the "resend code" button).
+ */
+export const reChallengePhone = async (
+  factorId: string,
+): Promise<string> => {
+  requireConfigured();
+  const { data, error } = await supabase.auth.mfa.challenge({ factorId });
+  if (error || !data) throw error ?? new Error('challenge failed');
+  return data.id;
+};
+
+/**
+ * Verify the SMS code. On success the user's session is upgraded to
+ * AAL2 and the phone factor is marked 'verified'.
+ */
+export const verifyPhoneCode = async (
+  factorId: string,
+  challengeId: string,
+  code: string,
+): Promise<void> => {
+  requireConfigured();
+  const { error } = await supabase.auth.mfa.verify({
+    factorId,
+    challengeId,
+    code: code.trim(),
+  });
+  if (error) throw error;
+};
+
+/**
+ * Whether the current user has at least one verified phone factor.
+ * Sign-in screens use this to decide whether to route to phone
+ * enrollment after sign-in.
+ */
+export const hasVerifiedPhone = async (): Promise<boolean> => {
+  if (!isSupabaseConfigured) return false;
+  const { data, error } = await supabase.auth.mfa.listFactors();
+  if (error || !data) return false;
+  return (data.phone ?? []).some((f) => f.status === 'verified');
+};
+
+// ── deep link fallback (kept from earlier; harmless if unused) ──────────
 export const handleAuthDeepLink = async (url: string): Promise<boolean> => {
   if (!url.includes('access_token')) return false;
   const parsed = Linking.parse(url);
@@ -78,6 +169,7 @@ export const handleAuthDeepLink = async (url: string): Promise<boolean> => {
   return true;
 };
 
+// ── session hook ────────────────────────────────────────────────────────
 export const useSession = (): {
   session: Session | null;
   loading: boolean;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   View,
   Text,
@@ -13,74 +13,56 @@ import { Screen } from '../../components/Screen';
 import { CozyWindow } from '../../components/CozyWindow';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { sendEmailCode, verifyEmailCode } from '../../lib/auth';
+import { signIn, signUp, hasVerifiedPhone } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
 
-type Stage = 'enter-email' | 'sending' | 'enter-code' | 'verifying';
+type Mode = 'signin' | 'signup';
+type Status = 'idle' | 'submitting';
 
-const RESEND_COOLDOWN = 30; // seconds
-
-export default function SignIn() {
+export default function SignInScreen() {
   const router = useRouter();
   const setOfflineMode = useUserStore((s) => s.setOfflineMode);
+  const setPhoneVerified = useUserStore((s) => s.setPhoneVerified);
+
+  const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
-  const [stage, setStage] = useState<Stage>('enter-email');
+  const [password, setPassword] = useState('');
+  const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [cooldown, setCooldown] = useState(0);
-  const codeRef = useRef<TextInput>(null);
+  const [showPw, setShowPw] = useState(false);
 
   const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const validPw = password.length >= 6;
+  const canSubmit = validEmail && validPw && isSupabaseConfigured;
 
-  // Cooldown ticker for resend.
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const id = setInterval(() => setCooldown((c) => Math.max(0, c - 1)), 1000);
-    return () => clearInterval(id);
-  }, [cooldown]);
-
-  const sendCode = async () => {
-    if (!validEmail || stage === 'sending') return;
+  const submit = async () => {
+    if (!canSubmit || status === 'submitting') return;
     Haptics.selectionAsync();
-    setStage('sending');
+    setStatus('submitting');
     setError(null);
     try {
-      await sendEmailCode(email);
-      setStage('enter-code');
-      setCooldown(RESEND_COOLDOWN);
-      setTimeout(() => codeRef.current?.focus(), 100);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (mode === 'signup') {
+        await signUp(email, password);
+        // New accounts always need phone verification.
+        setPhoneVerified(false);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        router.replace('/auth/verify-phone');
+      } else {
+        await signIn(email, password);
+        // Check if the existing account already has a verified phone.
+        const verified = await hasVerifiedPhone();
+        setPhoneVerified(verified);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Root layout routes via session change; we just nudge if phone
+        // is missing to make the navigation snappier.
+        if (!verified) router.replace('/auth/verify-phone');
+      }
     } catch (e) {
-      setStage('enter-email');
-      setError(e instanceof Error ? e.message : 'Something went wrong');
+      setStatus('idle');
+      setError(prettyError(e));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
-  };
-
-  const verify = async (token: string) => {
-    if (stage === 'verifying') return;
-    Haptics.selectionAsync();
-    setStage('verifying');
-    setError(null);
-    try {
-      await verifyEmailCode(email, token);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // The auth-state listener in app/_layout.tsx routes us on session change.
-    } catch (e) {
-      setStage('enter-code');
-      setCode('');
-      setError(
-        e instanceof Error ? e.message : "That code didn't match. Try again.",
-      );
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    }
-  };
-
-  const onCodeChange = (raw: string) => {
-    const cleaned = raw.replace(/\D/g, '').slice(0, 6);
-    setCode(cleaned);
-    if (cleaned.length === 6) void verify(cleaned);
   };
 
   const stayOffline = () => {
@@ -89,156 +71,131 @@ export default function SignIn() {
     router.replace('/(tabs)');
   };
 
-  const goBackToEmail = () => {
-    Haptics.selectionAsync();
-    setCode('');
-    setError(null);
-    setStage('enter-email');
-  };
-
   return (
     <Screen scroll={false} style={styles.outer}>
       <View style={styles.illustration}>
-        <CozyWindow size={160} />
+        <CozyWindow size={150} />
       </View>
 
       <Text style={styles.eyebrow}>· LUMI ·</Text>
 
-      {stage === 'enter-email' || stage === 'sending' ? (
-        <>
-          <Text style={styles.h1}>
+      <Text style={styles.h1}>
+        {mode === 'signin' ? (
+          <>
+            Welcome <Text style={styles.italic}>back.</Text>
+          </>
+        ) : (
+          <>
             Come <Text style={styles.italic}>in.</Text>
+          </>
+        )}
+      </Text>
+      <Text style={styles.sub}>
+        {mode === 'signin'
+          ? 'Sign in to keep Luna with you across devices.'
+          : 'Make an account. Phone gets verified next.'}
+      </Text>
+
+      <View style={styles.modeRow}>
+        <Pressable
+          onPress={() => {
+            if (mode !== 'signin') {
+              Haptics.selectionAsync();
+              setMode('signin');
+              setError(null);
+            }
+          }}
+          style={[styles.modeBtn, mode === 'signin' && styles.modeBtnActive]}
+        >
+          <Text style={[styles.modeText, mode === 'signin' && styles.modeTextActive]}>
+            Sign in
           </Text>
-          <Text style={styles.sub}>
-            Sign in or make an account — same warm door, either way.
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            if (mode !== 'signup') {
+              Haptics.selectionAsync();
+              setMode('signup');
+              setError(null);
+            }
+          }}
+          style={[styles.modeBtn, mode === 'signup' && styles.modeBtnActive]}
+        >
+          <Text style={[styles.modeText, mode === 'signup' && styles.modeTextActive]}>
+            Create account
           </Text>
+        </Pressable>
+      </View>
 
-          <View style={styles.form}>
-            <Text style={styles.fieldLabel}>YOUR EMAIL</Text>
-            <TextInput
-              value={email}
-              onChangeText={(v) => {
-                setEmail(v);
-                if (error) setError(null);
-              }}
-              placeholder="hello@example.com"
-              placeholderTextColor={colors.text3}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              editable={isSupabaseConfigured && stage !== 'sending'}
-              onSubmitEditing={sendCode}
-              returnKeyType="send"
-            />
-            {error && <Text style={styles.error}>{error}</Text>}
+      <View style={styles.form}>
+        <Text style={styles.fieldLabel}>EMAIL</Text>
+        <TextInput
+          value={email}
+          onChangeText={(v) => {
+            setEmail(v);
+            if (error) setError(null);
+          }}
+          placeholder="hello@example.com"
+          placeholderTextColor={colors.text3}
+          style={styles.input}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
+          autoComplete="email"
+          editable={isSupabaseConfigured && status !== 'submitting'}
+        />
 
-            <Pressable
-              onPress={sendCode}
-              disabled={
-                !validEmail || !isSupabaseConfigured || stage === 'sending'
-              }
-              style={({ pressed }) => [
-                styles.btn,
-                (!validEmail || !isSupabaseConfigured || stage === 'sending') &&
-                  styles.btnDisabled,
-                pressed && { transform: [{ translateY: 1 }] },
-              ]}
-            >
-              {stage === 'sending' ? (
-                <ActivityIndicator color={colors.cream} />
-              ) : (
-                <Text style={styles.btnText}>Send me a code  ✦</Text>
-              )}
-            </Pressable>
+        <Text style={[styles.fieldLabel, { marginTop: 18 }]}>PASSWORD</Text>
+        <View style={styles.pwRow}>
+          <TextInput
+            value={password}
+            onChangeText={(v) => {
+              setPassword(v);
+              if (error) setError(null);
+            }}
+            placeholder={mode === 'signup' ? 'at least 6 characters' : '••••••••'}
+            placeholderTextColor={colors.text3}
+            style={[styles.input, styles.pwInput]}
+            secureTextEntry={!showPw}
+            autoCapitalize="none"
+            autoCorrect={false}
+            textContentType={mode === 'signup' ? 'newPassword' : 'password'}
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            editable={isSupabaseConfigured && status !== 'submitting'}
+            onSubmitEditing={submit}
+            returnKeyType="go"
+          />
+          <Pressable onPress={() => setShowPw((s) => !s)} style={styles.eye}>
+            <Text style={styles.eyeText}>{showPw ? 'hide' : 'show'}</Text>
+          </Pressable>
+        </View>
 
-            <Text style={styles.fineprint}>
-              New here? You'll get{' '}
-              <Text style={styles.fineStrong}>7 days free</Text> after we verify
-              your code. No password to remember. Cancel anytime.
+        {error && <Text style={styles.error}>{error}</Text>}
+
+        <Pressable
+          onPress={submit}
+          disabled={!canSubmit || status === 'submitting'}
+          style={({ pressed }) => [
+            styles.btn,
+            (!canSubmit || status === 'submitting') && styles.btnDisabled,
+            pressed && { transform: [{ translateY: 1 }] },
+          ]}
+        >
+          {status === 'submitting' ? (
+            <ActivityIndicator color={colors.cream} />
+          ) : (
+            <Text style={styles.btnText}>
+              {mode === 'signin' ? 'Sign in' : 'Create account'}  ✦
             </Text>
-          </View>
-        </>
-      ) : (
-        <>
-          <Text style={styles.h1}>
-            Six little <Text style={styles.italic}>digits.</Text>
-          </Text>
-          <Text style={styles.sub}>
-            We sent a code to{'\n'}
-            <Text style={styles.subEmail}>{email}</Text>
-          </Text>
+          )}
+        </Pressable>
 
-          <View style={styles.form}>
-            <Pressable onPress={() => codeRef.current?.focus()}>
-              <View style={styles.codeRow}>
-                {Array.from({ length: 6 }).map((_, i) => {
-                  const ch = code[i];
-                  const active = i === code.length;
-                  return (
-                    <View
-                      key={i}
-                      style={[
-                        styles.codeCell,
-                        ch !== undefined && styles.codeCellFilled,
-                        active && styles.codeCellActive,
-                      ]}
-                    >
-                      <Text style={styles.codeChar}>{ch ?? ''}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-            </Pressable>
-
-            {/* Invisible input behind the cells captures keystrokes + paste. */}
-            <TextInput
-              ref={codeRef}
-              value={code}
-              onChangeText={onCodeChange}
-              keyboardType="number-pad"
-              textContentType="oneTimeCode"
-              autoComplete="sms-otp"
-              maxLength={6}
-              autoFocus
-              style={styles.hiddenInput}
-              editable={stage !== 'verifying'}
-            />
-
-            {error && <Text style={styles.error}>{error}</Text>}
-            {stage === 'verifying' && (
-              <View style={styles.verifyingRow}>
-                <ActivityIndicator color={colors.plum} size="small" />
-                <Text style={styles.verifyingText}>Letting you in…</Text>
-              </View>
-            )}
-
-            <View style={styles.codeFooter}>
-              <Pressable onPress={goBackToEmail} disabled={stage === 'verifying'}>
-                <Text style={styles.linkText}>← Wrong email</Text>
-              </Pressable>
-              <Pressable
-                onPress={sendCode}
-                disabled={cooldown > 0 || stage === 'verifying'}
-              >
-                <Text
-                  style={[
-                    styles.linkText,
-                    cooldown > 0 && { color: colors.text3 },
-                  ]}
-                >
-                  {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}
-                </Text>
-              </Pressable>
-            </View>
-
-            <Text style={styles.fineprint}>
-              Check your inbox — and spam, just in case. The code expires in 10
-              minutes.
-            </Text>
-          </View>
-        </>
-      )}
+        <Text style={styles.fineprint}>
+          {mode === 'signup'
+            ? 'Next step: a quick SMS to your phone so we know it’s you.'
+            : 'Forgot your password? Long press the door (coming soon).'}
+        </Text>
+      </View>
 
       {!isSupabaseConfigured && (
         <Pressable onPress={stayOffline} style={styles.devSkip}>
@@ -249,38 +206,71 @@ export default function SignIn() {
   );
 }
 
+const prettyError = (e: unknown): string => {
+  const raw = e instanceof Error ? e.message : 'Something went wrong';
+  if (/invalid login/i.test(raw)) return "That email + password didn't match.";
+  if (/already registered/i.test(raw))
+    return 'An account with that email already exists — try Sign in.';
+  if (/weak password/i.test(raw))
+    return 'Password is too short or too common.';
+  return raw;
+};
+
 const styles = StyleSheet.create({
-  outer: { paddingTop: 8 },
-  illustration: { alignItems: 'center', marginTop: 8, marginBottom: 18 },
+  outer: { paddingTop: 4 },
+  illustration: { alignItems: 'center', marginTop: 4, marginBottom: 14 },
   eyebrow: {
     fontFamily: fonts.sansSemi,
     color: colors.text3,
     fontSize: 10,
     letterSpacing: 3,
     textAlign: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   h1: {
     fontFamily: fonts.serif,
     color: colors.text,
-    fontSize: 40,
-    lineHeight: 44,
+    fontSize: 36,
+    lineHeight: 40,
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   italic: { fontFamily: fonts.serifItalic, color: colors.caramel },
   sub: {
     fontFamily: fonts.sans,
     color: colors.text2,
     fontSize: 13,
-    lineHeight: 21,
+    lineHeight: 20,
     textAlign: 'center',
     paddingHorizontal: 24,
-    marginBottom: 24,
+    marginBottom: 18,
   },
-  subEmail: {
+  modeRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 100,
+    padding: 4,
+    marginBottom: 18,
+  },
+  modeBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 100,
+    alignItems: 'center',
+  },
+  modeBtnActive: {
+    backgroundColor: colors.plumBg,
+  },
+  modeText: {
+    fontFamily: fonts.sansMedium,
+    color: colors.text2,
+    fontSize: 13,
+  },
+  modeTextActive: {
+    color: colors.plum,
     fontFamily: fonts.sansSemi,
-    color: colors.cream,
   },
   form: {},
   fieldLabel: {
@@ -288,24 +278,34 @@ const styles = StyleSheet.create({
     color: colors.text3,
     fontSize: 10,
     letterSpacing: 1.6,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   input: {
     borderBottomColor: colors.border2,
     borderBottomWidth: 1.5,
-    paddingVertical: 12,
+    paddingVertical: 10,
     paddingHorizontal: 2,
     fontFamily: fonts.serif,
     color: colors.text,
-    fontSize: 22,
-    marginBottom: 6,
+    fontSize: 20,
+  },
+  pwRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
+  pwInput: { flex: 1 },
+  eye: {
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+  },
+  eyeText: {
+    fontFamily: fonts.sansMedium,
+    color: colors.text3,
+    fontSize: 11,
+    letterSpacing: 0.5,
   },
   error: {
     fontFamily: fonts.sansItalic,
     color: colors.rose,
     fontSize: 12,
-    marginTop: 4,
-    marginBottom: 6,
+    marginTop: 12,
     textAlign: 'center',
   },
   btn: {
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: 'center',
-    marginTop: 18,
+    marginTop: 22,
     shadowColor: colors.caramel,
     shadowOpacity: 0.25,
     shadowRadius: 16,
@@ -333,78 +333,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 19,
     textAlign: 'center',
-    marginTop: 18,
+    marginTop: 16,
     paddingHorizontal: 8,
   },
-  fineStrong: {
-    fontFamily: fonts.sansSemi,
-    color: colors.caramel,
-    fontStyle: 'normal',
-  },
-  // ── code entry ─────────────────────────────────────────
-  codeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-    marginTop: 6,
-    marginBottom: 12,
-  },
-  codeCell: {
-    flex: 1,
-    aspectRatio: 0.78,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.border2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  codeCellFilled: {
-    borderColor: colors.plumBorder,
-    backgroundColor: colors.plumBg,
-  },
-  codeCellActive: {
-    borderColor: colors.caramel,
-    shadowColor: colors.caramel,
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  codeChar: {
-    fontFamily: fonts.serif,
-    color: colors.text,
-    fontSize: 26,
-    lineHeight: 30,
-  },
-  hiddenInput: {
-    position: 'absolute',
-    opacity: 0,
-    width: 1,
-    height: 1,
-  },
-  verifyingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    justifyContent: 'center',
-    marginTop: 10,
-  },
-  verifyingText: {
-    fontFamily: fonts.sansItalic,
-    color: colors.text2,
-    fontSize: 13,
-  },
-  codeFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 14,
-  },
-  linkText: {
-    fontFamily: fonts.sansMedium,
-    color: colors.caramel,
-    fontSize: 13,
-  },
-  devSkip: { marginTop: 18, alignSelf: 'center', paddingVertical: 8 },
+  devSkip: { marginTop: 14, alignSelf: 'center', paddingVertical: 8 },
   devSkipText: {
     fontFamily: fonts.sansMedium,
     color: colors.text3,
