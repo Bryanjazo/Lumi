@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Screen } from '../../components/Screen';
+import { Screen } from '../Screen';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useUserStore } from '../../store/userStore';
@@ -29,7 +29,7 @@ const weekRangeLabel = (now: Date) => {
   return `Week of ${fmt(monday)} – ${fmt(sunday)}`;
 };
 
-export default function ReportTab() {
+export function ReportPanel() {
   const petName = useUserStore((s) => s.petName);
   const streak = useUserStore((s) => s.streak);
   const quests = useQuestStore((s) => s.quests);

@@ -20,7 +20,7 @@ export default function TabsLayout() {
           paddingTop: 10,
           paddingBottom: Platform.OS === 'ios' ? 28 : 14,
         },
-        tabBarActiveTintColor: colors.plum,
+        tabBarActiveTintColor: colors.terra,
         tabBarInactiveTintColor: colors.text3,
         tabBarLabelStyle: {
           fontFamily: fonts.sansSemi,
@@ -32,45 +32,23 @@ export default function TabsLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{
-          title: 'Home',
-          tabBarIcon: () => <Icon ch="🏠" />,
-        }}
+        options={{ title: 'Home', tabBarIcon: () => <Icon ch="🏠" /> }}
       />
       <Tabs.Screen
         name="checkin"
-        options={{
-          title: 'Check-in',
-          tabBarIcon: () => <Icon ch="🧠" />,
-        }}
+        options={{ title: 'Check-in', tabBarIcon: () => <Icon ch="🧠" /> }}
       />
       <Tabs.Screen
         name="time"
-        options={{
-          title: 'Time',
-          tabBarIcon: () => <Icon ch="⏳" />,
-        }}
+        options={{ title: 'Time', tabBarIcon: () => <Icon ch="⏳" /> }}
       />
       <Tabs.Screen
         name="sos"
-        options={{
-          title: 'SOS',
-          tabBarIcon: () => <Icon ch="🆘" />,
-        }}
+        options={{ title: 'SOS', tabBarIcon: () => <Icon ch="🆘" /> }}
       />
       <Tabs.Screen
-        name="report"
-        options={{
-          title: 'Report',
-          tabBarIcon: () => <Icon ch="📊" />,
-        }}
-      />
-      <Tabs.Screen
-        name="luna"
-        options={{
-          title: 'Luna',
-          tabBarIcon: () => <Icon ch="🐾" />,
-        }}
+        name="me"
+        options={{ title: 'Me', tabBarIcon: () => <Icon ch="✦" /> }}
       />
     </Tabs>
   );

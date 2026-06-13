@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import { LunaHeader } from '../../components/LunaHeader';
-import { Label } from '../../components/Label';
+import { LunaHeader } from '../LunaHeader';
+import { Label } from '../Label';
 import { colors, accent, AccentKey } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { usePetStore } from '../../store/petStore';
@@ -28,7 +28,7 @@ const STATE_TABS: { key: LunaState; label: string; emoji: string }[] = [
   { key: 'away', label: 'Away', emoji: '🌘' },
 ];
 
-export default function LunaTab() {
+export function LunaPanel() {
   const petName = useUserStore((s) => s.petName);
   const streak = useUserStore((s) => s.streak);
   const lastActiveDate = useUserStore((s) => s.lastActiveDate);
@@ -116,7 +116,7 @@ export default function LunaTab() {
   const badge = badgeForState(displayed, streak);
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+    <View style={styles.safe}>
       <View>
         <LunaHeader state={displayed} height={150} />
         <View style={[styles.petBadge, { borderColor: badge.border }]}>
@@ -300,7 +300,7 @@ export default function LunaTab() {
           </View>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
