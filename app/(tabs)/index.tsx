@@ -17,7 +17,11 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { IMPORTANCE, Importance } from '../../constants/importance';
+import {
+  IMPORTANCE,
+  Importance,
+  importanceFromDifficulty,
+} from '../../constants/importance';
 import { useUserStore } from '../../store/userStore';
 import {
   useQuestStore,
@@ -207,7 +211,10 @@ const QuestRow = ({
   onToggle: () => void;
   floater: { amount: number; color: string } | null;
 }) => {
-  const imp = IMPORTANCE[q.importance];
+  // Defensive: older persisted quests may not have importance yet
+  // (added in Lumi-1006). Derive from difficulty on the fly.
+  const importance = q.importance ?? importanceFromDifficulty(q.difficulty);
+  const imp = IMPORTANCE[importance];
   const done = q.completed;
   return (
     <Pressable
@@ -340,6 +347,7 @@ export default function Home() {
       const gain = q.xpReward + bonus;
       const oldTotal = xp;
       const newTotal = oldTotal + gain;
+      const importance = q.importance ?? importanceFromDifficulty(q.difficulty);
 
       addXp(gain);
       registerActivity();
@@ -349,7 +357,7 @@ export default function Home() {
       const fId = q.id + '-' + Date.now();
       setFloaters((prev) => ({
         ...prev,
-        [fId]: { amount: gain, color: IMPORTANCE[q.importance].color },
+        [fId]: { amount: gain, color: IMPORTANCE[importance].color },
       }));
       setTimeout(() => {
         setFloaters((prev) => {

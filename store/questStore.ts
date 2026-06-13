@@ -132,6 +132,19 @@ export const useQuestStore = create<QuestState>()(
     {
       name: 'lumi.quests',
       storage: createJSONStorage(() => AsyncStorage),
+      version: 2,
+      migrate: (persisted: unknown, version) => {
+        if (!persisted || typeof persisted !== 'object') return persisted as never;
+        const state = persisted as { quests?: Quest[] };
+        if (version < 2 && Array.isArray(state.quests)) {
+          state.quests = state.quests.map((q) => ({
+            ...q,
+            importance:
+              q.importance ?? importanceFromDifficulty(q.difficulty ?? 'easy'),
+          }));
+        }
+        return state as never;
+      },
     },
   ),
 );
