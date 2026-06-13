@@ -3,6 +3,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import * as Linking from 'expo-linking';
 import { useFonts } from 'expo-font';
 import {
   DMSans_400Regular,
@@ -17,6 +18,8 @@ import {
 import { View, ActivityIndicator } from 'react-native';
 import { colors } from '../constants/colors';
 import { useUserStore } from '../store/userStore';
+import { useSession, handleAuthDeepLink } from '../lib/auth';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 export default function RootLayout() {
   const [fontsReady] = useFonts({
@@ -40,19 +43,58 @@ export default function RootLayout() {
   }, []);
 
   const onboarded = useUserStore((s) => s.onboarded);
+  const offlineMode = useUserStore((s) => s.offlineMode);
+  const { session, loading: sessionLoading } = useSession();
+
   const segments = useSegments();
   const router = useRouter();
 
+  // Deep-link handler: when the magic-link email opens the app, parse the
+  // tokens out of the URL and set the Supabase session.
+  useEffect(() => {
+    const onUrl = ({ url }: { url: string }) => {
+      void handleAuthDeepLink(url);
+    };
+    const sub = Linking.addEventListener('url', onUrl);
+    Linking.getInitialURL().then((url) => {
+      if (url) void handleAuthDeepLink(url);
+    });
+    return () => sub.remove();
+  }, []);
+
   useEffect(() => {
     if (!hydrated || !fontsReady) return;
+    if (isSupabaseConfigured && sessionLoading) return;
+
     const top = segments[0];
     const inOnboarding = top === 'onboarding';
-    if (!onboarded && !inOnboarding) {
-      router.replace('/onboarding/welcome');
-    } else if (onboarded && inOnboarding) {
+    const inAuth = top === 'auth';
+
+    if (!onboarded) {
+      if (!inOnboarding) router.replace('/onboarding/welcome');
+      return;
+    }
+
+    const needsAuthGate = isSupabaseConfigured && !session && !offlineMode;
+
+    if (needsAuthGate) {
+      if (!inAuth) router.replace('/auth/sign-in');
+      return;
+    }
+
+    if (inOnboarding || inAuth) {
       router.replace('/(tabs)');
     }
-  }, [hydrated, fontsReady, onboarded, segments, router]);
+  }, [
+    hydrated,
+    fontsReady,
+    onboarded,
+    offlineMode,
+    session,
+    sessionLoading,
+    segments,
+    router,
+  ]);
 
   if (!fontsReady || !hydrated) {
     return (
@@ -82,6 +124,7 @@ export default function RootLayout() {
         >
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="onboarding" />
+          <Stack.Screen name="auth" />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

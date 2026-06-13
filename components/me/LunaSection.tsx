@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
+import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { LunaCanvas } from '../LunaCanvas';
 import { TraitBar } from '../TraitBar';
@@ -8,6 +9,8 @@ import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { usePetStore } from '../../store/petStore';
 import { useUserStore } from '../../store/userStore';
+import { useSession, signOut } from '../../lib/auth';
+import { isSupabaseConfigured } from '../../lib/supabase';
 import {
   useQuestStore,
   selectCompletedToday,
@@ -20,9 +23,13 @@ import { lunaState } from '../../lib/gamification';
 import { items as ALL_ITEMS } from '../../constants/items';
 
 export const LunaSection = () => {
+  const router = useRouter();
   const petName = useUserStore((s) => s.petName);
   const streak = useUserStore((s) => s.streak);
   const lastActiveDate = useUserStore((s) => s.lastActiveDate);
+  const offlineMode = useUserStore((s) => s.offlineMode);
+  const setOfflineMode = useUserStore((s) => s.setOfflineMode);
+  const { session } = useSession();
   const quests = useQuestStore((s) => s.quests);
   const checkins = useCheckinStore((s) => s.checkins);
   const completedToday = useMemo(
@@ -80,6 +87,18 @@ export const LunaSection = () => {
   const handleCare = (which: 'checkin' | 'meds' | 'move' | 'windDown') => {
     Haptics.selectionAsync();
     care(which);
+  };
+
+  const handleSignIn = () => {
+    Haptics.selectionAsync();
+    setOfflineMode(false);
+    router.push('/auth/sign-in');
+  };
+
+  const handleSignOut = async () => {
+    Haptics.selectionAsync();
+    await signOut();
+    Alert.alert('Signed out', 'Your local data stays on this device.');
   };
 
   const adventureReady =
@@ -167,6 +186,29 @@ export const LunaSection = () => {
               : `Back at ${new Date(adventure.endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`}
         </Text>
       </Pressable>
+
+      {isSupabaseConfigured && (
+        <>
+          <View style={{ height: 22 }} />
+          <Text style={styles.label}>Account</Text>
+          {session ? (
+            <View style={styles.account}>
+              <Text style={styles.accountEmail} numberOfLines={1}>
+                {session.user.email ?? 'signed in'}
+              </Text>
+              <Pressable onPress={handleSignOut} style={styles.signOut}>
+                <Text style={styles.signOutText}>Sign out</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable onPress={handleSignIn} style={styles.signIn}>
+              <Text style={styles.signInText}>
+                {offlineMode ? 'Sign in to sync across devices' : 'Sign in'}
+              </Text>
+            </Pressable>
+          )}
+        </>
+      )}
     </View>
   );
 };
@@ -206,4 +248,46 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   advSub: { fontFamily: fonts.sans, color: colors.text3, fontSize: 12 },
+  account: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 13,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  accountEmail: {
+    fontFamily: fonts.sansMedium,
+    color: colors.text,
+    fontSize: 13,
+    flex: 1,
+  },
+  signOut: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: colors.border2,
+  },
+  signOutText: {
+    fontFamily: fonts.sansMedium,
+    color: colors.text2,
+    fontSize: 12,
+  },
+  signIn: {
+    backgroundColor: colors.plumBg,
+    borderColor: colors.plumBorder,
+    borderWidth: 1,
+    borderRadius: 13,
+    padding: 14,
+    alignItems: 'center',
+  },
+  signInText: {
+    fontFamily: fonts.sansSemi,
+    color: colors.plum,
+    fontSize: 13,
+  },
 });
