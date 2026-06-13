@@ -54,80 +54,89 @@ export default function ForgotPasswordScreen() {
       <StatusBar barStyle="light-content" />
 
       <Pressable
-        style={[styles.backBtn, { top: insets.top + 12 }]}
+        style={[styles.backBtn, { top: insets.top + 14 }]}
         onPress={() => router.back()}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
         <Text style={styles.backText}>← Back</Text>
       </Pressable>
 
-      <View style={styles.lunaArea}>
-        <View style={styles.lunaGlow} />
-        <LunaPixel mood={sent ? 'happy' : 'idle'} size={100} />
-        <Text style={styles.heading}>
-          {sent ? 'Check your email.' : 'Reset password.'}
-        </Text>
-      </View>
-
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1, justifyContent: 'flex-end' }}
+        style={{ flex: 1 }}
       >
-        <View style={[styles.card, { paddingBottom: insets.bottom + 24 }]}>
-          <View style={styles.shimmer} />
+        <View
+          style={[
+            styles.body,
+            { paddingBottom: Math.max(insets.bottom + 16, 24) },
+          ]}
+        >
+          <View style={styles.lunaArea}>
+            <View style={styles.lunaGlow} />
+            <LunaPixel mood={sent ? 'happy' : 'idle'} size={80} />
+            <Text style={styles.heading}>
+              {sent ? 'Check your email.' : 'Reset password.'}
+            </Text>
+          </View>
 
-          {sent ? (
-            <View>
-              <Text style={styles.sentIcon}>📬</Text>
-              <Text style={styles.sentTitle}>We sent you a link</Text>
-              <Text style={styles.sentBody}>
-                Check{' '}
-                <Text style={{ color: colors.text, fontFamily: fonts.sansSemi }}>
-                  {email}
-                </Text>{' '}
-                for a password reset link.{'\n'}It expires in 15 minutes.
-              </Text>
-              <AuthButton onPress={() => router.replace('/auth/sign-in')}>
-                Back to log in
-              </AuthButton>
-              <AuthButton
-                variant="ghost"
-                onPress={() => {
-                  setSent(false);
-                  setEmail('');
-                }}
-              >
-                Try a different email
-              </AuthButton>
-            </View>
-          ) : (
-            <View>
-              <Text style={styles.cardTitle}>Forgot your password?</Text>
-              <Text style={styles.cardSub}>
-                Enter your email and we'll send a reset link.
-              </Text>
-              <AuthField
-                label="Email"
-                value={email}
-                onChangeText={(v) => {
-                  setEmail(v);
-                  if (error) setError('');
-                }}
-                placeholder="you@example.com"
-                keyboardType="email-address"
-                error={error}
-                autoComplete="email"
-                textContentType="emailAddress"
-              />
-              <AuthButton
-                onPress={handleSend}
-                loading={loading}
-                disabled={!isSupabaseConfigured}
-              >
-                Send reset link
-              </AuthButton>
-            </View>
-          )}
+          <View style={styles.card}>
+            <View style={styles.shimmer} />
+
+            {sent ? (
+              <View>
+                <Text style={styles.sentIcon}>📬</Text>
+                <Text style={styles.sentTitle}>We sent you a link</Text>
+                <Text style={styles.sentBody}>
+                  Check{' '}
+                  <Text
+                    style={{ color: colors.text, fontFamily: fonts.sansSemi }}
+                  >
+                    {email}
+                  </Text>{' '}
+                  for a password reset link.{'\n'}It expires in 15 minutes.
+                </Text>
+                <AuthButton onPress={() => router.replace('/auth/sign-in')}>
+                  Back to log in
+                </AuthButton>
+                <AuthButton
+                  variant="ghost"
+                  onPress={() => {
+                    setSent(false);
+                    setEmail('');
+                  }}
+                >
+                  Try a different email
+                </AuthButton>
+              </View>
+            ) : (
+              <View>
+                <Text style={styles.cardTitle}>Forgot your password?</Text>
+                <Text style={styles.cardSub}>
+                  Enter your email and we'll send a reset link.
+                </Text>
+                <AuthField
+                  label="Email"
+                  value={email}
+                  onChangeText={(v) => {
+                    setEmail(v);
+                    if (error) setError('');
+                  }}
+                  placeholder="you@example.com"
+                  keyboardType="email-address"
+                  error={error}
+                  autoComplete="email"
+                  textContentType="emailAddress"
+                />
+                <AuthButton
+                  onPress={handleSend}
+                  loading={loading}
+                  disabled={!isSupabaseConfigured}
+                >
+                  Send reset link
+                </AuthButton>
+              </View>
+            )}
+          </View>
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -142,20 +151,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text3,
   },
+  body: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 30,
+  },
   lunaArea: {
     alignItems: 'center',
-    paddingTop: 56,
-    paddingBottom: 12,
-    minHeight: 180,
-    justifyContent: 'flex-end',
+    paddingTop: 4,
+    paddingBottom: 14,
+    position: 'relative',
   },
   lunaGlow: {
     position: 'absolute',
-    width: 200,
-    height: 200,
-    borderRadius: 100,
+    width: 160,
+    height: 160,
+    borderRadius: 80,
     backgroundColor: 'rgba(176,102,74,0.07)',
-    top: 30,
+    top: -20,
   },
   heading: {
     fontFamily: fonts.serifItalic,
@@ -164,12 +177,12 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   card: {
+    flex: 1,
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 24,
+    borderRadius: 22,
+    padding: 20,
     overflow: 'hidden',
   },
   shimmer: {
@@ -190,7 +203,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 13,
     color: colors.text3,
-    marginBottom: 18,
+    marginBottom: 16,
     lineHeight: 19,
   },
   sentIcon: { fontSize: 32, textAlign: 'center', marginBottom: 12 },
@@ -207,6 +220,6 @@ const styles = StyleSheet.create({
     color: colors.text2,
     lineHeight: 20,
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
 });

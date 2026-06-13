@@ -3,11 +3,11 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   Pressable,
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -21,7 +21,6 @@ import { PasswordStrength } from '../../components/auth/PasswordStrength';
 import { signUp } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
-import { Alert } from 'react-native';
 
 type Errors = Partial<{
   name: string;
@@ -62,8 +61,6 @@ export default function SignUpScreen() {
       setName_(name.trim());
       await signUp(email, pass);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Skip directly to the celebratory Done screen; root layout will
-      // still pick up the session change in the background.
       router.replace('/auth/done' as never);
     } catch (err) {
       setErrors({
@@ -82,7 +79,7 @@ export default function SignUpScreen() {
     Haptics.selectionAsync();
     Alert.alert(
       `${provider === 'apple' ? 'Apple' : 'Google'} sign-in`,
-      "We're wiring this up. For now, use email — it's just as fast and we don't ask for a card.",
+      "We're wiring this up. For now, use email — it's just as fast.",
     );
   };
 
@@ -97,29 +94,27 @@ export default function SignUpScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" />
 
-      <View style={styles.lunaArea}>
-        <View style={styles.lunaGlow} />
-        <LunaPixel mood={lunaMood} size={110} />
-        <View style={styles.lunaLabel}>
-          <Text style={styles.kicker}>lumi</Text>
-          <Text style={styles.greeting}>
-            {name.trim() ? `Hi ${name.trim()} —` : "Let's get you started."}
-          </Text>
-        </View>
-      </View>
-
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        <ScrollView
-          contentContainerStyle={[
-            styles.scroll,
-            { paddingBottom: insets.bottom + 32 },
+        <View
+          style={[
+            styles.body,
+            { paddingBottom: Math.max(insets.bottom + 16, 24) },
           ]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
         >
+          {/* Luna area — compact, just enough to set the mood */}
+          <View style={styles.lunaArea}>
+            <View style={styles.lunaGlow} />
+            <LunaPixel mood={lunaMood} size={80} />
+            <Text style={styles.kicker}>LUMI</Text>
+            <Text style={styles.greeting}>
+              {name.trim() ? `Hi ${name.trim()} —` : "Let's get you started."}
+            </Text>
+          </View>
+
+          {/* Card grows to fill */}
           <View style={styles.card}>
             <View style={styles.shimmer} />
 
@@ -203,7 +198,7 @@ export default function SignUpScreen() {
             <Text style={styles.terms}>
               By creating an account you agree to our{' '}
               <Text style={{ color: colors.terra }}>Terms</Text> and{' '}
-              <Text style={{ color: colors.terra }}>Privacy Policy</Text>.
+              <Text style={{ color: colors.terra }}>Privacy</Text>.
             </Text>
 
             <AuthButton
@@ -227,7 +222,7 @@ export default function SignUpScreen() {
               </Pressable>
             )}
           </View>
-        </ScrollView>
+        </View>
       </KeyboardAvoidingView>
     </View>
   );
@@ -235,53 +230,56 @@ export default function SignUpScreen() {
 
 const prettyError = (raw: string): string => {
   if (/already registered/i.test(raw))
-    return 'An account with that email already exists — try Log in.';
-  if (/weak password/i.test(raw))
-    return 'Password is too short or too common.';
+    return 'An account with that email exists — try Log in.';
+  if (/weak password/i.test(raw)) return 'Password is too short or too common.';
   if (/email rate/i.test(raw))
-    return 'Hit the email rate limit. Try again in an hour, or use a + alias.';
+    return 'Email rate limit hit. Try again in an hour, or use a + alias.';
   return raw;
 };
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  body: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
   lunaArea: {
     alignItems: 'center',
-    paddingTop: 16,
+    paddingTop: 4,
     paddingBottom: 8,
-    minHeight: 180,
-    justifyContent: 'flex-end',
+    position: 'relative',
   },
   lunaGlow: {
     position: 'absolute',
-    width: 240,
-    height: 240,
-    borderRadius: 120,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
     backgroundColor: 'rgba(176,102,74,0.08)',
-    top: 0,
+    top: -28,
   },
-  lunaLabel: { alignItems: 'center', marginTop: 8 },
   kicker: {
     fontFamily: fonts.sansSemi,
-    fontSize: 10,
+    fontSize: 9,
     letterSpacing: 3,
-    textTransform: 'uppercase',
     color: colors.terra,
-    opacity: 0.6,
-    marginBottom: 3,
+    opacity: 0.65,
+    marginTop: 8,
   },
   greeting: {
     fontFamily: fonts.serifItalic,
-    fontSize: 18,
+    fontSize: 17,
     color: colors.cream,
+    marginTop: 4,
   },
-  scroll: { padding: 18, paddingTop: 4 },
   card: {
+    flex: 1,
+    marginTop: 10,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 22,
-    padding: 22,
+    padding: 18,
     overflow: 'hidden',
   },
   shimmer: {
@@ -296,15 +294,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 18,
+    marginBottom: 12,
   },
   cardTitle: {
     fontFamily: fonts.sansSemi,
-    fontSize: 18,
+    fontSize: 17,
     color: colors.text,
     marginBottom: 2,
   },
-  cardSub: { fontFamily: fonts.sans, fontSize: 12, color: colors.text3 },
+  cardSub: { fontFamily: fonts.sans, fontSize: 11, color: colors.text3 },
   freePill: {
     backgroundColor: colors.terraBg,
     borderWidth: 1,
@@ -321,8 +319,8 @@ const styles = StyleSheet.create({
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginVertical: 16,
+    gap: 8,
+    marginVertical: 12,
   },
   dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
   dividerText: {
@@ -332,16 +330,16 @@ const styles = StyleSheet.create({
   },
   terms: {
     fontFamily: fonts.sans,
-    fontSize: 11,
+    fontSize: 10,
     color: colors.text3,
-    lineHeight: 17,
-    marginBottom: 14,
+    lineHeight: 15,
+    marginBottom: 10,
   },
   submitErr: {
     fontFamily: fonts.sansItalic,
     fontSize: 12,
     color: colors.err,
-    marginBottom: 12,
+    marginBottom: 10,
     textAlign: 'center',
   },
   switchRow: {
@@ -352,18 +350,18 @@ const styles = StyleSheet.create({
   },
   switchText: {
     fontFamily: fonts.sans,
-    fontSize: 13,
+    fontSize: 12,
     color: colors.text3,
   },
   switchLink: {
     fontFamily: fonts.sansSemi,
-    fontSize: 13,
+    fontSize: 12,
     color: colors.terra,
   },
-  skip: { marginTop: 14, alignItems: 'center' },
+  skip: { marginTop: 8, alignItems: 'center' },
   skipText: {
     fontFamily: fonts.sansMedium,
     color: colors.text3,
-    fontSize: 12,
+    fontSize: 11,
   },
 });

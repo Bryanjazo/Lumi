@@ -3,11 +3,11 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   Pressable,
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -20,7 +20,6 @@ import { AuthButton } from '../../components/auth/AuthButton';
 import { signIn } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
-import { Alert } from 'react-native';
 
 type Errors = Partial<{
   email: string;
@@ -56,7 +55,6 @@ export default function SignInScreen() {
     try {
       await signIn(email, pass);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Root layout reroutes when the session lands.
     } catch (err) {
       setErrors({
         submit:
@@ -72,12 +70,6 @@ export default function SignInScreen() {
     }
   };
 
-  const skipOffline = () => {
-    Haptics.selectionAsync();
-    setOfflineMode(true);
-    router.replace('/(tabs)');
-  };
-
   const handleSocial = (provider: 'apple' | 'google') => {
     Haptics.selectionAsync();
     Alert.alert(
@@ -86,31 +78,33 @@ export default function SignInScreen() {
     );
   };
 
+  const skipOffline = () => {
+    Haptics.selectionAsync();
+    setOfflineMode(true);
+    router.replace('/(tabs)');
+  };
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" />
-
-      <View style={styles.lunaArea}>
-        <View style={styles.lunaGlow} />
-        <LunaPixel mood={lunaMood} size={110} />
-        <View style={styles.lunaLabel}>
-          <Text style={styles.kicker}>lumi</Text>
-          <Text style={styles.greeting}>Welcome back.</Text>
-        </View>
-      </View>
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        <ScrollView
-          contentContainerStyle={[
-            styles.scroll,
-            { paddingBottom: insets.bottom + 32 },
+        <View
+          style={[
+            styles.body,
+            { paddingBottom: Math.max(insets.bottom + 16, 24) },
           ]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
         >
+          <View style={styles.lunaArea}>
+            <View style={styles.lunaGlow} />
+            <LunaPixel mood={lunaMood} size={80} />
+            <Text style={styles.kicker}>LUMI</Text>
+            <Text style={styles.greeting}>Welcome back.</Text>
+          </View>
+
           <View style={styles.card}>
             <View style={styles.shimmer} />
             <Text style={styles.cardTitle}>Log in</Text>
@@ -197,7 +191,7 @@ export default function SignInScreen() {
               </Pressable>
             )}
           </View>
-        </ScrollView>
+        </View>
       </KeyboardAvoidingView>
     </View>
   );
@@ -205,43 +199,47 @@ export default function SignInScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  body: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
   lunaArea: {
     alignItems: 'center',
-    paddingTop: 16,
+    paddingTop: 4,
     paddingBottom: 8,
-    minHeight: 180,
-    justifyContent: 'flex-end',
+    position: 'relative',
   },
   lunaGlow: {
     position: 'absolute',
-    width: 240,
-    height: 240,
-    borderRadius: 120,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
     backgroundColor: 'rgba(176,102,74,0.08)',
-    top: 0,
+    top: -28,
   },
-  lunaLabel: { alignItems: 'center', marginTop: 8 },
   kicker: {
     fontFamily: fonts.sansSemi,
-    fontSize: 10,
+    fontSize: 9,
     letterSpacing: 3,
-    textTransform: 'uppercase',
     color: colors.terra,
-    opacity: 0.6,
-    marginBottom: 3,
+    opacity: 0.65,
+    marginTop: 8,
   },
   greeting: {
     fontFamily: fonts.serifItalic,
-    fontSize: 18,
+    fontSize: 17,
     color: colors.cream,
+    marginTop: 4,
   },
-  scroll: { padding: 18, paddingTop: 4 },
   card: {
+    flex: 1,
+    marginTop: 10,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 22,
-    padding: 22,
+    padding: 18,
     overflow: 'hidden',
   },
   shimmer: {
@@ -254,15 +252,15 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontFamily: fonts.sansSemi,
-    fontSize: 18,
+    fontSize: 17,
     color: colors.text,
-    marginBottom: 18,
+    marginBottom: 14,
   },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginVertical: 16,
+    gap: 8,
+    marginVertical: 12,
   },
   dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
   dividerText: {
@@ -270,7 +268,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.text3,
   },
-  forgotWrap: { alignItems: 'flex-end', marginBottom: 16, marginTop: -4 },
+  forgotWrap: { alignItems: 'flex-end', marginBottom: 12, marginTop: -2 },
   forgotText: {
     fontFamily: fonts.sansMedium,
     fontSize: 12,
@@ -280,7 +278,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansItalic,
     fontSize: 12,
     color: colors.err,
-    marginBottom: 12,
+    marginBottom: 10,
     textAlign: 'center',
   },
   switchRow: {
@@ -290,18 +288,18 @@ const styles = StyleSheet.create({
   },
   switchText: {
     fontFamily: fonts.sans,
-    fontSize: 13,
+    fontSize: 12,
     color: colors.text3,
   },
   switchLink: {
     fontFamily: fonts.sansSemi,
-    fontSize: 13,
+    fontSize: 12,
     color: colors.terra,
   },
-  skip: { marginTop: 14, alignItems: 'center' },
+  skip: { marginTop: 8, alignItems: 'center' },
   skipText: {
     fontFamily: fonts.sansMedium,
     color: colors.text3,
-    fontSize: 12,
+    fontSize: 11,
   },
 });
