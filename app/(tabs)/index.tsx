@@ -20,6 +20,7 @@ import { fonts } from '../../constants/fonts';
 import {
   IMPORTANCE,
   Importance,
+  XP_BY_IMPORTANCE,
   importanceFromDifficulty,
 } from '../../constants/importance';
 import { useUserStore } from '../../store/userStore';
@@ -279,8 +280,6 @@ type Parsed = {
   importance: Importance;
 };
 
-const ADD_XP_PRESETS = [20, 40, 80];
-
 export default function Home() {
   const router = useRouter();
 
@@ -306,8 +305,8 @@ export default function Home() {
 
   const [adding, setAdding] = useState(false);
   const [newTask, setNewTask] = useState('');
-  const [newXp, setNewXp] = useState(40);
   const [newImportance, setNewImportance] = useState<Importance>('medium');
+  const newXp = XP_BY_IMPORTANCE[newImportance];
 
   // game state
   const [combo, setCombo] = useState(0);
@@ -395,12 +394,15 @@ export default function Home() {
     setSorting(true);
     try {
       const res = await parseBrainDump(dump);
-      const enriched: Parsed[] = res.tasks.map((t) => ({
-        title: t.title,
-        xp: t.difficulty === 'hard' ? 80 : t.difficulty === 'medium' ? 50 : 20,
-        category: categoryFor(t.title),
-        importance: importanceFromTitle(t.title),
-      }));
+      const enriched: Parsed[] = res.tasks.map((t) => {
+        const importance = importanceFromTitle(t.title);
+        return {
+          title: t.title,
+          xp: XP_BY_IMPORTANCE[importance],
+          category: categoryFor(t.title),
+          importance,
+        };
+      });
       setParsed(enriched);
       addXp(XP.brainDump);
     } catch (e) {
@@ -460,10 +462,9 @@ export default function Home() {
             ? 'medium'
             : 'easy',
       importance: newImportance,
-      xpReward: newXp,
+      xpReward: XP_BY_IMPORTANCE[newImportance],
     });
     setNewTask('');
-    setNewXp(40);
     setNewImportance('medium');
     setAdding(false);
   };
@@ -673,42 +674,22 @@ export default function Home() {
                   },
                 )}
               </View>
-              <View style={styles.xpPicker}>
-                {ADD_XP_PRESETS.map((x) => {
-                  const sel = newXp === x;
-                  return (
-                    <Pressable
-                      key={x}
-                      onPress={() => {
-                        Haptics.selectionAsync();
-                        setNewXp(x);
-                      }}
-                      style={[
-                        styles.xpChoice,
-                        {
-                          backgroundColor: sel ? colors.terraBg : 'transparent',
-                          borderColor: sel ? colors.terra : colors.border,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.xpChoiceText,
-                          { color: sel ? colors.terra : colors.text3 },
-                        ]}
-                      >
-                        +{x}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+              <View style={styles.xpAuto}>
+                <Text style={styles.xpAutoLabel}>auto</Text>
+                <Text
+                  style={[
+                    styles.xpAutoVal,
+                    { color: IMPORTANCE[newImportance].color },
+                  ]}
+                >
+                  +{newXp}
+                </Text>
               </View>
             </View>
             <View style={styles.addActions}>
               <Pressable
                 onPress={() => {
                   setNewTask('');
-                  setNewXp(40);
                   setNewImportance('medium');
                   setAdding(false);
                 }}
@@ -1283,17 +1264,21 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 0.3,
   },
-  xpPicker: { flexDirection: 'row', gap: 4 },
-  xpChoice: {
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
+  xpAuto: {
+    alignItems: 'flex-end',
+    gap: 1,
   },
-  xpChoiceText: {
+  xpAutoLabel: {
     fontFamily: fonts.sansSemi,
-    fontSize: 11,
-    letterSpacing: 0.2,
+    fontSize: 8,
+    letterSpacing: 1.5,
+    color: colors.text3,
+    textTransform: 'uppercase',
+  },
+  xpAutoVal: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 18,
+    lineHeight: 20,
   },
   addActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
   addCancel: {

@@ -19,3 +19,13 @@ export const difficultyFromImportance = (
   i: Importance,
 ): 'easy' | 'medium' | 'hard' =>
   i === 'high' ? 'hard' : i === 'medium' ? 'medium' : 'easy';
+
+/**
+ * Auto-assigned XP for a new quest based on its importance.
+ * No more manual XP picker — pick the importance, the XP follows.
+ */
+export const XP_BY_IMPORTANCE: Record<Importance, number> = {
+  high: 80,
+  medium: 40,
+  low: 20,
+};
