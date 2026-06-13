@@ -1,14 +1,22 @@
 import { ScrollView, StyleSheet, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../constants/colors';
+import { Grain } from './Grain';
+import { Vignette } from './Vignette';
 
 interface Props {
   children: React.ReactNode;
   scroll?: boolean;
   style?: ViewStyle;
+  lofi?: boolean; // overlays on by default; allow opting out
 }
 
-export const Screen = ({ children, scroll = true, style }: Props) => {
+export const Screen = ({
+  children,
+  scroll = true,
+  style,
+  lofi = true,
+}: Props) => {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       {scroll ? (
@@ -20,6 +28,12 @@ export const Screen = ({ children, scroll = true, style }: Props) => {
         </ScrollView>
       ) : (
         <View style={[styles.content, style]}>{children}</View>
+      )}
+      {lofi && (
+        <>
+          <Vignette />
+          <Grain />
+        </>
       )}
     </SafeAreaView>
   );

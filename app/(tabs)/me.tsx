@@ -8,6 +8,8 @@ import { SkinsSection } from '../../components/me/SkinsSection';
 import { ItemsSection } from '../../components/me/ItemsSection';
 import { GoalsSection } from '../../components/me/GoalsSection';
 import { ReportSection } from '../../components/me/ReportSection';
+import { Grain } from '../../components/Grain';
+import { Vignette } from '../../components/Vignette';
 
 type Sub = 'luna' | 'skins' | 'items' | 'goals' | 'report';
 
@@ -58,6 +60,8 @@ export default function MeTab() {
         {sub === 'goals' && <GoalsSection />}
         {sub === 'report' && <ReportSection />}
       </ScrollView>
+      <Vignette />
+      <Grain />
     </SafeAreaView>
   );
 }

@@ -21,12 +21,13 @@ const COLS = 32;
 const ROWS = 24;
 
 const wallTone = (s: LunaState) => {
-  if (s === 'thriving') return ['#3A2D44', '#251C2E'];
-  if (s === 'struggling') return ['#2E2920', '#1A1714'];
-  return ['#1A1714', '#141210'];
+  // Warmer, dustier walls — like tungsten light on aged paper.
+  if (s === 'thriving') return ['#3D2F36', '#26201D'];
+  if (s === 'struggling') return ['#322820', '#1D1812'];
+  return ['#1A1612', '#15110D'];
 };
 const floorTone = (s: LunaState) =>
-  s === 'thriving' ? '#5A3F2A' : s === 'struggling' ? '#3A2D20' : '#241B14';
+  s === 'thriving' ? '#5C402A' : s === 'struggling' ? '#3C2E1F' : '#241A12';
 
 type FrameKey = 'sit' | 'walkA' | 'walkB' | 'sleep' | 'groom';
 
@@ -189,7 +190,10 @@ export const LunaCanvas = ({ state, size = 320 }: Props) => {
             <Rect x={cell * 2} y={cell * 11} width={cell * 3} height={cell * 1} fill={colors.caramel} />
             <Rect x={cell * 3} y={cell * 12} width={cell * 1} height={cell * 4} fill="#3A2D20" />
             {state !== 'away' && (
-              <Rect x={cell * 0.5} y={cell * 10.5} width={cell * 6} height={cell * 1} fill="rgba(212,170,106,0.25)" />
+              <>
+                <Rect x={cell * 0.5} y={cell * 10.5} width={cell * 6} height={cell * 1.4} fill="rgba(201,158,94,0.18)" />
+                <Rect x={cell * 1.2} y={cell * 11.5} width={cell * 4.6} height={cell * 6} fill="rgba(201,158,94,0.08)" />
+              </>
             )}
           </G>
         )}
@@ -337,6 +341,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(212,170,106,0.06)',
+    backgroundColor: 'rgba(201,158,94,0.07)',
   },
 });
