@@ -16,6 +16,8 @@ interface UserState {
   shieldUsedThisWeek: boolean;
   onboarded: boolean;
   notificationsEnabled: boolean;
+  /** User explicitly chose to use Lumi without an account. */
+  offlineMode: boolean;
 
   setName: (name: string) => void;
   setPetName: (petName: string) => void;
@@ -26,6 +28,7 @@ interface UserState {
   rechargeShield: () => void;
   completeOnboarding: () => void;
   setNotificationsEnabled: (on: boolean) => void;
+  setOfflineMode: (on: boolean) => void;
   reset: () => void;
 }
 
@@ -50,6 +53,7 @@ export const useUserStore = create<UserState>()(
       shieldUsedThisWeek: false,
       onboarded: false,
       notificationsEnabled: false,
+      offlineMode: false,
 
       setName: (name) => set({ name }),
       setPetName: (petName) => set({ petName }),
@@ -89,6 +93,7 @@ export const useUserStore = create<UserState>()(
 
       completeOnboarding: () => set({ onboarded: true }),
       setNotificationsEnabled: (on) => set({ notificationsEnabled: on }),
+      setOfflineMode: (on) => set({ offlineMode: on }),
 
       reset: () =>
         set({
@@ -102,6 +107,7 @@ export const useUserStore = create<UserState>()(
           shieldUsedThisWeek: false,
           onboarded: false,
           notificationsEnabled: false,
+          offlineMode: false,
         }),
     }),
     {
