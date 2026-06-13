@@ -101,8 +101,12 @@ export default function SignInScreen() {
           <View style={styles.lunaArea}>
             <View style={styles.lunaGlow} />
             <LunaPixel mood={lunaMood} size={80} />
-            <Text style={styles.kicker}>LUMI</Text>
-            <Text style={styles.greeting}>Welcome back.</Text>
+            <Text selectable={false} style={styles.kicker}>
+              L U M I
+            </Text>
+            <Text selectable={false} style={styles.greeting}>
+              Welcome back.
+            </Text>
           </View>
 
           <View style={styles.card}>
@@ -220,11 +224,12 @@ const styles = StyleSheet.create({
   },
   kicker: {
     fontFamily: fonts.sansSemi,
-    fontSize: 9,
-    letterSpacing: 3,
+    fontSize: 10,
+    letterSpacing: 4,
     color: colors.terra,
-    opacity: 0.65,
-    marginTop: 8,
+    opacity: 0.7,
+    marginTop: 10,
+    ...(({ userSelect: 'none' } as object) as object),
   },
   greeting: {
     fontFamily: fonts.serifItalic,

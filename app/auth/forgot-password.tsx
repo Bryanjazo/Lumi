@@ -74,7 +74,7 @@ export default function ForgotPasswordScreen() {
           <View style={styles.lunaArea}>
             <View style={styles.lunaGlow} />
             <LunaPixel mood={sent ? 'happy' : 'idle'} size={80} />
-            <Text style={styles.heading}>
+            <Text selectable={false} style={styles.heading}>
               {sent ? 'Check your email.' : 'Reset password.'}
             </Text>
           </View>

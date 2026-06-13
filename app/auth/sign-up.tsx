@@ -108,8 +108,10 @@ export default function SignUpScreen() {
           <View style={styles.lunaArea}>
             <View style={styles.lunaGlow} />
             <LunaPixel mood={lunaMood} size={80} />
-            <Text style={styles.kicker}>LUMI</Text>
-            <Text style={styles.greeting}>
+            <Text selectable={false} style={styles.kicker}>
+              L U M I
+            </Text>
+            <Text selectable={false} style={styles.greeting}>
               {name.trim() ? `Hi ${name.trim()} —` : "Let's get you started."}
             </Text>
           </View>
@@ -260,11 +262,13 @@ const styles = StyleSheet.create({
   },
   kicker: {
     fontFamily: fonts.sansSemi,
-    fontSize: 9,
-    letterSpacing: 3,
+    fontSize: 10,
+    letterSpacing: 4,
     color: colors.terra,
-    opacity: 0.65,
-    marginTop: 8,
+    opacity: 0.7,
+    marginTop: 10,
+    // RN-Web: prevent the default text-selection highlight
+    ...(({ userSelect: 'none' } as object) as object),
   },
   greeting: {
     fontFamily: fonts.serifItalic,
