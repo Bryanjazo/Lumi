@@ -13,6 +13,7 @@ import { Screen } from '../../components/Screen';
 import { XPBar } from '../../components/XPBar';
 import { QuestCard } from '../../components/QuestCard';
 import { Label } from '../../components/Label';
+import { TrialBanner } from '../../components/TrialBanner';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useUserStore } from '../../store/userStore';
@@ -78,6 +79,7 @@ export default function Home() {
         </Text>
       </View>
 
+      <TrialBanner />
       <XPBar />
 
       {shieldAvailable && (

@@ -21,6 +21,7 @@ import { useUserStore } from '../store/userStore';
 import { useSession, handleAuthDeepLink } from '../lib/auth';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useCloudSync } from '../lib/sync';
+import { useAccessStatus } from '../lib/subscription';
 
 export default function RootLayout() {
   const [fontsReady] = useFonts({
@@ -44,9 +45,14 @@ export default function RootLayout() {
   }, []);
 
   const onboarded = useUserStore((s) => s.onboarded);
-  const offlineMode = useUserStore((s) => s.offlineMode);
   const { session, loading: sessionLoading } = useSession();
   useCloudSync(session);
+  const access = useAccessStatus(session);
+
+  // When Supabase isn't configured (dev / no env vars), we let the user
+  // through without auth so the app still runs. Once configured, sign-in
+  // is required — no offline escape.
+  const allowOfflineDev = !isSupabaseConfigured;
 
   const segments = useSegments();
   const router = useRouter();
@@ -71,29 +77,36 @@ export default function RootLayout() {
     const top = segments[0];
     const inOnboarding = top === 'onboarding';
     const inAuth = top === 'auth';
+    const inPaywall = top === 'paywall';
 
     if (!onboarded) {
       if (!inOnboarding) router.replace('/onboarding/welcome');
       return;
     }
 
-    const needsAuthGate = isSupabaseConfigured && !session && !offlineMode;
-
-    if (needsAuthGate) {
+    // Sign-in is required once Supabase is configured.
+    if (!session && !allowOfflineDev) {
       if (!inAuth) router.replace('/auth/sign-in');
       return;
     }
 
-    if (inOnboarding || inAuth) {
+    // Signed in but trial expired / not subscribed → paywall.
+    if (session && !access.hasAccess) {
+      if (!inPaywall) router.replace('/paywall');
+      return;
+    }
+
+    if (inOnboarding || inAuth || inPaywall) {
       router.replace('/(tabs)');
     }
   }, [
     hydrated,
     fontsReady,
     onboarded,
-    offlineMode,
+    allowOfflineDev,
     session,
     sessionLoading,
+    access.hasAccess,
     segments,
     router,
   ]);
@@ -127,6 +140,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="onboarding" />
           <Stack.Screen name="auth" />
+          <Stack.Screen name="paywall" options={{ animation: 'slide_from_bottom' }} />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

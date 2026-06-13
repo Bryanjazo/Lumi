@@ -34,6 +34,9 @@ const debounce = <T extends (...args: never[]) => void>(
 // ── push: user profile ──────────────────────────────────────────────────
 const pushUser = async (userId: string) => {
   const s = useUserStore.getState();
+  // Subscription columns are owned by the server / IAP webhook — we read
+  // them but don't push, to avoid the client accidentally extending its
+  // own trial. Same for created_at.
   const { error } = await supabase.from('users').upsert(
     {
       id: userId,
@@ -195,6 +198,10 @@ export const pullAll = async (userId: string): Promise<void> => {
       shieldUsedThisWeek: userRow.shield_used_this_week ?? false,
       onboarded: userRow.onboarded ?? useUserStore.getState().onboarded,
       offlineMode: userRow.offline_mode ?? false,
+      subscriptionStatus: userRow.subscription_status ?? 'trial',
+      subscriptionTier: userRow.subscription_tier ?? null,
+      subscriptionCurrentPeriodEnd:
+        userRow.subscription_current_period_end ?? null,
     });
   }
 

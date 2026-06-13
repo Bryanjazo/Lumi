@@ -4,6 +4,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { xpProgress } from '../lib/gamification';
 
 export type AdhdType = 'inattentive' | 'hyperactive' | 'combined' | null;
+export type SubscriptionStatus =
+  | 'trial'
+  | 'active'
+  | 'past_due'
+  | 'cancelled'
+  | 'expired';
+export type SubscriptionTier = 'monthly' | 'annual' | null;
 
 interface UserState {
   name: string;
@@ -16,8 +23,15 @@ interface UserState {
   shieldUsedThisWeek: boolean;
   onboarded: boolean;
   notificationsEnabled: boolean;
-  /** User explicitly chose to use Lumi without an account. */
+  /**
+   * Dev escape only — set to true automatically when Supabase isn't
+   * configured. We do not let signed-in users opt into "offline" once
+   * required-auth is on.
+   */
   offlineMode: boolean;
+  subscriptionStatus: SubscriptionStatus;
+  subscriptionTier: SubscriptionTier;
+  subscriptionCurrentPeriodEnd: string | null;
 
   setName: (name: string) => void;
   setPetName: (petName: string) => void;
@@ -29,6 +43,11 @@ interface UserState {
   completeOnboarding: () => void;
   setNotificationsEnabled: (on: boolean) => void;
   setOfflineMode: (on: boolean) => void;
+  setSubscription: (params: {
+    status: SubscriptionStatus;
+    tier?: SubscriptionTier;
+    currentPeriodEnd?: string | null;
+  }) => void;
   reset: () => void;
 }
 
@@ -54,6 +73,9 @@ export const useUserStore = create<UserState>()(
       onboarded: false,
       notificationsEnabled: false,
       offlineMode: false,
+      subscriptionStatus: 'trial',
+      subscriptionTier: null,
+      subscriptionCurrentPeriodEnd: null,
 
       setName: (name) => set({ name }),
       setPetName: (petName) => set({ petName }),
@@ -94,6 +116,12 @@ export const useUserStore = create<UserState>()(
       completeOnboarding: () => set({ onboarded: true }),
       setNotificationsEnabled: (on) => set({ notificationsEnabled: on }),
       setOfflineMode: (on) => set({ offlineMode: on }),
+      setSubscription: ({ status, tier, currentPeriodEnd }) =>
+        set({
+          subscriptionStatus: status,
+          subscriptionTier: tier ?? null,
+          subscriptionCurrentPeriodEnd: currentPeriodEnd ?? null,
+        }),
 
       reset: () =>
         set({
@@ -108,6 +136,9 @@ export const useUserStore = create<UserState>()(
           onboarded: false,
           notificationsEnabled: false,
           offlineMode: false,
+          subscriptionStatus: 'trial',
+          subscriptionTier: null,
+          subscriptionCurrentPeriodEnd: null,
         }),
     }),
     {

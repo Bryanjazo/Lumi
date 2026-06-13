@@ -122,9 +122,11 @@ export default function SignIn() {
         </>
       )}
 
-      <Pressable onPress={stayOffline} style={styles.offline}>
-        <Text style={styles.offlineText}>Keep using Lumi offline</Text>
-      </Pressable>
+      {!isSupabaseConfigured && (
+        <Pressable onPress={stayOffline} style={styles.offline}>
+          <Text style={styles.offlineText}>Skip — dev mode only</Text>
+        </Pressable>
+      )}
     </Screen>
   );
 }
