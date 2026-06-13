@@ -12,6 +12,7 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Screen } from '../../components/Screen';
 import { XPBar } from '../../components/XPBar';
+import { ProfileCard } from '../../components/ProfileCard';
 import { QuestCard } from '../../components/QuestCard';
 import { Label } from '../../components/Label';
 import { colors } from '../../constants/colors';
@@ -95,6 +96,7 @@ export default function Home() {
       </View>
 
       <XPBar />
+      <ProfileCard />
 
       <Label style={{ marginTop: 8 }}>Today's quests</Label>
       <View style={styles.questList}>
