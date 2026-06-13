@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Screen } from '../../components/Screen';
 import { XPBar } from '../../components/XPBar';
@@ -31,6 +32,7 @@ const greeting = () => {
 };
 
 export default function Home() {
+  const router = useRouter();
   const name = useUserStore((s) => s.name);
   const shieldAvailable = useUserStore((s) => s.shieldAvailable);
   const streak = useUserStore((s) => s.streak);
@@ -73,11 +75,23 @@ export default function Home() {
 
   return (
     <Screen>
-      <View style={styles.greeting}>
-        <Text style={styles.time}>{greeting()}</Text>
-        <Text style={styles.h1}>
-          Hey {name || 'friend'}, <Text style={styles.italics}>ready?</Text>
-        </Text>
+      <View style={styles.greetingRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.time}>{greeting()}</Text>
+          <Text style={styles.h1}>
+            Hey {name || 'friend'}, <Text style={styles.italics}>ready?</Text>
+          </Text>
+        </View>
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync();
+            router.push('/profile');
+          }}
+          hitSlop={10}
+          style={styles.gear}
+        >
+          <Text style={styles.gearIcon}>⚙️</Text>
+        </Pressable>
       </View>
 
       <XPBar />
@@ -138,6 +152,23 @@ export default function Home() {
 
 const styles = StyleSheet.create({
   greeting: { marginBottom: 20 },
+  greetingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 20,
+    gap: 12,
+  },
+  gear: {
+    width: 40,
+    height: 40,
+    borderRadius: 100,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gearIcon: { fontSize: 18, lineHeight: 20 },
   time: {
     fontFamily: fonts.sans,
     color: colors.text3,
