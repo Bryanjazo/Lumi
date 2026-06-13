@@ -15,6 +15,7 @@ import type { Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { useUserStore } from '../store/userStore';
 import { useQuestStore, type Quest } from '../store/questStore';
+import { importanceFromDifficulty } from '../constants/importance';
 import { useCheckinStore, type Checkin } from '../store/checkinStore';
 import { usePetStore } from '../store/petStore';
 
@@ -215,6 +216,7 @@ export const pullAll = async (userId: string): Promise<void> => {
         id: r.id,
         title: r.title,
         difficulty: r.difficulty,
+        importance: importanceFromDifficulty(r.difficulty),
         xpReward: r.xp_reward,
         completed: r.completed,
         completedAt: r.completed_at,

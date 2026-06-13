@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { xpForQuest, todayKey } from '../lib/gamification';
+import { Importance, importanceFromDifficulty } from '../constants/importance';
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -9,6 +10,7 @@ export interface Quest {
   id: string;
   title: string;
   difficulty: Difficulty;
+  importance: Importance;
   xpReward: number;
   completed: boolean;
   completedAt: string | null;
@@ -23,12 +25,24 @@ export interface Quest {
 interface QuestState {
   quests: Quest[];
   addQuest: (
-    q: Omit<Quest, 'id' | 'completed' | 'completedAt' | 'createdAt' | 'date' | 'xpReward'> & {
+    q: Omit<
+      Quest,
+      | 'id'
+      | 'completed'
+      | 'completedAt'
+      | 'createdAt'
+      | 'date'
+      | 'xpReward'
+      | 'importance'
+    > & {
       date?: string;
       xpReward?: number;
+      importance?: Importance;
     },
   ) => Quest;
-  addMany: (q: { title: string; difficulty: Difficulty }[]) => Quest[];
+  addMany: (
+    q: { title: string; difficulty: Difficulty; importance?: Importance }[],
+  ) => Quest[];
   toggle: (id: string) => Quest | undefined;
   remove: (id: string) => void;
   todayQuests: () => Quest[];
@@ -47,10 +61,13 @@ export const useQuestStore = create<QuestState>()(
       quests: [],
       addQuest: (q) => {
         const xpReward = q.xpReward ?? xpForQuest(q.difficulty);
+        const importance =
+          q.importance ?? importanceFromDifficulty(q.difficulty);
         const quest: Quest = {
           id: newId(),
           title: q.title,
           difficulty: q.difficulty,
+          importance,
           xpReward,
           completed: false,
           completedAt: null,
@@ -69,6 +86,7 @@ export const useQuestStore = create<QuestState>()(
           id: `${newId()}_${i}`,
           title: q.title,
           difficulty: q.difficulty,
+          importance: q.importance ?? importanceFromDifficulty(q.difficulty),
           xpReward: xpForQuest(q.difficulty),
           completed: false,
           completedAt: null,

@@ -3,14 +3,26 @@
 // Lumi-1003 was reverted to keep the mock's slightly more saturated feel.
 
 export const colors = {
-  bg: '#141210',
-  bgAuth: '#171311', // warmer coffee-brown variant used on auth screens
+  // Lumi uses the warm coffee-brown spec on every screen (matches the
+  // lumi-home-fun mock). The older auth-specific tokens kept as aliases.
+  bg: '#171311',
+  bgAuth: '#171311',
   bg2: '#1A1714',
-  surface: '#1F1C18',
-  surfaceAuth: '#1F1A17', // matched warmer surface for auth cards
-  card: '#252118',
-  border: '#2E2920',
-  border2: '#3A332A',
+  surface: '#1F1A17',
+  surfaceAuth: '#1F1A17',
+  card: '#26201C',
+  cardHi: '#2D261F',
+  borderHi: '#4A3F37',
+  text4: '#4A3F37',
+  // accents pulled from the mock
+  sage: '#8FA378',
+  sageBg: 'rgba(143,163,120,0.07)',
+  honey: '#C9A06A',
+  honeyBg: 'rgba(201,160,106,0.07)',
+  gold: '#E8B860',
+  terraGlow: 'rgba(216,152,120,0.18)',
+  border: '#332B25',
+  border2: '#332B25',
 
   cream: '#E8DCC8',
   cream2: '#D4C4A8',
