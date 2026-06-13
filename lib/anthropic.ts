@@ -87,6 +87,68 @@ const extractJson = <T,>(text: string): T => {
   return JSON.parse(match[0]) as T;
 };
 
+const FOLLOWUP_SYSTEM = `You are Lumi continuing a conversation about how the user is feeling. They've already received an initial diagnosis + action. Now they're sharing more context or asking for a different angle.
+
+Respond in 2-3 short sentences. Plain language, no therapy jargon. One concrete, doable thing. Warm but direct.
+Never use words: journey, mindful, validate, process, cope, strategies, self-care.
+Return JSON: { "tip": "..." }`;
+
+export interface FollowUpResponse {
+  tip: string;
+}
+
+export const checkinFollowUp = async (params: {
+  mood: string;
+  initialState: string;
+  initialAction: string;
+  followUp: string;
+}): Promise<FollowUpResponse> => {
+  if (!isAnthropicConfigured) {
+    return offlineFollowUp(params);
+  }
+  const text = await callMessages({
+    system: FOLLOWUP_SYSTEM,
+    maxTokens: 250,
+    messages: [
+      {
+        role: 'user',
+        content: `Mood: ${params.mood}
+Initial diagnosis: ${params.initialState}
+First action we gave them: ${params.initialAction}
+
+What they said next: ${params.followUp}`,
+      },
+    ],
+  });
+  return extractJson<FollowUpResponse>(text);
+};
+
+const offlineFollowUp = (p: {
+  mood: string;
+  followUp: string;
+}): FollowUpResponse => {
+  const t = p.followUp.toLowerCase();
+  if (/(work|deadline|boss)/.test(t))
+    return {
+      tip: "When the work pressure stacks, your brain reads it as physical danger. Step away from the screen for 90 seconds. Movement helps more than thinking through it does.",
+    };
+  if (/(sleep|tired|exhausted)/.test(t))
+    return {
+      tip: "Tired brains can't make tired decisions. Lower the bar to one small thing. The rest waits without you punishing yourself.",
+    };
+  if (/(food|eat|hungry)/.test(t))
+    return {
+      tip: "ADHD brains tend to skip hunger signals until they're already underwater. Eat something with protein in the next 20 minutes — even if you're not 'really hungry.'",
+    };
+  if (/(alone|lonely|isolated)/.test(t))
+    return {
+      tip: "Reach out to one person — even a single text. Not for them to fix it, just to register that you exist. That's enough.",
+    };
+  return {
+    tip: "Whatever you're feeling right now is data, not a verdict. Pick the smallest possible next step. Don't aim higher than that — aim for now.",
+  };
+};
+
 export const checkinResponse = async (params: {
   mood: string;
   text: string;
