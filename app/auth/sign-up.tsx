@@ -17,32 +17,37 @@ import { fonts } from '../../constants/fonts';
 import { LunaPixel, LunaMood } from '../../components/auth/LunaPixel';
 import { AuthField } from '../../components/auth/AuthField';
 import { AuthButton } from '../../components/auth/AuthButton';
-import { signIn } from '../../lib/auth';
+import { PasswordStrength } from '../../components/auth/PasswordStrength';
+import { signUp } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
 
 type Errors = Partial<{
+  name: string;
   email: string;
   pass: string;
   submit: string;
 }>;
 
-export default function SignInScreen() {
+export default function SignUpScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const setName_ = useUserStore((s) => s.setName);
   const setOfflineMode = useUserStore((s) => s.setOfflineMode);
 
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [pass, setPass] = useState('');
   const [errors, setErrors] = useState<Errors>({});
   const [loading, setLoading] = useState(false);
 
-  const lunaMood: LunaMood = email.includes('@') ? 'happy' : 'idle';
+  const lunaMood: LunaMood = name.trim().length > 1 ? 'happy' : 'idle';
 
   const validate = (): Errors => {
     const e: Errors = {};
-    if (!email.includes('@')) e.email = 'Check your email address';
-    if (!pass) e.pass = 'Password is required';
+    if (!name.trim()) e.name = 'We need something to call you';
+    if (!email.includes('@')) e.email = "That doesn't look like an email";
+    if (pass.length < 8) e.pass = 'At least 8 characters';
     return e;
   };
 
@@ -53,17 +58,16 @@ export default function SignInScreen() {
     if (Object.keys(e).length) return;
     setLoading(true);
     try {
-      await signIn(email, pass);
+      setName_(name.trim());
+      await signUp(email, pass);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Root layout reroutes when the session lands.
+      // Root layout reroutes to /(tabs) or /paywall once the session lands.
     } catch (err) {
       setErrors({
         submit:
-          err instanceof Error && /invalid login/i.test(err.message)
-            ? "That email + password didn't match."
-            : err instanceof Error
-              ? err.message
-              : 'Wrong email or password',
+          err instanceof Error
+            ? prettyError(err.message)
+            : 'Something went wrong',
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
@@ -73,6 +77,7 @@ export default function SignInScreen() {
 
   const skipOffline = () => {
     Haptics.selectionAsync();
+    if (name.trim()) setName_(name.trim());
     setOfflineMode(true);
     router.replace('/(tabs)');
   };
@@ -86,7 +91,9 @@ export default function SignInScreen() {
         <LunaPixel mood={lunaMood} size={110} />
         <View style={styles.lunaLabel}>
           <Text style={styles.kicker}>lumi</Text>
-          <Text style={styles.greeting}>Welcome back.</Text>
+          <Text style={styles.greeting}>
+            {name.trim() ? `Hi ${name.trim()} —` : "Let's get you started."}
+          </Text>
         </View>
       </View>
 
@@ -104,14 +111,37 @@ export default function SignInScreen() {
         >
           <View style={styles.card}>
             <View style={styles.shimmer} />
-            <Text style={styles.cardTitle}>Log in</Text>
 
+            <View style={styles.cardHeader}>
+              <View>
+                <Text style={styles.cardTitle}>Create account</Text>
+                <Text style={styles.cardSub}>
+                  Free to start · no card needed
+                </Text>
+              </View>
+              <View style={styles.freePill}>
+                <Text style={styles.freePillText}>✦ Free</Text>
+              </View>
+            </View>
+
+            <AuthField
+              label="Your name"
+              value={name}
+              onChangeText={(v) => {
+                setName(v);
+                if (errors.name) setErrors({ ...errors, name: undefined });
+              }}
+              placeholder="First name"
+              error={errors.name}
+              autoCapitalize="words"
+              autoComplete="name"
+            />
             <AuthField
               label="Email"
               value={email}
               onChangeText={(v) => {
                 setEmail(v);
-                if (errors.email || errors.submit) setErrors({});
+                if (errors.email) setErrors({ ...errors, email: undefined });
               }}
               placeholder="you@example.com"
               keyboardType="email-address"
@@ -124,40 +154,38 @@ export default function SignInScreen() {
               value={pass}
               onChangeText={(v) => {
                 setPass(v);
-                if (errors.pass || errors.submit) setErrors({});
+                if (errors.pass) setErrors({ ...errors, pass: undefined });
               }}
-              placeholder="Your password"
+              placeholder="Min 8 characters"
               secureTextEntry
               error={errors.pass}
-              autoComplete="current-password"
-              textContentType="password"
-              onSubmitEditing={handleSubmit}
-              returnKeyType="go"
+              autoComplete="new-password"
+              textContentType="newPassword"
             />
-
-            <Pressable
-              style={styles.forgotWrap}
-              onPress={() => router.push('/auth/forgot-password')}
-            >
-              <Text style={styles.forgotText}>Forgot password?</Text>
-            </Pressable>
+            <PasswordStrength password={pass} />
 
             {errors.submit && (
               <Text style={styles.submitErr}>{errors.submit}</Text>
             )}
+
+            <Text style={styles.terms}>
+              By creating an account you agree to our{' '}
+              <Text style={{ color: colors.terra }}>Terms</Text> and{' '}
+              <Text style={{ color: colors.terra }}>Privacy Policy</Text>.
+            </Text>
 
             <AuthButton
               onPress={handleSubmit}
               loading={loading}
               disabled={!isSupabaseConfigured}
             >
-              Log in
+              Create account
             </AuthButton>
 
             <View style={styles.switchRow}>
-              <Text style={styles.switchText}>New here? </Text>
-              <Pressable onPress={() => router.push('/auth/sign-up')}>
-                <Text style={styles.switchLink}>Create account</Text>
+              <Text style={styles.switchText}>Already have an account? </Text>
+              <Pressable onPress={() => router.push('/auth/sign-in')}>
+                <Text style={styles.switchLink}>Log in</Text>
               </Pressable>
             </View>
 
@@ -172,6 +200,16 @@ export default function SignInScreen() {
     </View>
   );
 }
+
+const prettyError = (raw: string): string => {
+  if (/already registered/i.test(raw))
+    return 'An account with that email already exists — try Log in.';
+  if (/weak password/i.test(raw))
+    return 'Password is too short or too common.';
+  if (/email rate/i.test(raw))
+    return 'Hit the email rate limit. Try again in an hour, or use a + alias.';
+  return raw;
+};
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
@@ -222,17 +260,38 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: 'rgba(201,160,106,0.2)',
   },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 18,
+  },
   cardTitle: {
     fontFamily: fonts.sansSemi,
     fontSize: 18,
     color: colors.text,
-    marginBottom: 18,
+    marginBottom: 2,
   },
-  forgotWrap: { alignItems: 'flex-end', marginBottom: 16, marginTop: -4 },
-  forgotText: {
-    fontFamily: fonts.sansMedium,
-    fontSize: 12,
+  cardSub: { fontFamily: fonts.sans, fontSize: 12, color: colors.text3 },
+  freePill: {
+    backgroundColor: colors.terraBg,
+    borderWidth: 1,
+    borderColor: 'rgba(201,160,106,0.2)',
+    borderRadius: 100,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  freePillText: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 11,
     color: colors.terra,
+  },
+  terms: {
+    fontFamily: fonts.sans,
+    fontSize: 11,
+    color: colors.text3,
+    lineHeight: 17,
+    marginBottom: 14,
   },
   submitErr: {
     fontFamily: fonts.sansItalic,
@@ -245,6 +304,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: 6,
+    flexWrap: 'wrap',
   },
   switchText: {
     fontFamily: fonts.sans,

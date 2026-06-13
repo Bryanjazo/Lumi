@@ -21,9 +21,14 @@ export const colors = {
   plumBorderStrong: 'rgba(196,160,224,0.25)',
 
   terra: '#D4906A',
+  terraDark: '#B0664A', // used as primary CTA on auth screens
   terraBg: 'rgba(212,144,106,0.08)',
   terraBorder: 'rgba(212,144,106,0.18)',
   terraBorderStrong: 'rgba(212,144,106,0.25)',
+
+  // auth-specific
+  err: '#C97560',
+  errBg: 'rgba(201,117,96,0.05)',
 
   moss: '#8BBF96',
   mossBg: 'rgba(139,191,150,0.08)',

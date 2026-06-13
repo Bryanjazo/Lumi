@@ -84,9 +84,9 @@ export default function RootLayout() {
       return;
     }
 
-    // Sign-in is required once Supabase is configured.
+    // Sign-up is the default landing once Supabase is configured.
     if (!session && !allowOfflineDev) {
-      if (!inAuth) router.replace('/auth/sign-in');
+      if (!inAuth) router.replace('/auth/sign-up');
       return;
     }
 
