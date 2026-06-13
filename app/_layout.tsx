@@ -20,6 +20,7 @@ import { colors } from '../constants/colors';
 import { useUserStore } from '../store/userStore';
 import { useSession, handleAuthDeepLink } from '../lib/auth';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { useCloudSync } from '../lib/sync';
 
 export default function RootLayout() {
   const [fontsReady] = useFonts({
@@ -45,6 +46,7 @@ export default function RootLayout() {
   const onboarded = useUserStore((s) => s.onboarded);
   const offlineMode = useUserStore((s) => s.offlineMode);
   const { session, loading: sessionLoading } = useSession();
+  useCloudSync(session);
 
   const segments = useSegments();
   const router = useRouter();
