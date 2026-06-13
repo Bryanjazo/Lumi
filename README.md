@@ -31,11 +31,27 @@ functional offline.
 
 ### Database
 
-Paste `supabase/schema.sql` into the SQL editor of your Supabase project.
-It creates all tables (`users`, `quests`, `checkins`, `sos_events`,
-`achievements`, `equipped_items`, `brain_dumps`), enables RLS so each row
-is scoped to `auth.uid()`, and adds a trigger that auto-creates a `users`
-row on signup.
+Migrations live in `supabase/migrations/`. One-time setup:
+
+```bash
+# install (once, macOS)
+brew install supabase/tap/supabase
+
+# log in and link this repo to your project
+supabase login
+supabase link --project-ref <YOUR-PROJECT-REF>
+
+# apply migrations
+supabase db push
+```
+
+`<YOUR-PROJECT-REF>` is the 20-char ID from your Supabase URL
+(`https://<ref>.supabase.co`) or from `supabase projects list`.
+
+The initial migration creates `users`, `quests`, `checkins`,
+`sos_events`, `achievements`, `equipped_items`, `brain_dumps`, enables
+RLS so each row is scoped to `auth.uid()`, and adds a trigger that
+auto-creates a `users` row on signup.
 
 ## Structure
 
@@ -64,7 +80,8 @@ row on signup.
 /constants
   colors, fonts, items, skins, milestones
 /supabase
-  schema.sql            ready to paste into the SQL editor
+  config.toml           CLI project config
+  migrations/           timestamped SQL migrations (run via `supabase db push`)
 ```
 
 ## Tone rules
