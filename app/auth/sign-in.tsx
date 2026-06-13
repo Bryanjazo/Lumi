@@ -202,7 +202,7 @@ export default function SignInScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
+  root: { flex: 1, backgroundColor: colors.bgAuth },
   body: {
     flex: 1,
     paddingHorizontal: 16,
@@ -224,27 +224,27 @@ const styles = StyleSheet.create({
   },
   kicker: {
     fontFamily: fonts.sansSemi,
-    fontSize: 10,
-    letterSpacing: 4,
-    color: colors.terra,
-    opacity: 0.7,
-    marginTop: 10,
+    fontSize: 11,
+    letterSpacing: 6,
+    color: colors.text3,
+    marginTop: 12,
     ...(({ userSelect: 'none' } as object) as object),
   },
   greeting: {
     fontFamily: fonts.serifItalic,
-    fontSize: 17,
+    fontSize: 22,
     color: colors.cream,
-    marginTop: 4,
+    marginTop: 6,
+    lineHeight: 28,
   },
   card: {
     flex: 1,
-    marginTop: 10,
-    backgroundColor: colors.surface,
+    marginTop: 14,
+    backgroundColor: colors.surfaceAuth,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 22,
-    padding: 18,
+    borderRadius: 24,
+    padding: 20,
     overflow: 'hidden',
   },
   shimmer: {

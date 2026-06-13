@@ -135,7 +135,7 @@ export default function DoneScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: colors.bgAuth },
   tapArea: { flex: 1 },
   content: {
     flex: 1,

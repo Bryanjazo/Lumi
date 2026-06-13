@@ -144,7 +144,7 @@ export default function ForgotPasswordScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
+  root: { flex: 1, backgroundColor: colors.bgAuth },
   backBtn: { position: 'absolute', left: 20, zIndex: 10 },
   backText: {
     fontFamily: fonts.sansMedium,
@@ -172,16 +172,16 @@ const styles = StyleSheet.create({
   },
   heading: {
     fontFamily: fonts.serifItalic,
-    fontSize: 20,
+    fontSize: 22,
     color: colors.cream,
-    marginTop: 10,
+    marginTop: 12,
   },
   card: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceAuth,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 22,
+    borderRadius: 24,
     padding: 20,
     overflow: 'hidden',
   },

@@ -4,8 +4,10 @@
 
 export const colors = {
   bg: '#141210',
+  bgAuth: '#171311', // warmer coffee-brown variant used on auth screens
   bg2: '#1A1714',
   surface: '#1F1C18',
+  surfaceAuth: '#1F1A17', // matched warmer surface for auth cards
   card: '#252118',
   border: '#2E2920',
   border2: '#3A332A',
