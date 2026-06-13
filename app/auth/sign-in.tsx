@@ -13,7 +13,7 @@ import { Screen } from '../../components/Screen';
 import { CozyWindow } from '../../components/CozyWindow';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { signIn, signUp, hasVerifiedPhone } from '../../lib/auth';
+import { signIn, signUp } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
 
@@ -23,7 +23,6 @@ type Status = 'idle' | 'submitting';
 export default function SignInScreen() {
   const router = useRouter();
   const setOfflineMode = useUserStore((s) => s.setOfflineMode);
-  const setPhoneVerified = useUserStore((s) => s.setPhoneVerified);
 
   const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
@@ -44,20 +43,11 @@ export default function SignInScreen() {
     try {
       if (mode === 'signup') {
         await signUp(email, password);
-        // New accounts always need phone verification.
-        setPhoneVerified(false);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        router.replace('/auth/verify-phone');
       } else {
         await signIn(email, password);
-        // Check if the existing account already has a verified phone.
-        const verified = await hasVerifiedPhone();
-        setPhoneVerified(verified);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        // Root layout routes via session change; we just nudge if phone
-        // is missing to make the navigation snappier.
-        if (!verified) router.replace('/auth/verify-phone');
       }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Root layout reroutes when the session change lands.
     } catch (e) {
       setStatus('idle');
       setError(prettyError(e));
@@ -192,8 +182,8 @@ export default function SignInScreen() {
 
         <Text style={styles.fineprint}>
           {mode === 'signup'
-            ? 'Next step: a quick SMS to your phone so we know it’s you.'
-            : 'Forgot your password? Long press the door (coming soon).'}
+            ? "You'll land in your 7-day free trial right after."
+            : 'Forgot your password? Reset link coming soon.'}
         </Text>
       </View>
 

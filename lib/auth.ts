@@ -16,9 +16,9 @@ const requireConfigured = () => {
 
 /**
  * Create a new account with email + password. The user gets a session
- * immediately (assuming "Confirm email" is disabled in Supabase Auth
- * settings — recommended, since phone verification is the security
- * layer). After signup, route to phone enrollment.
+ * immediately, assuming "Confirm email" is disabled in Supabase Auth
+ * settings (recommended — there's no second factor that needs a
+ * confirmed email).
  */
 export const signUp = async (
   email: string,
@@ -33,10 +33,6 @@ export const signUp = async (
   if (error) throw error;
 };
 
-/**
- * Sign in an existing user with email + password. Returns when the
- * session is set.
- */
 export const signIn = async (
   email: string,
   password: string,
@@ -53,94 +49,22 @@ export const signOut = async (): Promise<void> => {
   await supabase.auth.signOut();
 };
 
-// ── phone MFA enrollment ────────────────────────────────────────────────
-
-export interface PhoneEnrollment {
-  factorId: string;
-  challengeId: string;
-}
-
 /**
- * Enroll a new phone factor + immediately challenge it (sends SMS). The
- * returned factorId + challengeId are what you pass back to
- * verifyPhone() once the user types the code.
- *
- * Phone format must be E.164 ("+14155551234"). The screen formats it.
+ * Trigger Supabase's password-reset email. The recovery link comes back
+ * via deep link → handleAuthDeepLink sets a temporary session → the app
+ * can then call supabase.auth.updateUser({ password }) on a reset
+ * screen. (Reset screen lands in a later feature.)
  */
-export const enrollAndChallengePhone = async (
-  phone: string,
-): Promise<PhoneEnrollment> => {
+export const requestPasswordReset = async (email: string): Promise<void> => {
   requireConfigured();
-
-  // If the user retries with a new number, unenroll any existing
-  // unverified phone factor first to avoid the "already enrolled" error.
-  const { data: factors } = await supabase.auth.mfa.listFactors();
-  const existing = factors?.phone ?? [];
-  for (const f of existing) {
-    if (f.status !== 'verified') {
-      await supabase.auth.mfa.unenroll({ factorId: f.id });
-    }
-  }
-
-  const { data: enrollData, error: enrollErr } =
-    await supabase.auth.mfa.enroll({
-      factorType: 'phone',
-      phone: phone.trim(),
-    });
-  if (enrollErr || !enrollData) throw enrollErr ?? new Error('enroll failed');
-  const factorId = enrollData.id;
-
-  const { data: challengeData, error: challengeErr } =
-    await supabase.auth.mfa.challenge({ factorId });
-  if (challengeErr || !challengeData)
-    throw challengeErr ?? new Error('challenge failed');
-
-  return { factorId, challengeId: challengeData.id };
-};
-
-/**
- * Re-challenge an existing factor (used for the "resend code" button).
- */
-export const reChallengePhone = async (
-  factorId: string,
-): Promise<string> => {
-  requireConfigured();
-  const { data, error } = await supabase.auth.mfa.challenge({ factorId });
-  if (error || !data) throw error ?? new Error('challenge failed');
-  return data.id;
-};
-
-/**
- * Verify the SMS code. On success the user's session is upgraded to
- * AAL2 and the phone factor is marked 'verified'.
- */
-export const verifyPhoneCode = async (
-  factorId: string,
-  challengeId: string,
-  code: string,
-): Promise<void> => {
-  requireConfigured();
-  const { error } = await supabase.auth.mfa.verify({
-    factorId,
-    challengeId,
-    code: code.trim(),
-  });
+  const { error } = await supabase.auth.resetPasswordForEmail(
+    email.trim().toLowerCase(),
+    { redirectTo: getRedirectUrl() },
+  );
   if (error) throw error;
 };
 
-/**
- * Whether the current user has at least one verified phone factor.
- * Sign-in screens use this to decide whether to route to phone
- * enrollment after sign-in.
- */
-export const hasVerifiedPhone = async (): Promise<boolean> => {
-  if (!isSupabaseConfigured) return false;
-  const { data, error } = await supabase.auth.mfa.listFactors();
-  if (error || !data) return false;
-  return (data.phone ?? []).some((f) => f.status === 'verified');
-};
-
-// ── deep link fallback (kept from earlier; harmless if unused) ──────────
+// ── deep link fallback (for password-reset recovery links) ──────────────
 export const handleAuthDeepLink = async (url: string): Promise<boolean> => {
   if (!url.includes('access_token')) return false;
   const parsed = Linking.parse(url);

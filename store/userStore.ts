@@ -29,11 +29,6 @@ interface UserState {
    * required-auth is on.
    */
   offlineMode: boolean;
-  /**
-   * True if the current account has at least one verified phone factor.
-   * Refreshed from Supabase `mfa.listFactors` after sign-in/sign-up.
-   */
-  phoneVerified: boolean;
   subscriptionStatus: SubscriptionStatus;
   subscriptionTier: SubscriptionTier;
   subscriptionCurrentPeriodEnd: string | null;
@@ -48,7 +43,6 @@ interface UserState {
   completeOnboarding: () => void;
   setNotificationsEnabled: (on: boolean) => void;
   setOfflineMode: (on: boolean) => void;
-  setPhoneVerified: (on: boolean) => void;
   setSubscription: (params: {
     status: SubscriptionStatus;
     tier?: SubscriptionTier;
@@ -79,7 +73,6 @@ export const useUserStore = create<UserState>()(
       onboarded: false,
       notificationsEnabled: false,
       offlineMode: false,
-      phoneVerified: false,
       subscriptionStatus: 'trial',
       subscriptionTier: null,
       subscriptionCurrentPeriodEnd: null,
@@ -123,7 +116,6 @@ export const useUserStore = create<UserState>()(
       completeOnboarding: () => set({ onboarded: true }),
       setNotificationsEnabled: (on) => set({ notificationsEnabled: on }),
       setOfflineMode: (on) => set({ offlineMode: on }),
-      setPhoneVerified: (on) => set({ phoneVerified: on }),
       setSubscription: ({ status, tier, currentPeriodEnd }) =>
         set({
           subscriptionStatus: status,
@@ -144,7 +136,6 @@ export const useUserStore = create<UserState>()(
           onboarded: false,
           notificationsEnabled: false,
           offlineMode: false,
-          phoneVerified: false,
           subscriptionStatus: 'trial',
           subscriptionTier: null,
           subscriptionCurrentPeriodEnd: null,
