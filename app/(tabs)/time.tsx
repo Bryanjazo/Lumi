@@ -120,17 +120,16 @@ const Eyebrow = ({
   );
 };
 
+// Loom must render children as separate flex items (View, not Text).
+// Wrapping them in a parent Text turns them into inline children, which
+// cascades letterSpacing across everything and ignores marginLeft/Right
+// on the unit characters — causing them to collide visually.
 const Loom = ({
   children,
-  big,
 }: {
   children: React.ReactNode;
   big?: boolean;
-}) => (
-  <View style={styles.loomRow}>
-    <Text style={[styles.loomText, big && styles.loomBig]}>{children}</Text>
-  </View>
-);
+}) => <View style={styles.loomRow}>{children}</View>;
 
 // ── ArcLabel ─────────────────────────────────────────────────────
 const ArcLabel = ({
