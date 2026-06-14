@@ -701,15 +701,15 @@ export default function TimeTab() {
           </View>
         </View>
 
-        {/* NOW big time */}
+        {/* NOW big time — render as a single Text with inline AMPM so
+            the whole string centers as one optical unit (was rendering
+            two siblings with a leading-space hack that visually drifted) */}
         <View style={styles.nowWrap}>
           <Text style={styles.nowLabel}>now</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center' }}>
-            <Text style={styles.nowTime}>
-              {hourStr}:{minStr}
-            </Text>
-            <Text style={styles.nowAmpm}> {ampm}</Text>
-          </View>
+          <Text style={styles.nowTime}>
+            {hourStr}:{minStr}
+            <Text style={styles.nowAmpm}>{'  '}{ampm}</Text>
+          </Text>
         </View>
 
         {/* Radar */}
@@ -873,6 +873,7 @@ const styles = StyleSheet.create({
     color: C.bone,
     letterSpacing: -1,
     lineHeight: 42,
+    textAlign: 'center',
   },
   nowAmpm: {
     fontFamily: fonts.fraunces,
@@ -881,9 +882,13 @@ const styles = StyleSheet.create({
   },
 
   radarWrap: {
+    // Combining width: '100%' with aspectRatio + maxHeight on a phone
+    // wider than 360pt left-aligned the radar (RN layout defaults).
+    // alignSelf + maxWidth keeps it square AND centered on any width.
+    alignSelf: 'center',
     width: '100%',
+    maxWidth: 360,
     aspectRatio: 1,
-    maxHeight: 360,
     marginTop: -4,
     position: 'relative',
   },
