@@ -1,474 +1,1106 @@
-import { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
-import { Screen } from '../../components/Screen';
-import { Label } from '../../components/Label';
-import { colors, accent } from '../../constants/colors';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Animated,
+  Easing,
+  ScrollView,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, {
+  Circle,
+  Defs,
+  RadialGradient,
+  Stop,
+  Path,
+} from 'react-native-svg';
+import { timeColors as C } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { useQuestStore, selectTodayQuests } from '../../store/questStore';
+import { useUserStore } from '../../store/userStore';
 
-// Day window — what we show as the user's "day."
-const DAY_START_HOUR = 7;
-const DAY_END_HOUR = 22;
-const PEAK_START_HOUR = 11;
-const PEAK_END_HOUR = 14;
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
-const HOUR_LABELS = [
-  { h: 7, label: '7 AM' },
-  { h: 12, label: '12 PM' },
-  { h: 17, label: '5 PM' },
-  { h: 22, label: '10 PM' },
+// ── Schedule (mock) ─────────────────────────────────────────────────
+// Used when there are no scheduled quests today, so the screen always
+// reads as designed. Hour fields match lumi-time.jsx verbatim.
+interface ScheduleItem {
+  hr: number;
+  m: number;
+  t: string;
+  note: string | null;
+  dur?: number;
+}
+
+const FALLBACK_SCHEDULE: ScheduleItem[] = [
+  { hr: 7, m: 0, t: 'Wake', note: 'slow start, water first' },
+  { hr: 8, m: 0, t: 'Morning ritual', note: 'meds + protein' },
+  { hr: 10, m: 0, t: 'Deep work', note: 'report draft', dur: 90 },
+  { hr: 13, m: 0, t: 'Lunch + walk', note: 'before the dip', dur: 60 },
+  { hr: 14, m: 30, t: 'Email replies', note: 'last of the peak', dur: 45 },
+  { hr: 16, m: 0, t: 'Grocery run', note: 'movement helps', dur: 60 },
+  { hr: 18, m: 30, t: 'Dinner', note: null, dur: 45 },
+  { hr: 21, m: 0, t: 'Wind down', note: 'screens off, lamp on', dur: 90 },
 ];
 
-const formatHm = (h: number, m: number) => {
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const hh = h % 12 === 0 ? 12 : h % 12;
-  return `${hh}:${m.toString().padStart(2, '0')} ${ampm}`;
+// Peak / slump windows (will be learned per-user; for now hardcoded
+// matching the JSX. Data-architecture doc step 5 wires this to
+// energy_curve when sample_days >= 14.)
+const PEAK: [number, number] = [11, 14];
+const SLUMP: [number, number] = [15, 17];
+
+type Mode = 'approach' | 'imminent' | 'init' | 'open' | 'peak' | 'night';
+
+// ── Helpers ─────────────────────────────────────────────────────────
+const partOfDay = (hr: number): string => {
+  if (hr < 9) return 'morning';
+  if (hr < 12) return 'late morning';
+  if (hr < 14) return 'midday';
+  if (hr < 17) return 'afternoon';
+  if (hr < 20) return 'evening';
+  return 'night';
+};
+const inPeak = (hr: number) => hr >= PEAK[0] && hr < PEAK[1];
+const inSlump = (hr: number) => hr >= SLUMP[0] && hr < SLUMP[1];
+
+const nStr = (s: { hr: number; m: number }): string => {
+  const h = s.hr % 12 || 12;
+  const m = s.m === 0 ? '' : `:${String(s.m).padStart(2, '0')}`;
+  return `${h}${m}${s.hr < 12 ? 'a' : 'p'}`;
 };
 
-const formatHmShort = (h: number) => {
-  const ampm = h >= 12 ? 'p' : 'a';
-  const hh = h % 12 === 0 ? 12 : h % 12;
-  return `${hh} ${ampm.toUpperCase()}M`;
+const startMins = (s: { hr: number; m: number }) => s.hr * 60 + s.m;
+
+const formatTodayDate = (d: Date) => {
+  const wk = d.toLocaleDateString(undefined, { weekday: 'short' });
+  const mon = d.toLocaleDateString(undefined, { month: 'short' });
+  return `${wk} · ${mon} ${d.getDate()}`;
 };
 
+// ── Sub-components ──────────────────────────────────────────────────
+const Eyebrow = ({
+  children,
+  color,
+  pulse,
+}: {
+  children: React.ReactNode;
+  color: string;
+  pulse?: boolean;
+}) => {
+  const opacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!pulse) return;
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.35,
+          duration: 550,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 550,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      ]),
+    ).start();
+  }, [pulse, opacity]);
+  return (
+    <Animated.Text
+      style={[
+        styles.eyebrow,
+        { color, opacity: pulse ? opacity : 1 },
+      ]}
+    >
+      {children}
+    </Animated.Text>
+  );
+};
+
+const Loom = ({
+  children,
+  big,
+}: {
+  children: React.ReactNode;
+  big?: boolean;
+}) => (
+  <View style={styles.loomRow}>
+    <Text style={[styles.loomText, big && styles.loomBig]}>{children}</Text>
+  </View>
+);
+
+// ── ArcLabel ─────────────────────────────────────────────────────
+const ArcLabel = ({
+  cx,
+  cy,
+  r,
+  from,
+  to,
+  color,
+}: {
+  cx: number;
+  cy: number;
+  r: number;
+  from: number;
+  to: number;
+  color: string;
+}) => {
+  const ang = (h: number) => ((h - 6) / 18) * Math.PI * 2 - Math.PI / 2;
+  const a0 = ang(from);
+  const a1 = ang(to);
+  const x0 = cx + r * Math.cos(a0);
+  const y0 = cy + r * Math.sin(a0);
+  const x1 = cx + r * Math.cos(a1);
+  const y1 = cy + r * Math.sin(a1);
+  const large = (to - from) / 18 > 0.5 ? 1 : 0;
+  return (
+    <Path
+      d={`M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`}
+      fill="none"
+      stroke={color}
+      strokeWidth={3}
+      strokeOpacity={0.5}
+      strokeLinecap="round"
+    />
+  );
+};
+
+// ── ProgressRing ─────────────────────────────────────────────────
+const ProgressRing = ({
+  cx,
+  cy,
+  r,
+  pct,
+  color,
+}: {
+  cx: number;
+  cy: number;
+  r: number;
+  pct: number;
+  color: string;
+}) => {
+  const circ = 2 * Math.PI * r;
+  const off = circ * (1 - pct);
+  return (
+    <Circle
+      cx={cx}
+      cy={cy}
+      r={r}
+      fill="none"
+      stroke={color}
+      strokeWidth={2.5}
+      strokeOpacity={0.8}
+      strokeLinecap="round"
+      strokeDasharray={`${circ}`}
+      strokeDashoffset={off}
+      transform={`rotate(-90 ${cx} ${cy})`}
+    />
+  );
+};
+
+// ── BreathRing — one of the four concentric circles ─────────────
+const BreathRing = ({
+  r,
+  i,
+  calm,
+  ringDur,
+  opacity,
+}: {
+  r: number;
+  i: number;
+  calm: boolean;
+  ringDur: number;
+  opacity: number;
+}) => {
+  const animR = useRef(new Animated.Value(r)).current;
+  const animO = useRef(new Animated.Value(opacity)).current;
+  useEffect(() => {
+    const dur = (ringDur + i) * 1000;
+    const delta = calm ? 3 : 6;
+    Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(animR, {
+            toValue: r + delta,
+            duration: dur / 2,
+            useNativeDriver: false,
+          }),
+          Animated.timing(animO, {
+            toValue: opacity * 0.3,
+            duration: dur / 2,
+            useNativeDriver: false,
+          }),
+        ]),
+        Animated.parallel([
+          Animated.timing(animR, {
+            toValue: r,
+            duration: dur / 2,
+            useNativeDriver: false,
+          }),
+          Animated.timing(animO, {
+            toValue: opacity,
+            duration: dur / 2,
+            useNativeDriver: false,
+          }),
+        ]),
+      ]),
+    ).start();
+  }, [r, i, calm, ringDur, opacity, animR, animO]);
+
+  return (
+    <AnimatedCircle
+      cx={160}
+      cy={160}
+      r={animR}
+      fill="none"
+      stroke={C.hair}
+      strokeWidth={1}
+      strokeOpacity={animO}
+    />
+  );
+};
+
+// ── Ping — the outward sweeping circle ──────────────────────────
+const Ping = ({
+  accent,
+  prox,
+  pingDur,
+}: {
+  accent: string;
+  prox: number;
+  pingDur: number;
+}) => {
+  const animR = useRef(new Animated.Value(20)).current;
+  const animO = useRef(new Animated.Value(0.4 + prox * 0.45)).current;
+  useEffect(() => {
+    const dur = pingDur * 1000;
+    const loop = () => {
+      animR.setValue(20);
+      animO.setValue(0.4 + prox * 0.45);
+      Animated.parallel([
+        Animated.timing(animR, {
+          toValue: 150,
+          duration: dur,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
+        Animated.timing(animO, {
+          toValue: 0,
+          duration: dur,
+          easing: Easing.linear,
+          useNativeDriver: false,
+        }),
+      ]).start(({ finished }) => {
+        if (finished) loop();
+      });
+    };
+    loop();
+  }, [animR, animO, prox, pingDur]);
+
+  return (
+    <AnimatedCircle
+      cx={160}
+      cy={160}
+      r={animR}
+      fill="none"
+      stroke={accent}
+      strokeWidth={1.5}
+      strokeOpacity={animO}
+    />
+  );
+};
+
+// ── RadarField ─────────────────────────────────────────────────
+const RadarField = ({
+  prox,
+  accent,
+  calm,
+  fill,
+  ringDur,
+  progress,
+}: {
+  prox: number;
+  accent: string;
+  calm: boolean;
+  fill: string;
+  ringDur: number;
+  progress: number | null;
+}) => {
+  const pingDur = calm ? 6 : Math.max(1.4, 3.5 - prox * 2);
+  const ringBase = calm ? 0.3 : 0.6;
+
+  // Inner core dot pulse
+  const dotR = useRef(new Animated.Value(6)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(dotR, {
+          toValue: 7.5,
+          duration: calm ? 1700 : 1100,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: false,
+        }),
+        Animated.timing(dotR, {
+          toValue: 6,
+          duration: calm ? 1700 : 1100,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: false,
+        }),
+      ]),
+    ).start();
+  }, [calm, dotR]);
+
+  return (
+    <Svg viewBox="0 0 320 320" width="100%" height="100%">
+      <Defs>
+        <RadialGradient id="heat" cx="50%" cy="50%" r="50%">
+          <Stop
+            offset="0%"
+            stopColor={fill}
+            stopOpacity={(calm ? 0.05 : 0.1) + prox * 0.24}
+          />
+          <Stop offset="55%" stopColor={fill} stopOpacity={0} />
+        </RadialGradient>
+        <RadialGradient id="core" cx="50%" cy="50%" r="50%">
+          <Stop
+            offset="0%"
+            stopColor={calm ? accent : C.glow}
+            stopOpacity={calm ? 0.5 : 0.9}
+          />
+          <Stop offset="70%" stopColor={accent} stopOpacity={0.45} />
+          <Stop offset="100%" stopColor={accent} stopOpacity={0} />
+        </RadialGradient>
+      </Defs>
+
+      <Circle cx={160} cy={160} r={150} fill="url(#heat)" />
+
+      {[44, 78, 112, 146].map((rValue, i) => (
+        <BreathRing
+          key={rValue}
+          r={rValue}
+          i={i}
+          calm={calm}
+          ringDur={ringDur}
+          opacity={ringBase - i * 0.12}
+        />
+      ))}
+
+      {!calm && <Ping accent={accent} prox={prox} pingDur={pingDur} />}
+
+      <ArcLabel
+        cx={160}
+        cy={160}
+        r={146}
+        from={PEAK[0]}
+        to={PEAK[1]}
+        color={C.lichen}
+      />
+      <ArcLabel
+        cx={160}
+        cy={160}
+        r={146}
+        from={SLUMP[0]}
+        to={SLUMP[1]}
+        color={C.emberDk}
+      />
+
+      {progress != null && (
+        <ProgressRing
+          cx={160}
+          cy={160}
+          r={132}
+          pct={progress}
+          color={accent}
+        />
+      )}
+
+      <Circle cx={160} cy={160} r={30} fill="url(#core)" />
+      <AnimatedCircle cx={160} cy={160} r={dotR} fill={calm ? accent : C.glow} />
+    </Svg>
+  );
+};
+
+// ── CoreContent ─────────────────────────────────────────────────
+type CoreKind = 'countdown' | 'imminent' | 'init' | 'open' | 'night';
+
+interface CoreData {
+  next?: ScheduleItem;
+  ctHrs?: number;
+  ctMins?: number;
+  cur?: ScheduleItem;
+  elapsed?: number;
+  remain?: number;
+  endsAt?: { hr: number; m: number };
+  progress?: number;
+  nextLabel?: string;
+}
+
+const CoreContent = ({
+  kind,
+  data,
+  accent,
+}: {
+  kind: CoreKind;
+  data: CoreData;
+  accent: string;
+}) => {
+  if (kind === 'countdown' && data.next) {
+    return (
+      <>
+        <Eyebrow color={accent}>next · in</Eyebrow>
+        <Loom>
+          {(data.ctHrs ?? 0) > 0 && (
+            <>
+              <Text style={styles.loomText}>{data.ctHrs}</Text>
+              <Text style={styles.unit}>h</Text>
+            </>
+          )}
+          <Text style={styles.loomText}>{data.ctMins}</Text>
+          <Text style={styles.unit}>m</Text>
+        </Loom>
+        <Text style={styles.coreTitle}>{data.next.t}</Text>
+        {data.next.note && <Text style={styles.coreNote}>{data.next.note}</Text>}
+        <Text style={[styles.coreAt, { color: accent }]}>
+          at {nStr(data.next)}
+        </Text>
+      </>
+    );
+  }
+  if (kind === 'imminent' && data.next) {
+    return (
+      <>
+        <Eyebrow color={C.ember} pulse>closing in</Eyebrow>
+        <Loom big>
+          <Text style={[styles.loomText, styles.loomBig]}>{data.ctMins}</Text>
+          <Text style={styles.unit}>m</Text>
+        </Loom>
+        <Text style={styles.coreTitle}>{data.next.t}</Text>
+        <Text style={[styles.coreNote, { color: C.ember }]}>
+          start wrapping up
+        </Text>
+        <Text style={[styles.coreAt, { color: C.ember }]}>
+          at {nStr(data.next)}
+        </Text>
+      </>
+    );
+  }
+  if (kind === 'init' && data.cur && data.endsAt) {
+    return (
+      <>
+        <Eyebrow color={accent}>you're in</Eyebrow>
+        <Text style={styles.initTitle}>{data.cur.t}</Text>
+        <View style={styles.initElapsedRow}>
+          <Text style={styles.initElapsed}>{data.elapsed}</Text>
+          <Text style={styles.initMinIn}>m in</Text>
+        </View>
+        <Text style={[styles.coreNote, { marginTop: 10 }]}>
+          {data.remain}m left · ends {nStr(data.endsAt)}
+        </Text>
+      </>
+    );
+  }
+  if (kind === 'open') {
+    return (
+      <>
+        <Eyebrow color={C.mute}>open</Eyebrow>
+        <Text style={styles.openMain}>
+          nothing's{'\n'}pulling at you
+        </Text>
+        {data.nextLabel && (
+          <Text
+            style={[
+              styles.coreNote,
+              { marginTop: 12, maxWidth: 210, textAlign: 'center' },
+            ]}
+          >
+            {data.nextLabel}
+          </Text>
+        )}
+      </>
+    );
+  }
+  if (kind === 'night') {
+    return (
+      <>
+        <Eyebrow color={C.dusk}>tonight</Eyebrow>
+        <Text style={styles.openMain}>
+          the day's done{'\n'}pulling
+        </Text>
+        <View style={[styles.initElapsedRow, { marginTop: 16 }]}>
+          <Text style={styles.nightTime}>9:30</Text>
+        </View>
+        <Text style={[styles.coreNote, { marginTop: 10, color: C.dusk }]}>
+          wind down now
+        </Text>
+      </>
+    );
+  }
+  return null;
+};
+
+// ── Main screen ─────────────────────────────────────────────────────
 export default function TimeTab() {
+  const quests = useQuestStore((s) => s.quests);
+  const todayQuests = useMemo(() => selectTodayQuests(quests), [quests]);
+  const userName = useUserStore((s) => s.name);
+
+  // current time — tick once a minute
   const [now, setNow] = useState(new Date());
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000 * 30);
+    const id = setInterval(() => setNow(new Date()), 60 * 1000);
     return () => clearInterval(id);
   }, []);
 
-  const quests = useQuestStore((s) => s.quests);
-  const todayQuests = useMemo(() => selectTodayQuests(quests), [quests]);
+  const hr = now.getHours();
+  const min = now.getMinutes();
+  const nowMins = hr * 60 + min;
 
-  const scheduled = todayQuests
-    .filter((q) => q.scheduledHour !== undefined)
-    .sort((a, b) => {
-      const ah = a.scheduledHour ?? 0;
-      const bh = b.scheduledHour ?? 0;
-      return (
-        ah * 60 + (a.scheduledMinute ?? 0) - (bh * 60 + (b.scheduledMinute ?? 0))
-      );
-    });
+  // Build schedule from user quests, fall back to mock for empty days
+  const schedule: ScheduleItem[] = useMemo(() => {
+    const scheduled = todayQuests
+      .filter((q) => q.scheduledHour !== undefined)
+      .map((q) => ({
+        hr: q.scheduledHour ?? 0,
+        m: q.scheduledMinute ?? 0,
+        t: q.title,
+        note: null,
+        dur: q.durationMinutes,
+      }))
+      .sort((a, b) => startMins(a) - startMins(b));
+    return scheduled.length > 0 ? scheduled : FALLBACK_SCHEDULE;
+  }, [todayQuests]);
 
-  // Auto-schedule unscheduled quests across the day if none have times.
-  const blocks =
-    scheduled.length > 0
-      ? scheduled
-      : todayQuests.slice(0, 6).map((q, i) => ({
-          ...q,
-          scheduledHour: 9 + i * 2,
-          scheduledMinute: 0,
-          durationMinutes: 60,
-        }));
+  // Find current + next
+  const cur = schedule.find(
+    (s) =>
+      s.dur != null &&
+      nowMins >= startMins(s) &&
+      nowMins < startMins(s) + s.dur,
+  );
+  const next =
+    schedule.find((s) => startMins(s) > nowMins) ??
+    schedule[schedule.length - 1];
+  const minsToNext = Math.max(0, startMins(next) - nowMins);
+  const prox = Math.max(0, Math.min(1, 1 - minsToNext / 180));
 
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const dayStartMin = DAY_START_HOUR * 60;
-  const dayEndMin = DAY_END_HOUR * 60;
-  const dayTotalMin = dayEndMin - dayStartMin;
+  // After / past lists
+  const after = schedule
+    .filter((s) => startMins(s) > startMins(next))
+    .slice(0, 3);
+  const past = schedule.filter((s) => startMins(s) <= nowMins).slice(-2);
 
-  const dayElapsed = Math.max(0, Math.min(dayTotalMin, currentMinutes - dayStartMin));
-  const goneFrac = dayElapsed / dayTotalMin;
-  const peakStartFrac = (PEAK_START_HOUR * 60 - dayStartMin) / dayTotalMin;
-  const peakEndFrac = (PEAK_END_HOUR * 60 - dayStartMin) / dayTotalMin;
+  // ── Mode derivation ──
+  const mode: Mode = useMemo(() => {
+    if (hr >= 21) return 'night';
+    if (cur) return 'init';
+    if (minsToNext < 10) return 'imminent';
+    if (minsToNext > 180) return 'open';
+    if (inPeak(hr)) return 'peak';
+    return 'approach';
+  }, [hr, cur, minsToNext]);
 
-  const minutesGone = dayElapsed;
-  const minutesLeft = Math.max(0, dayTotalMin - dayElapsed);
-  const hLeft = Math.floor(minutesLeft / 60);
-  const mLeft = minutesLeft % 60;
+  const isNight = mode === 'night';
+  const isPeak = mode === 'peak' || inPeak(hr);
+  const isSlumpMode = inSlump(hr);
+  const isOpen = mode === 'open';
 
-  const inPeak =
-    currentMinutes >= PEAK_START_HOUR * 60 &&
-    currentMinutes < PEAK_END_HOUR * 60;
+  // Color theme by mode
+  let accent: string = C.ember;
+  let fillC: string = C.ember;
+  let ctxLabel = partOfDay(hr);
+  let ctxColor: string = C.mute;
+  if (isNight) {
+    accent = C.dusk;
+    fillC = C.dusk;
+    ctxLabel = 'wind-down';
+    ctxColor = C.dusk;
+  } else if (isPeak) {
+    accent = C.lichen;
+    fillC = C.lichen;
+    ctxLabel = 'peak window';
+    ctxColor = C.lichen;
+  } else if (isSlumpMode) {
+    accent = C.ember;
+    fillC = C.ember;
+    ctxLabel = 'the slump';
+    ctxColor = C.ember;
+  }
 
-  // Detect current quest + transition warning
-  const currentBlock = blocks.find((b) => {
-    const start = (b.scheduledHour ?? 0) * 60 + (b.scheduledMinute ?? 0);
-    const end = start + (b.durationMinutes ?? 60);
-    return currentMinutes >= start && currentMinutes < end;
-  });
-  const minutesToEnd = currentBlock
-    ? (currentBlock.scheduledHour ?? 0) * 60 +
-      (currentBlock.scheduledMinute ?? 0) +
-      (currentBlock.durationMinutes ?? 60) -
-      currentMinutes
-    : null;
-  const showTransition =
-    minutesToEnd !== null && minutesToEnd > 0 && minutesToEnd <= 12;
+  // Core data shape
+  let coreKind: CoreKind = 'countdown';
+  let coreData: CoreData = {};
 
-  const todayName = now.toLocaleDateString(undefined, { weekday: 'long' });
-  const nowTimeStr = now.toLocaleTimeString([], {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  if (mode === 'imminent') {
+    coreKind = 'imminent';
+    coreData = { next, ctMins: minsToNext };
+  } else if (mode === 'init' && cur) {
+    coreKind = 'init';
+    const start = startMins(cur);
+    const elapsed = nowMins - start;
+    const remain = (cur.dur ?? 0) - elapsed;
+    const endMin = start + (cur.dur ?? 0);
+    coreData = {
+      cur,
+      elapsed,
+      remain,
+      endsAt: { hr: Math.floor(endMin / 60), m: endMin % 60 },
+      progress: elapsed / (cur.dur ?? 1),
+    };
+  } else if (mode === 'open') {
+    coreKind = 'open';
+    coreData = {
+      nextLabel: `next — ${next.t} at ${nStr(next)}, ${Math.floor(minsToNext / 60)}h ${minsToNext % 60}m away`,
+    };
+  } else if (mode === 'night') {
+    coreKind = 'night';
+  } else {
+    coreKind = 'countdown';
+    coreData = {
+      next,
+      ctHrs: Math.floor(minsToNext / 60),
+      ctMins: minsToNext % 60,
+    };
+  }
+
+  const calm = isOpen || isNight;
+  const progress = coreKind === 'init' ? coreData.progress ?? null : null;
+
+  const hourStr = hr % 12 || 12;
+  const minStr = String(min).padStart(2, '0');
+  const ampm = hr < 12 ? 'am' : 'pm';
+
+  const bgColor = isNight ? C.voidNight : C.void;
 
   return (
-    <Screen>
-      <View style={styles.hero}>
-        <Text style={styles.heroSub}>{todayName} · your day at a glance</Text>
-        <Text style={styles.heroH1}>
-          Time is <Text style={styles.italic}>visible</Text> here.
-        </Text>
-      </View>
-
-      <LinearGradient
-        colors={[colors.surface, '#1E1A10']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.dayStrip}
+    <SafeAreaView
+      style={[styles.safe, { backgroundColor: bgColor }]}
+      edges={['top']}
+    >
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 80 }}
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.dayStripHeader}>
-          <View>
-            <Text style={styles.dayTitle}>Today's time</Text>
-            <Text style={styles.daySub}>
-              {DAY_START_HOUR}am → {DAY_END_HOUR - 12}pm ·{' '}
-              {DAY_END_HOUR - DAY_START_HOUR}hr day
-            </Text>
-          </View>
-          <View style={{ alignItems: 'flex-end' }}>
-            <Text style={styles.dayTime}>{nowTimeStr}</Text>
-            <Text style={[styles.daySub, { textAlign: 'right' }]}>
-              right now
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerDate}>{formatTodayDate(now)}</Text>
+          <View style={styles.ctxRow}>
+            <View
+              style={[styles.ctxDot, { backgroundColor: ctxColor }]}
+            />
+            <Text style={[styles.ctxLabel, { color: ctxColor }]}>
+              {ctxLabel}
             </Text>
           </View>
         </View>
 
-        <View style={styles.barLabels}>
-          {HOUR_LABELS.map((l) => (
-            <Text key={l.h} style={styles.barLabel}>
-              {l.label}
+        {/* NOW big time */}
+        <View style={styles.nowWrap}>
+          <Text style={styles.nowLabel}>now</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center' }}>
+            <Text style={styles.nowTime}>
+              {hourStr}:{minStr}
             </Text>
-          ))}
+            <Text style={styles.nowAmpm}> {ampm}</Text>
+          </View>
         </View>
-        <View style={styles.barTrack}>
-          {/* peak focus window */}
-          <View
-            style={[
-              styles.barWindow,
-              {
-                left: `${peakStartFrac * 100}%`,
-                width: `${(peakEndFrac - peakStartFrac) * 100}%`,
-              },
-            ]}
+
+        {/* Radar */}
+        <View style={styles.radarWrap}>
+          <RadarField
+            prox={prox}
+            accent={accent}
+            calm={calm}
+            fill={fillC}
+            ringDur={calm ? 6 : 4}
+            progress={progress}
           />
-          {/* time gone */}
-          <LinearGradient
-            colors={['#3A2E20', '#4A3A28']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={[styles.barGone, { width: `${goneFrac * 100}%` }]}
-          />
-          {/* now indicator */}
-          <View style={[styles.barNow, { left: `${goneFrac * 100}%` }]} />
-        </View>
-
-        <View style={styles.barFooter}>
-          <Text style={styles.gone}>
-            {Math.round(goneFrac * 100)}% of your day gone
-          </Text>
-          <Text style={styles.left}>
-            {hLeft}h {mLeft}m remaining
-          </Text>
-        </View>
-
-        <View style={styles.peakKey}>
-          <View style={styles.peakDot} />
-          <Text style={styles.peakText}>
-            Your <Text style={styles.peakStrong}>peak focus window</Text> is{' '}
-            {PEAK_START_HOUR}am–{PEAK_END_HOUR - 12}pm
-            {inPeak ? " · you're in it now" : ''}
-          </Text>
-        </View>
-      </LinearGradient>
-
-      {showTransition && currentBlock && (
-        <Pressable
-          style={styles.transitionCard}
-          onPress={() => Haptics.selectionAsync()}
-        >
-          <Text style={styles.transitionEmoji}>⏰</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.transitionTitle}>
-              Quest ending in {minutesToEnd}m
-            </Text>
-            <Text style={styles.transitionSub}>
-              "{currentBlock.title}" · start wrapping up
-            </Text>
+          <View style={styles.coreOverlay} pointerEvents="none">
+            <CoreContent kind={coreKind} data={coreData} accent={accent} />
           </View>
-          <View style={styles.transitionBtn}>
-            <Text style={styles.transitionBtnText}>Got it</Text>
-          </View>
-        </Pressable>
-      )}
+        </View>
 
-      <Label style={{ marginTop: 18 }}>Your schedule</Label>
-      <View style={{ gap: 7 }}>
-        {blocks.length === 0 ? (
-          <Text style={styles.empty}>Nothing scheduled. Today is open.</Text>
-        ) : (
-          blocks.map((q) => {
-            const start =
-              (q.scheduledHour ?? 0) * 60 + (q.scheduledMinute ?? 0);
-            const end = start + (q.durationMinutes ?? 60);
-            const isCurrent =
-              currentMinutes >= start && currentMinutes < end;
-            const isDone = q.completed || currentMinutes >= end;
-            const dotColor = accent(q.accent ?? 'plum').fg;
-            return (
+        {/* Then list */}
+        {!isNight && after.length > 0 && (
+          <View style={styles.thenWrap}>
+            <Text style={styles.sectionLabel}>
+              {isOpen ? 'later today' : 'then'}
+            </Text>
+            {after.map((s, i) => (
               <View
-                key={q.id}
+                key={`${s.hr}-${s.m}-${i}`}
                 style={[
-                  styles.block,
-                  isCurrent && styles.blockNow,
-                  isDone && styles.blockDone,
+                  styles.thenRow,
+                  i < after.length - 1 && {
+                    borderBottomWidth: 1,
+                    borderBottomColor: C.hair,
+                  },
+                  { opacity: 1 - i * 0.18 },
                 ]}
               >
-                <Text
-                  style={[
-                    styles.blockTime,
-                    isCurrent && { color: colors.caramel },
-                  ]}
+                <Text style={styles.thenTime}>{nStr(s)}</Text>
+                <Text style={styles.thenTitle}>{s.t}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Behind you */}
+        {past.length > 0 && !isNight && (
+          <View style={styles.behindWrap}>
+            <Text style={[styles.sectionLabel, { color: C.ash }]}>
+              behind you
+            </Text>
+            <View style={styles.behindRow}>
+              {past.map((s) => (
+                <View
+                  key={`${s.hr}-${s.m}`}
+                  style={styles.behindItem}
                 >
-                  {formatHmShort(q.scheduledHour ?? 0)}
+                  <Text style={styles.behindTime}>{nStr(s)}</Text>
+                  <Text style={styles.behindTitle}>{s.t}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Sleep formula footer */}
+        <View style={styles.formulaWrap}>
+          {isNight ? (
+            <View>
+              <Text style={[styles.sectionLabel, { color: C.dusk }]}>
+                your formula
+              </Text>
+              <Text style={styles.formulaBody}>
+                Screens dim. Lights low.{'\n'}
+                Nothing past 2pm. Lamp on, not overhead.{'\n'}
+                <Text style={{ color: C.dusk }}>
+                  You sleep best after a slow hour.
                 </Text>
-                <View style={[styles.blockDot, { backgroundColor: dotColor }]} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.blockTitle, isDone && styles.strike]}>
-                    {q.title}
-                  </Text>
-                  <Text style={styles.blockSub}>
-                    {isDone
-                      ? `Completed · +${q.xpReward} XP`
-                      : isCurrent
-                        ? 'Peak window · best time for this'
-                        : `${q.durationMinutes ?? 60}m`}
+              </Text>
+              <View style={styles.sleepStats}>
+                <View>
+                  <Text style={styles.sleepStatLabel}>last night</Text>
+                  <Text style={[styles.sleepStatNum, { color: C.lichen }]}>
+                    7h 12m
                   </Text>
                 </View>
-                {isCurrent && (
-                  <View style={styles.nowBadge}>
-                    <Text style={styles.nowBadgeText}>NOW</Text>
-                  </View>
-                )}
+                <View>
+                  <Text style={styles.sleepStatLabel}>7-day avg</Text>
+                  <Text style={[styles.sleepStatNum, { color: C.dusk }]}>
+                    6h 48m
+                  </Text>
+                </View>
               </View>
-            );
-          })
-        )}
-      </View>
-    </Screen>
+            </View>
+          ) : (
+            <View>
+              <View style={styles.formulaTopRow}>
+                <View
+                  style={{ flexDirection: 'row', alignItems: 'baseline', gap: 9 }}
+                >
+                  <Text style={styles.formulaTime}>9:30</Text>
+                  <Text style={styles.formulaWindLabel}>— wind-down</Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 14 }}>
+                  <Text style={styles.formulaSleepInline}>
+                    last{' '}
+                    <Text style={{ color: C.lichen }}>7h12</Text>
+                  </Text>
+                  <Text style={styles.formulaSleepInline}>
+                    avg <Text style={{ color: C.ember }}>6h48</Text>
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.formulaShortBody}>
+                Screens dim, lights low, nothing past 2pm — your formula.
+              </Text>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
+// ── Styles ────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  hero: { marginBottom: 18 },
-  heroSub: {
-    fontFamily: fonts.sans,
-    color: colors.text3,
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  heroH1: {
-    fontFamily: fonts.serif,
-    color: colors.text,
-    fontSize: 27,
-    lineHeight: 32,
-  },
-  italic: { fontFamily: fonts.serifItalic, color: colors.caramel },
+  safe: { flex: 1 },
 
-  dayStrip: {
-    borderRadius: 17,
-    padding: 18,
-    paddingHorizontal: 19,
-    borderWidth: 1,
-    borderColor: colors.border2,
-    marginBottom: 12,
-  },
-  dayStripHeader: {
+  header: {
+    paddingTop: 24,
+    paddingHorizontal: 24,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 15,
+    alignItems: 'center',
   },
-  dayTitle: {
+  headerDate: {
     fontFamily: fonts.sansSemi,
-    color: colors.text,
-    fontSize: 13,
-    marginBottom: 2,
-  },
-  daySub: {
-    fontFamily: fonts.sans,
-    color: colors.text3,
-    fontSize: 11,
-  },
-  dayTime: {
-    fontFamily: fonts.serif,
-    color: colors.cream,
-    fontSize: 22,
-    lineHeight: 24,
-    marginBottom: 2,
-  },
-  barLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  barLabel: {
-    fontFamily: fonts.sans,
-    color: colors.text3,
     fontSize: 10,
+    letterSpacing: 2.4,
+    color: C.mute,
+    textTransform: 'uppercase',
   },
-  barTrack: {
-    height: 11,
-    backgroundColor: colors.bg2,
-    borderRadius: 100,
-    overflow: 'hidden',
+  ctxRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  ctxDot: { width: 5, height: 5, borderRadius: 3 },
+  ctxLabel: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 10,
+    letterSpacing: 1.8,
+    textTransform: 'uppercase',
+  },
+
+  nowWrap: { paddingTop: 14, paddingHorizontal: 24, alignItems: 'center' },
+  nowLabel: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 9.5,
+    letterSpacing: 3,
+    color: C.mute,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  nowTime: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 40,
+    color: C.bone,
+    letterSpacing: -1,
+    lineHeight: 42,
+  },
+  nowAmpm: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 18,
+    color: C.mute,
+  },
+
+  radarWrap: {
+    width: '100%',
+    aspectRatio: 1,
+    maxHeight: 360,
+    marginTop: -4,
     position: 'relative',
   },
-  barWindow: {
+  coreOverlay: {
     position: 'absolute',
     top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(139,191,150,0.12)',
-    borderLeftWidth: 1,
-    borderRightWidth: 1,
-    borderColor: 'rgba(139,191,150,0.25)',
-  },
-  barGone: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
     left: 0,
-    borderRadius: 100,
-  },
-  barNow: {
-    position: 'absolute',
-    top: -2,
-    bottom: -2,
-    width: 3,
-    backgroundColor: colors.caramel,
-    shadowColor: colors.caramel,
-    shadowOpacity: 0.6,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  barFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 7,
-  },
-  gone: { fontFamily: fonts.sans, color: colors.text3, fontSize: 12 },
-  left: { fontFamily: fonts.sansSemi, color: colors.caramel, fontSize: 12 },
-  peakKey: {
-    flexDirection: 'row',
+    right: 0,
+    bottom: 0,
     alignItems: 'center',
-    gap: 7,
-    marginTop: 11,
-    paddingTop: 11,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
   },
-  peakDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 2,
-    backgroundColor: 'rgba(139,191,150,0.4)',
-  },
-  peakText: {
-    flex: 1,
-    fontFamily: fonts.sans,
-    color: colors.text2,
-    fontSize: 12,
-  },
-  peakStrong: { fontFamily: fonts.sansSemi, color: colors.moss },
 
-  transitionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    backgroundColor: colors.caramelBg,
-    borderColor: colors.caramelBorder,
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 13,
-    paddingHorizontal: 15,
+  // Core content text
+  eyebrow: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 9.5,
+    letterSpacing: 3,
+    textTransform: 'uppercase',
     marginBottom: 8,
   },
-  transitionEmoji: { fontSize: 20 },
-  transitionTitle: {
-    fontFamily: fonts.sansSemi,
-    color: colors.caramel,
-    fontSize: 13,
-    marginBottom: 2,
+  loomRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
   },
-  transitionSub: { fontFamily: fonts.sans, color: colors.text2, fontSize: 12 },
-  transitionBtn: {
-    backgroundColor: colors.caramel,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+  loomText: {
+    fontFamily: fonts.serifItalic,
+    color: C.bone,
+    fontSize: 76,
+    lineHeight: 76,
+    letterSpacing: -3,
   },
-  transitionBtnText: {
-    fontFamily: fonts.sansSemi,
-    color: colors.bg,
+  loomBig: { fontSize: 96, lineHeight: 96 },
+  unit: {
+    fontFamily: fonts.sans,
+    fontSize: 26,
+    color: C.glow,
+    marginLeft: 3,
+    marginRight: 6,
+  },
+  coreTitle: {
+    marginTop: 14,
+    fontFamily: fonts.serifItalic,
+    fontSize: 22,
+    color: C.bone,
+    letterSpacing: -0.3,
+    textAlign: 'center',
+  },
+  coreNote: {
+    marginTop: 3,
+    fontFamily: fonts.sans,
     fontSize: 12,
+    color: C.mute,
+    letterSpacing: -0.1,
+    textAlign: 'center',
+  },
+  coreAt: {
+    marginTop: 6,
+    fontFamily: fonts.sans,
+    fontSize: 11,
+    letterSpacing: 0.2,
   },
 
-  block: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-  },
-  blockNow: {
-    borderColor: 'rgba(212,170,106,0.3)',
-    backgroundColor: '#221D10',
-  },
-  blockDone: { opacity: 0.32 },
-  blockTime: {
-    fontFamily: fonts.sans,
-    color: colors.text3,
-    fontSize: 11,
-    width: 44,
-    textAlign: 'right',
-  },
-  blockDot: { width: 7, height: 7, borderRadius: 100 },
-  blockTitle: {
-    fontFamily: fonts.sansMedium,
-    color: colors.text,
-    fontSize: 13,
-  },
-  blockSub: {
-    fontFamily: fonts.sans,
-    color: colors.text3,
-    fontSize: 11,
-    marginTop: 2,
-  },
-  strike: { textDecorationLine: 'line-through' },
-  nowBadge: {
-    backgroundColor: colors.caramelBg,
-    borderColor: colors.caramelBorder,
-    borderWidth: 1,
-    borderRadius: 5,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  nowBadgeText: {
-    fontFamily: fonts.sansSemi,
-    color: colors.caramel,
-    fontSize: 10,
-    letterSpacing: 0.8,
-  },
-  empty: {
-    fontFamily: fonts.sansItalic,
-    color: colors.text3,
+  initTitle: {
+    fontFamily: fonts.serifItalic,
+    color: C.bone,
+    fontSize: 34,
+    letterSpacing: -0.8,
+    lineHeight: 36,
     textAlign: 'center',
-    fontSize: 13,
-    paddingVertical: 18,
+    maxWidth: 220,
+    marginTop: 4,
+  },
+  initElapsedRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+  },
+  initElapsed: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 52,
+    color: C.bone,
+    letterSpacing: -2,
+    lineHeight: 52,
+  },
+  initMinIn: { fontFamily: fonts.sans, fontSize: 18, color: C.glow },
+
+  openMain: {
+    fontFamily: fonts.serifItalic,
+    color: C.bone,
+    fontSize: 30,
+    letterSpacing: -0.6,
+    lineHeight: 36,
+    textAlign: 'center',
+    maxWidth: 230,
+    marginTop: 6,
+  },
+
+  nightTime: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 44,
+    color: C.dusk,
+    letterSpacing: -1.5,
+    lineHeight: 44,
+  },
+
+  thenWrap: { paddingTop: 18, paddingHorizontal: 24 },
+  sectionLabel: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 10,
+    letterSpacing: 2.4,
+    color: C.mute,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  thenRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    paddingVertical: 11,
+  },
+  thenTime: {
+    width: 58,
+    fontFamily: fonts.serifItalic,
+    fontSize: 17,
+    color: C.boneDim,
+    letterSpacing: -0.4,
+  },
+  thenTitle: {
+    flex: 1,
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    color: C.boneDim,
+    letterSpacing: -0.2,
+  },
+
+  behindWrap: { paddingTop: 20, paddingHorizontal: 24 },
+  behindRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 18,
+  },
+  behindItem: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    opacity: 0.5,
+  },
+  behindTime: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 14,
+    color: C.ash,
+  },
+  behindTitle: {
+    fontFamily: fonts.sans,
+    fontSize: 12.5,
+    color: C.ash,
+    letterSpacing: -0.1,
+    textDecorationLine: 'line-through',
+    textDecorationColor: C.hair,
+  },
+
+  formulaWrap: {
+    marginTop: 26,
+    marginHorizontal: 24,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: C.hair,
+  },
+  formulaBody: {
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    color: C.boneDim,
+    lineHeight: 24,
+    letterSpacing: -0.1,
+  },
+  sleepStats: { flexDirection: 'row', gap: 28, marginTop: 18 },
+  sleepStatLabel: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 10,
+    letterSpacing: 1,
+    color: C.mute,
+    textTransform: 'uppercase',
+    marginBottom: 5,
+  },
+  sleepStatNum: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 22,
+    letterSpacing: -0.5,
+  },
+
+  formulaTopRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+  },
+  formulaTime: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 30,
+    color: C.bone,
+    letterSpacing: -1,
+  },
+  formulaWindLabel: {
+    fontFamily: fonts.serifItalic,
+    fontSize: 14,
+    color: C.boneDim,
+    letterSpacing: -0.2,
+  },
+  formulaSleepInline: {
+    fontFamily: fonts.sans,
+    fontSize: 11,
+    color: C.mute,
+  },
+  formulaShortBody: {
+    fontFamily: fonts.sans,
+    fontSize: 12.5,
+    color: C.mute,
+    lineHeight: 19,
+    letterSpacing: -0.05,
+    marginTop: 8,
+    marginBottom: 22,
+    maxWidth: 290,
   },
 });

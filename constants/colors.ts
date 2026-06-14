@@ -74,6 +74,27 @@ export const colors = {
   text3: '#6A5E50',
 } as const;
 
+// ── Time tab palette ─────────────────────────────────────────────────
+// Ported verbatim from lumi-time.jsx. Used only on the Time tab — the
+// rest of the app keeps the warmer coffee-brown palette above.
+export const timeColors = {
+  void: '#120E0C',
+  void2: '#1A1512',
+  voidNight: '#0E1014',
+  bone: '#ECE0CB',
+  boneDim: '#B0A38B',
+  ember: '#E07A4F',
+  emberDk: '#9C4E2E',
+  glow: '#F4C98A',
+  lichen: '#869072',
+  lichenLt: '#A4B091',
+  dusk: '#8EA0B4',
+  duskDk: '#3E4A5C',
+  ash: '#5A5650',
+  mute: '#6E655A',
+  hair: '#2A2420',
+} as const;
+
 export type AccentKey =
   | 'plum'
   | 'terra'
