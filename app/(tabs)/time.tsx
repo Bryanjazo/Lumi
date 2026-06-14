@@ -451,94 +451,123 @@ const CoreContent = ({
   data: CoreData;
   accent: string;
 }) => {
+  // Layout pattern: upperGroup sits at ~22% of the radar (above the
+  // glowing center dot), lowerGroup sits at ~58% (below it). The dot
+  // is naturally visible in the gap between them.
   if (kind === 'countdown' && data.next) {
     return (
       <>
-        <Eyebrow color={accent}>next · in</Eyebrow>
-        <Loom>
-          {(data.ctHrs ?? 0) > 0 && (
-            <>
-              <Text style={styles.loomText}>{data.ctHrs}</Text>
-              <Text style={styles.unit}>h</Text>
-            </>
+        <View style={styles.upperGroup}>
+          <Eyebrow color={accent}>next · in</Eyebrow>
+          <Loom>
+            {(data.ctHrs ?? 0) > 0 && (
+              <>
+                <Text style={styles.loomText}>{data.ctHrs}</Text>
+                <Text style={styles.unit}>h</Text>
+              </>
+            )}
+            <Text style={styles.loomText}>{data.ctMins}</Text>
+            <Text style={styles.unit}>m</Text>
+          </Loom>
+        </View>
+        <View style={styles.lowerGroup}>
+          <Text style={styles.coreTitle}>{data.next.t}</Text>
+          {data.next.note && (
+            <Text style={styles.coreNote}>{data.next.note}</Text>
           )}
-          <Text style={styles.loomText}>{data.ctMins}</Text>
-          <Text style={styles.unit}>m</Text>
-        </Loom>
-        <Text style={styles.coreTitle}>{data.next.t}</Text>
-        {data.next.note && <Text style={styles.coreNote}>{data.next.note}</Text>}
-        <Text style={[styles.coreAt, { color: accent }]}>
-          at {nStr(data.next)}
-        </Text>
+          <Text style={[styles.coreAt, { color: accent }]}>
+            at {nStr(data.next)}
+          </Text>
+        </View>
       </>
     );
   }
   if (kind === 'imminent' && data.next) {
     return (
       <>
-        <Eyebrow color={C.ember} pulse>closing in</Eyebrow>
-        <Loom big>
-          <Text style={[styles.loomText, styles.loomBig]}>{data.ctMins}</Text>
-          <Text style={styles.unit}>m</Text>
-        </Loom>
-        <Text style={styles.coreTitle}>{data.next.t}</Text>
-        <Text style={[styles.coreNote, { color: C.ember }]}>
-          start wrapping up
-        </Text>
-        <Text style={[styles.coreAt, { color: C.ember }]}>
-          at {nStr(data.next)}
-        </Text>
+        <View style={styles.upperGroup}>
+          <Eyebrow color={C.ember} pulse>
+            closing in
+          </Eyebrow>
+          <Loom big>
+            <Text style={[styles.loomText, styles.loomBig]}>
+              {data.ctMins}
+            </Text>
+            <Text style={styles.unit}>m</Text>
+          </Loom>
+        </View>
+        <View style={styles.lowerGroup}>
+          <Text style={styles.coreTitle}>{data.next.t}</Text>
+          <Text style={[styles.coreNote, { color: C.ember }]}>
+            start wrapping up
+          </Text>
+          <Text style={[styles.coreAt, { color: C.ember }]}>
+            at {nStr(data.next)}
+          </Text>
+        </View>
       </>
     );
   }
   if (kind === 'init' && data.cur && data.endsAt) {
     return (
       <>
-        <Eyebrow color={accent}>you're in</Eyebrow>
-        <Text style={styles.initTitle}>{data.cur.t}</Text>
-        <View style={styles.initElapsedRow}>
-          <Text style={styles.initElapsed}>{data.elapsed}</Text>
-          <Text style={styles.initMinIn}>m in</Text>
+        <View style={styles.upperGroup}>
+          <Eyebrow color={accent}>you're in</Eyebrow>
+          <Text style={styles.initTitle}>{data.cur.t}</Text>
         </View>
-        <Text style={[styles.coreNote, { marginTop: 10 }]}>
-          {data.remain}m left · ends {nStr(data.endsAt)}
-        </Text>
+        <View style={styles.lowerGroup}>
+          <View style={styles.initElapsedRow}>
+            <Text style={styles.initElapsed}>{data.elapsed}</Text>
+            <Text style={styles.initMinIn}>m in</Text>
+          </View>
+          <Text style={[styles.coreNote, { marginTop: 10 }]}>
+            {data.remain}m left · ends {nStr(data.endsAt)}
+          </Text>
+        </View>
       </>
     );
   }
   if (kind === 'open') {
     return (
       <>
-        <Eyebrow color={C.mute}>open</Eyebrow>
-        <Text style={styles.openMain}>
-          nothing's{'\n'}pulling at you
-        </Text>
-        {data.nextLabel && (
-          <Text
-            style={[
-              styles.coreNote,
-              { marginTop: 12, maxWidth: 210, textAlign: 'center' },
-            ]}
-          >
-            {data.nextLabel}
+        <View style={styles.upperGroup}>
+          <Eyebrow color={C.mute}>open</Eyebrow>
+          <Text style={styles.openMain}>
+            nothing's{'\n'}pulling at you
           </Text>
-        )}
+        </View>
+        <View style={styles.lowerGroup}>
+          {data.nextLabel && (
+            <Text
+              style={[
+                styles.coreNote,
+                { maxWidth: 210, textAlign: 'center' },
+              ]}
+            >
+              {data.nextLabel}
+            </Text>
+          )}
+        </View>
       </>
     );
   }
   if (kind === 'night') {
     return (
       <>
-        <Eyebrow color={C.dusk}>tonight</Eyebrow>
-        <Text style={styles.openMain}>
-          the day's done{'\n'}pulling
-        </Text>
-        <View style={[styles.initElapsedRow, { marginTop: 16 }]}>
-          <Text style={styles.nightTime}>9:30</Text>
+        <View style={styles.upperGroup}>
+          <Eyebrow color={C.dusk}>tonight</Eyebrow>
+          <Text style={styles.openMain}>
+            the day's done{'\n'}pulling
+          </Text>
         </View>
-        <Text style={[styles.coreNote, { marginTop: 10, color: C.dusk }]}>
-          wind down now
-        </Text>
+        <View style={styles.lowerGroup}>
+          <View style={styles.initElapsedRow}>
+            <Text style={styles.nightTime}>9:30</Text>
+          </View>
+          <Text style={[styles.coreNote, { marginTop: 10, color: C.dusk }]}>
+            wind down now
+          </Text>
+        </View>
       </>
     );
   }
@@ -891,14 +920,31 @@ const styles = StyleSheet.create({
     marginTop: -4,
     position: 'relative',
   },
+  // Position children absolutely instead of using a centered flex
+  // column. The mock has the dot visibly BETWEEN the big numbers and
+  // the title — we recreate that by placing the upper group at ~22%
+  // and the lower group at ~58% of the radar height.
   coreOverlay: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
+    paddingHorizontal: 20,
+  },
+  upperGroup: {
+    position: 'absolute',
+    top: '22%',
+    left: 0,
+    right: 0,
     alignItems: 'center',
-    justifyContent: 'center',
+  },
+  lowerGroup: {
+    position: 'absolute',
+    top: '58%',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
     paddingHorizontal: 20,
   },
 
@@ -908,8 +954,7 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     letterSpacing: 3,
     textTransform: 'uppercase',
-    // Tucks the "NEXT · IN" tight to the big number below
-    marginBottom: 2,
+    marginBottom: 8,
   },
   loomRow: {
     flexDirection: 'row',
@@ -946,10 +991,8 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   coreTitle: {
-    // Negative pulls the title into the loom's descender area so it
-    // sits right under the visible character bottoms (RN added line
-    // box padding to avoid clipping the ascenders; we eat it here).
-    marginTop: -10,
+    // Lives inside lowerGroup which is absolutely positioned below
+    // the center dot. No negative margin needed.
     fontFamily: fonts.fraunces,
     fontSize: 22,
     color: C.bone,
