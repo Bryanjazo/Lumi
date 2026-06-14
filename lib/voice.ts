@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
-import { Audio } from 'expo-av';
+import { useEffect, useState } from 'react';
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  AudioModule,
+  setAudioModeAsync,
+} from 'expo-audio';
 import Constants from 'expo-constants';
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Record<
@@ -16,54 +21,45 @@ export type VoiceState = 'idle' | 'recording' | 'transcribing';
 interface VoiceController {
   state: VoiceState;
   error: string | null;
-  /** Start recording. Resolves once recording has actually begun. */
   start: () => Promise<void>;
-  /** Stop + transcribe. Resolves with the transcribed text. */
   stopAndTranscribe: () => Promise<string | null>;
-  /** Cancel without transcribing. */
   cancel: () => Promise<void>;
 }
 
 /**
  * Voice recording + Whisper transcription.
  *
- * Records via expo-av, then POSTs the resulting m4a to OpenAI's
- * Whisper endpoint and returns the transcribed text. Requires
- * EXPO_PUBLIC_OPENAI_API_KEY. Microphone permission is requested on
- * first use; we surface a friendly error if the user denies.
+ * Uses expo-audio (the modern replacement for expo-av's Audio.Recording).
+ * Records to a local m4a, then POSTs it to OpenAI's Whisper endpoint and
+ * returns the transcribed text. Requires EXPO_PUBLIC_OPENAI_API_KEY.
+ * Microphone permission is requested on first use; we surface a friendly
+ * error if the user denies.
  */
 export const useVoice = (): VoiceController => {
   const [state, setState] = useState<VoiceState>('idle');
   const [error, setError] = useState<string | null>(null);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
-  // Make sure the audio session is configured so recording works on iOS.
+  // Configure the audio session so recording works in silent mode on iOS.
   useEffect(() => {
-    void Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
+    void setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
     }).catch(() => {
       // ignore; we'll surface errors at start time
     });
-    return () => {
-      void recordingRef.current?.stopAndUnloadAsync().catch(() => undefined);
-    };
   }, []);
 
   const start = async () => {
     setError(null);
     try {
-      const perm = await Audio.requestPermissionsAsync();
-      if (perm.status !== 'granted') {
+      const perm = await AudioModule.requestRecordingPermissionsAsync();
+      if (!perm.granted) {
         setError('Microphone access is off. Enable it in Settings → Lumi.');
         return;
       }
-      const rec = new Audio.Recording();
-      await rec.prepareToRecordAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
-      );
-      await rec.startAsync();
-      recordingRef.current = rec;
+      await recorder.prepareToRecordAsync();
+      recorder.record();
       setState('recording');
     } catch (e) {
       setError(
@@ -74,13 +70,11 @@ export const useVoice = (): VoiceController => {
   };
 
   const stopAndTranscribe = async (): Promise<string | null> => {
-    const rec = recordingRef.current;
-    if (!rec) return null;
+    if (state !== 'recording') return null;
     setState('transcribing');
     try {
-      await rec.stopAndUnloadAsync();
-      const uri = rec.getURI();
-      recordingRef.current = null;
+      await recorder.stop();
+      const uri = recorder.uri;
       if (!uri) {
         setError("Recording didn't save.");
         setState('idle');
@@ -106,17 +100,15 @@ export const useVoice = (): VoiceController => {
   };
 
   const cancel = async () => {
-    const rec = recordingRef.current;
-    recordingRef.current = null;
-    setState('idle');
     setError(null);
-    if (rec) {
+    if (state === 'recording') {
       try {
-        await rec.stopAndUnloadAsync();
+        await recorder.stop();
       } catch {
         // already stopped
       }
     }
+    setState('idle');
   };
 
   return { state, error, start, stopAndTranscribe, cancel };
@@ -124,8 +116,8 @@ export const useVoice = (): VoiceController => {
 
 const transcribeWithWhisper = async (uri: string): Promise<string> => {
   const form = new FormData();
-  // The Audio.Recording uri is a local file URL — RN handles FormData
-  // file uploads via this shape.
+  // The recorder uri is a local file URL — RN handles FormData file
+  // uploads via this { uri, name, type } shape.
   form.append('file', {
     uri,
     name: 'audio.m4a',

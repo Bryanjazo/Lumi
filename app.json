@@ -17,7 +17,9 @@
     },
     "android": {
       "package": "com.lumi.app",
-      "permissions": ["android.permission.RECORD_AUDIO"],
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#141210",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -47,7 +49,8 @@
         {
           "color": "#C4A0E0"
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true
