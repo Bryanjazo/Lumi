@@ -914,6 +914,10 @@ const styles = StyleSheet.create({
   loomRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
+    // Symmetric horizontal padding so italic glyph overhangs (especially
+    // the trailing unit char like "m") don't get visually clipped at
+    // the row edge. iOS RN Text layout can chop italic glyph tails.
+    paddingHorizontal: 6,
   },
   loomText: {
     fontFamily: fonts.fraunces,
@@ -932,8 +936,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.inter,
     fontSize: 26,
     color: C.glow,
-    marginLeft: 3,
-    marginRight: 6,
+    marginLeft: 4,
+    // Bumped right margin (was 6) to give italic glyph the room it
+    // needs to render its final stroke without being clipped.
+    marginRight: 14,
+    // Explicit lineHeight + paddingRight as extra safety inside the
+    // Text bounds — iOS sometimes chops the trailing glyph tail.
+    lineHeight: 32,
+    paddingRight: 4,
   },
   coreTitle: {
     // Negative pulls the title into the loom's descender area so it
