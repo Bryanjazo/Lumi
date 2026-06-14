@@ -909,7 +909,8 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     letterSpacing: 3,
     textTransform: 'uppercase',
-    marginBottom: 8,
+    // Tucks the "NEXT · IN" tight to the big number below
+    marginBottom: 2,
   },
   loomRow: {
     flexDirection: 'row',
@@ -919,10 +920,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.fraunces,
     color: C.bone,
     fontSize: 76,
-    lineHeight: 76,
+    // JSX uses lineHeight: 0.8 — chars visually overflow the layout
+    // box on web, but RN clips strictly. Tightening to 0.82x so the
+    // title beneath sits closer to the loom (overlapping the radar's
+    // inner ring instead of floating well below it).
+    lineHeight: 62,
     letterSpacing: -3,
   },
-  loomBig: { fontSize: 96, lineHeight: 96 },
+  loomBig: { fontSize: 96, lineHeight: 78 },
   unit: {
     fontFamily: fonts.inter,
     fontSize: 26,
@@ -931,7 +936,9 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   coreTitle: {
-    marginTop: 14,
+    // Tighter so the title overlaps the inner ring instead of sitting
+    // well below the loom.
+    marginTop: 6,
     fontFamily: fonts.fraunces,
     fontSize: 22,
     color: C.bone,
@@ -958,13 +965,13 @@ const styles = StyleSheet.create({
     color: C.bone,
     fontSize: 34,
     letterSpacing: -0.8,
-    lineHeight: 36,
+    lineHeight: 30,
     textAlign: 'center',
     maxWidth: 220,
     marginTop: 4,
   },
   initElapsedRow: {
-    marginTop: 14,
+    marginTop: 8,
     flexDirection: 'row',
     alignItems: 'baseline',
     gap: 6,
@@ -974,7 +981,7 @@ const styles = StyleSheet.create({
     fontSize: 52,
     color: C.bone,
     letterSpacing: -2,
-    lineHeight: 52,
+    lineHeight: 42,
   },
   initMinIn: { fontFamily: fonts.inter, fontSize: 18, color: C.glow },
 
@@ -983,7 +990,7 @@ const styles = StyleSheet.create({
     color: C.bone,
     fontSize: 30,
     letterSpacing: -0.6,
-    lineHeight: 36,
+    lineHeight: 34,
     textAlign: 'center',
     maxWidth: 230,
     marginTop: 6,
@@ -994,7 +1001,7 @@ const styles = StyleSheet.create({
     fontSize: 44,
     color: C.dusk,
     letterSpacing: -1.5,
-    lineHeight: 44,
+    lineHeight: 36,
   },
 
   thenWrap: { paddingTop: 18, paddingHorizontal: 24 },
