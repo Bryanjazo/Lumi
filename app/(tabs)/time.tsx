@@ -256,7 +256,9 @@ const BreathRing = ({
       cy={160}
       r={animR}
       fill="none"
-      stroke={C.hair}
+      // C.ash reads brighter than C.hair on the void bg in RN SVG;
+      // CSS compositing made hair OK on web but here it disappears.
+      stroke={C.ash}
       strokeWidth={1}
       strokeOpacity={animO}
     />
@@ -330,7 +332,10 @@ const RadarField = ({
   progress: number | null;
 }) => {
   const pingDur = calm ? 6 : Math.max(1.4, 3.5 - prox * 2);
-  const ringBase = calm ? 0.3 : 0.6;
+  // Bumped from 0.6 → 0.75 so the rings are clearly visible at smaller
+  // opacities. The original CSS-renderer made them look brighter than
+  // SVG does on a dark BG.
+  const ringBase = calm ? 0.42 : 0.78;
 
   // Inner core dot pulse
   const dotR = useRef(new Animated.Value(6)).current;
@@ -838,7 +843,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerDate: {
-    fontFamily: fonts.sansSemi,
+    fontFamily: fonts.interSemi,
     fontSize: 10,
     letterSpacing: 2.4,
     color: C.mute,
@@ -847,7 +852,7 @@ const styles = StyleSheet.create({
   ctxRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   ctxDot: { width: 5, height: 5, borderRadius: 3 },
   ctxLabel: {
-    fontFamily: fonts.sansSemi,
+    fontFamily: fonts.interSemi,
     fontSize: 10,
     letterSpacing: 1.8,
     textTransform: 'uppercase',
@@ -855,7 +860,7 @@ const styles = StyleSheet.create({
 
   nowWrap: { paddingTop: 14, paddingHorizontal: 24, alignItems: 'center' },
   nowLabel: {
-    fontFamily: fonts.sansSemi,
+    fontFamily: fonts.interSemi,
     fontSize: 9.5,
     letterSpacing: 3,
     color: C.mute,
@@ -863,14 +868,14 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   nowTime: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 40,
     color: C.bone,
     letterSpacing: -1,
     lineHeight: 42,
   },
   nowAmpm: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 18,
     color: C.mute,
   },
@@ -895,7 +900,7 @@ const styles = StyleSheet.create({
 
   // Core content text
   eyebrow: {
-    fontFamily: fonts.sansSemi,
+    fontFamily: fonts.interSemi,
     fontSize: 9.5,
     letterSpacing: 3,
     textTransform: 'uppercase',
@@ -906,7 +911,7 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
   },
   loomText: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     color: C.bone,
     fontSize: 76,
     lineHeight: 76,
@@ -914,7 +919,7 @@ const styles = StyleSheet.create({
   },
   loomBig: { fontSize: 96, lineHeight: 96 },
   unit: {
-    fontFamily: fonts.sans,
+    fontFamily: fonts.inter,
     fontSize: 26,
     color: C.glow,
     marginLeft: 3,
@@ -922,7 +927,7 @@ const styles = StyleSheet.create({
   },
   coreTitle: {
     marginTop: 14,
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 22,
     color: C.bone,
     letterSpacing: -0.3,
@@ -930,7 +935,7 @@ const styles = StyleSheet.create({
   },
   coreNote: {
     marginTop: 3,
-    fontFamily: fonts.sans,
+    fontFamily: fonts.inter,
     fontSize: 12,
     color: C.mute,
     letterSpacing: -0.1,
@@ -938,13 +943,13 @@ const styles = StyleSheet.create({
   },
   coreAt: {
     marginTop: 6,
-    fontFamily: fonts.sans,
+    fontFamily: fonts.inter,
     fontSize: 11,
     letterSpacing: 0.2,
   },
 
   initTitle: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     color: C.bone,
     fontSize: 34,
     letterSpacing: -0.8,
@@ -960,16 +965,16 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   initElapsed: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 52,
     color: C.bone,
     letterSpacing: -2,
     lineHeight: 52,
   },
-  initMinIn: { fontFamily: fonts.sans, fontSize: 18, color: C.glow },
+  initMinIn: { fontFamily: fonts.inter, fontSize: 18, color: C.glow },
 
   openMain: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     color: C.bone,
     fontSize: 30,
     letterSpacing: -0.6,
@@ -980,7 +985,7 @@ const styles = StyleSheet.create({
   },
 
   nightTime: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 44,
     color: C.dusk,
     letterSpacing: -1.5,
@@ -989,7 +994,7 @@ const styles = StyleSheet.create({
 
   thenWrap: { paddingTop: 18, paddingHorizontal: 24 },
   sectionLabel: {
-    fontFamily: fonts.sansSemi,
+    fontFamily: fonts.interSemi,
     fontSize: 10,
     letterSpacing: 2.4,
     color: C.mute,
@@ -1003,14 +1008,14 @@ const styles = StyleSheet.create({
   },
   thenTime: {
     width: 58,
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 17,
     color: C.boneDim,
     letterSpacing: -0.4,
   },
   thenTitle: {
     flex: 1,
-    fontFamily: fonts.sans,
+    fontFamily: fonts.inter,
     fontSize: 14,
     color: C.boneDim,
     letterSpacing: -0.2,
@@ -1029,12 +1034,12 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   behindTime: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 14,
     color: C.ash,
   },
   behindTitle: {
-    fontFamily: fonts.sans,
+    fontFamily: fonts.inter,
     fontSize: 12.5,
     color: C.ash,
     letterSpacing: -0.1,
@@ -1050,7 +1055,7 @@ const styles = StyleSheet.create({
     borderTopColor: C.hair,
   },
   formulaBody: {
-    fontFamily: fonts.sans,
+    fontFamily: fonts.inter,
     fontSize: 14,
     color: C.boneDim,
     lineHeight: 24,
@@ -1058,7 +1063,7 @@ const styles = StyleSheet.create({
   },
   sleepStats: { flexDirection: 'row', gap: 28, marginTop: 18 },
   sleepStatLabel: {
-    fontFamily: fonts.sansSemi,
+    fontFamily: fonts.interSemi,
     fontSize: 10,
     letterSpacing: 1,
     color: C.mute,
@@ -1066,7 +1071,7 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   sleepStatNum: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 22,
     letterSpacing: -0.5,
   },
@@ -1077,24 +1082,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   formulaTime: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 30,
     color: C.bone,
     letterSpacing: -1,
   },
   formulaWindLabel: {
-    fontFamily: fonts.serifItalic,
+    fontFamily: fonts.fraunces,
     fontSize: 14,
     color: C.boneDim,
     letterSpacing: -0.2,
   },
   formulaSleepInline: {
-    fontFamily: fonts.sans,
+    fontFamily: fonts.inter,
     fontSize: 11,
     color: C.mute,
   },
   formulaShortBody: {
-    fontFamily: fonts.sans,
+    fontFamily: fonts.inter,
     fontSize: 12.5,
     color: C.mute,
     lineHeight: 19,

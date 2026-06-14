@@ -15,6 +15,15 @@ import {
   DMSerifDisplay_400Regular,
   DMSerifDisplay_400Regular_Italic,
 } from '@expo-google-fonts/dm-serif-display';
+import {
+  Fraunces_400Regular_Italic,
+  Fraunces_500Medium_Italic,
+} from '@expo-google-fonts/fraunces';
+import {
+  InterTight_400Regular,
+  InterTight_500Medium,
+  InterTight_600SemiBold,
+} from '@expo-google-fonts/inter-tight';
 import { View, ActivityIndicator } from 'react-native';
 import { colors } from '../constants/colors';
 import { useUserStore } from '../store/userStore';
@@ -31,6 +40,11 @@ export default function RootLayout() {
     DMSans_600SemiBold,
     DMSerifDisplay_400Regular,
     DMSerifDisplay_400Regular_Italic,
+    Fraunces_400Regular_Italic,
+    Fraunces_500Medium_Italic,
+    InterTight_400Regular,
+    InterTight_500Medium,
+    InterTight_600SemiBold,
   });
 
   const [hydrated, setHydrated] = useState(() =>

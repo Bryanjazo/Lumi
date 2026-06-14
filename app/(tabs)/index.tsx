@@ -306,6 +306,7 @@ export default function Home() {
   const [adding, setAdding] = useState(false);
   const [newTask, setNewTask] = useState('');
   const [newImportance, setNewImportance] = useState<Importance>('medium');
+  const [newTime, setNewTime] = useState(''); // e.g., "10:30am"
   const newXp = XP_BY_IMPORTANCE[newImportance];
 
   // game state
@@ -452,6 +453,7 @@ export default function Home() {
 
   const handleAdd = () => {
     if (!newTask.trim()) return;
+    const parsed = parseTimeInput(newTime);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     addQuest({
       title: newTask.trim(),
@@ -463,9 +465,15 @@ export default function Home() {
             : 'easy',
       importance: newImportance,
       xpReward: XP_BY_IMPORTANCE[newImportance],
+      scheduledHour: parsed?.hour,
+      scheduledMinute: parsed?.minute,
+      // When scheduling, default to 45-min duration so the Time tab
+      // can place the user "in" the block while it's active.
+      durationMinutes: parsed ? 45 : undefined,
     });
     setNewTask('');
     setNewImportance('medium');
+    setNewTime('');
     setAdding(false);
   };
 
@@ -686,11 +694,33 @@ export default function Home() {
                 </Text>
               </View>
             </View>
+
+            {/* Schedule time (optional) — feeds the Time tab radar */}
+            <View style={styles.timeRow}>
+              <Text style={styles.timeLabel}>at</Text>
+              <TextInput
+                placeholder="e.g. 10:30am  (optional)"
+                placeholderTextColor={colors.text3}
+                value={newTime}
+                onChangeText={setNewTime}
+                style={styles.timeInput}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {newTime && parseTimeInput(newTime) === null && (
+                <Text style={styles.timeBad}>?</Text>
+              )}
+              {newTime && parseTimeInput(newTime) !== null && (
+                <Text style={styles.timeOk}>✓</Text>
+              )}
+            </View>
+
             <View style={styles.addActions}>
               <Pressable
                 onPress={() => {
                   setNewTask('');
                   setNewImportance('medium');
+                  setNewTime('');
                   setAdding(false);
                 }}
                 style={styles.addCancel}
@@ -907,6 +937,38 @@ export default function Home() {
 }
 
 // ── Helpers (continued) ─────────────────────────────────────────────
+/**
+ * Parse a time string into { hour, minute } (24-hr). Accepts:
+ *   "10:30am", "10:30 am", "10am", "10 am"
+ *   "2pm", "2:30 PM"
+ *   "14:30", "14"  (24-hr)
+ * Returns null if unparseable.
+ */
+const parseTimeInput = (
+  raw: string,
+): { hour: number; minute: number } | null => {
+  const s = raw.trim().toLowerCase();
+  if (!s) return null;
+  const m = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const period = m[3];
+  if (Number.isNaN(h) || min < 0 || min > 59) return null;
+  if (period === 'am') {
+    if (h === 12) h = 0;
+    else if (h < 1 || h > 12) return null;
+  } else if (period === 'pm') {
+    if (h === 12) h = 12;
+    else if (h >= 1 && h <= 11) h += 12;
+    else return null;
+  } else {
+    // 24-hr — must be 0–23
+    if (h < 0 || h > 23) return null;
+  }
+  return { hour: h, minute: min };
+};
+
 const categoryFor = (title: string): string => {
   const t = title.toLowerCase();
   if (/(call|email|reply|text|message)/.test(t)) return 'Communication';
@@ -1279,6 +1341,40 @@ const styles = StyleSheet.create({
     fontFamily: fonts.serifItalic,
     fontSize: 18,
     lineHeight: 20,
+  },
+  // Schedule time field
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  timeLabel: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 10,
+    letterSpacing: 1.8,
+    color: colors.text3,
+    textTransform: 'uppercase',
+  },
+  timeInput: {
+    flex: 1,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    color: colors.text,
+    paddingVertical: 4,
+  },
+  timeOk: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 14,
+    color: colors.moss,
+  },
+  timeBad: {
+    fontFamily: fonts.sansSemi,
+    fontSize: 14,
+    color: colors.text3,
   },
   addActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
   addCancel: {
