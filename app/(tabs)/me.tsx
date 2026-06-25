@@ -45,7 +45,11 @@ import {
 } from '../../lib/vitality';
 import { last7DaysEnergy, useLearningDigest } from '../../lib/learning';
 import { SoftGlow } from '../../components/SoftGlow';
-import { useQuestStore, selectTodayQuests } from '../../store/questStore';
+import {
+  useQuestStore,
+  selectTodayQuests,
+  type Quest,
+} from '../../store/questStore';
 import { useCheckinStore } from '../../store/checkinStore';
 import { useUserStore } from '../../store/userStore';
 import { todayKey } from '../../lib/gamification';
@@ -913,6 +917,60 @@ const UnlocksShop = ({ totalXp }: { totalXp: number }) => {
 // ═════════════════════════════════════════════════════════════════════
 // Screen
 // ═════════════════════════════════════════════════════════════════════
+// FocusedSnapshot — calm "Snapshot" strip rendered in Focused mode
+// where the standing strip (Rank/Streak/Lifetime XP) would be.
+//
+// Reads the same quest history but speaks in neutral language:
+// "Days with Lumi", "Done this week", "Done total". No XP unit, no
+// rank, no flame — matches the "pure calm AI organizer" promise.
+// ═════════════════════════════════════════════════════════════════════
+const FocusedSnapshot = ({ quests }: { quests: Quest[] }) => {
+  const accent = useAccent();
+  const onboardedAt = useUserStore((s) => s.onboardedAt);
+  const styles = useMemo(() => makeStyles(accent), [accent]);
+
+  const daysWithLumi = useMemo(() => {
+    if (!onboardedAt) return 0;
+    const ms = Date.now() - new Date(onboardedAt).getTime();
+    return Math.max(1, Math.floor(ms / 86_400_000));
+  }, [onboardedAt]);
+
+  const { doneThisWeek, doneTotal } = useMemo(() => {
+    const today = new Date();
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekAgoIso = weekAgo.toISOString().slice(0, 10);
+    let week = 0;
+    let total = 0;
+    for (const q of quests) {
+      if (!q.completed) continue;
+      total++;
+      const completedDate = (q.completedAt ?? q.date)?.slice(0, 10);
+      if (completedDate && completedDate >= weekAgoIso) week++;
+    }
+    return { doneThisWeek: week, doneTotal: total };
+  }, [quests]);
+
+  return (
+    <View style={styles.standingStrip}>
+      <View style={styles.standingCell}>
+        <Text style={styles.standingCellNum}>{daysWithLumi}</Text>
+        <Text style={styles.standingCellLabel}>DAYS WITH LUMI</Text>
+      </View>
+      <View style={styles.standingDivider} />
+      <View style={styles.standingCell}>
+        <Text style={styles.standingCellNum}>{doneThisWeek}</Text>
+        <Text style={styles.standingCellLabel}>THIS WEEK</Text>
+      </View>
+      <View style={styles.standingDivider} />
+      <View style={styles.standingCell}>
+        <Text style={styles.standingCellNum}>{doneTotal}</Text>
+        <Text style={styles.standingCellLabel}>DONE TOTAL</Text>
+      </View>
+    </View>
+  );
+};
+
 // ═════════════════════════════════════════════════════════════════════
 // HubRow — collapsible "Your corner" row.
 // (lumi-me-v2-spec §2 — the demoted tidy hub.)
@@ -1306,59 +1364,75 @@ export default function MeTab() {
         </>
         )}
 
-        {/* ═══ YOUR CORNER — the demoted tidy hub ═══ */}
+        {/* ═══ YOUR CORNER — the demoted tidy hub ═══
+            Companion-mode spec §3: in Focused, the standing strip
+            (Rank/Streak/Lifetime XP) + level bar are game chrome.
+            Replace with a neutral snapshot ("Days with Lumi", "Done
+            this week", "Captures sorted") that respects the
+            "calm AI organizer" framing. */}
         <View style={styles.cornerBlock}>
-          <Text style={styles.cornerEyebrow}>Your corner</Text>
+          <Text style={styles.cornerEyebrow}>
+            {companion.isFocused ? 'Snapshot' : 'Your corner'}
+          </Text>
 
-          {/* Compact standing strip */}
-          <View style={styles.standingStrip}>
-            <View style={styles.standingCell}>
-              <Text style={styles.standingCellNum}>{rank}</Text>
-              <Text style={styles.standingCellLabel}>RANK</Text>
-            </View>
-            <View style={styles.standingDivider} />
-            <View style={styles.standingCell}>
-              <Text
-                style={[
-                  styles.standingCellNum,
-                  { color: '#C9A06A' },
-                ]}
-              >
-                🔥{streak}
-              </Text>
-              <Text style={styles.standingCellLabel}>STREAK</Text>
-            </View>
-            <View style={styles.standingDivider} />
-            <View style={styles.standingCell}>
-              <Text
-                style={[
-                  styles.standingCellNum,
-                  { color: accent.fg },
-                ]}
-              >
-                {xpTotal.toLocaleString()}
-              </Text>
-              <Text style={styles.standingCellLabel}>LIFETIME XP</Text>
-            </View>
-          </View>
+          {/* Game-flavored standing strip — Full + Minimal only. */}
+          {companion.showXp && (
+            <>
+              <View style={styles.standingStrip}>
+                <View style={styles.standingCell}>
+                  <Text style={styles.standingCellNum}>{rank}</Text>
+                  <Text style={styles.standingCellLabel}>RANK</Text>
+                </View>
+                <View style={styles.standingDivider} />
+                <View style={styles.standingCell}>
+                  <Text
+                    style={[
+                      styles.standingCellNum,
+                      { color: '#C9A06A' },
+                    ]}
+                  >
+                    🔥{streak}
+                  </Text>
+                  <Text style={styles.standingCellLabel}>STREAK</Text>
+                </View>
+                <View style={styles.standingDivider} />
+                <View style={styles.standingCell}>
+                  <Text
+                    style={[
+                      styles.standingCellNum,
+                      { color: accent.fg },
+                    ]}
+                  >
+                    {xpTotal.toLocaleString()}
+                  </Text>
+                  <Text style={styles.standingCellLabel}>LIFETIME XP</Text>
+                </View>
+              </View>
 
-          {/* Level progress to next rank */}
-          <View style={styles.levelBarRow}>
-            <View style={styles.levelBarTrack}>
-              <View
-                style={[
-                  styles.levelBarFill,
-                  {
-                    width: `${xpPct}%`,
-                    backgroundColor: accent.fg,
-                  },
-                ]}
-              />
-            </View>
-            <Text style={styles.levelBarLabel}>
-              {remainingToNext.toLocaleString()} XP to Rank {rank + 1}
-            </Text>
-          </View>
+              {/* Level progress to next rank */}
+              <View style={styles.levelBarRow}>
+                <View style={styles.levelBarTrack}>
+                  <View
+                    style={[
+                      styles.levelBarFill,
+                      {
+                        width: `${xpPct}%`,
+                        backgroundColor: accent.fg,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.levelBarLabel}>
+                  {remainingToNext.toLocaleString()} XP to Rank {rank + 1}
+                </Text>
+              </View>
+            </>
+          )}
+
+          {/* Neutral snapshot — Focused mode only.
+              Three calm stats that read as "you've been showing up,"
+              not "you levelled up." No flame, no XP unit, no rank. */}
+          {companion.isFocused && <FocusedSnapshot quests={quests} />}
 
           {/* Hub rows — collapsible.
               Unlocks/shop ('worlds & unlocks') is the game/XP shop —

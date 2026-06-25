@@ -27,7 +27,7 @@ import {
   Linking,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -65,6 +65,12 @@ export default function Paywall() {
   const { session } = useSession();
   const access = useAccessStatus(session);
   const petName = useUserStore((s) => s.petName);
+  // Read the real safe-area top inset so the close button sits below
+  // the Dynamic Island / notch on every device, not at the literal
+  // top edge of the screen (where iOS clips it). The SafeAreaView
+  // edges only inset its CHILD container; the absolutely-positioned
+  // close button needs the value applied directly.
+  const insets = useSafeAreaInsets();
   // Honest mood — even on a sales surface. If the user is tired or
   // overwhelmed when they hit the paywall, showing a beaming cat
   // would feel performative. Let Luna reflect their actual state.
@@ -284,8 +290,9 @@ export default function Paywall() {
               Give your brain{'\n'}all the room it needs.
             </Text>
             <Text style={styles.heroSub}>
-              Unlock everything Lumi &amp; {petName} can do — and keep your
-              whole world growing.
+              {petName === 'Lumi'
+                ? 'Unlock everything Lumi can do — and keep your whole world growing.'
+                : `Unlock everything Lumi & ${petName} can do — and keep your whole world growing.`}
             </Text>
           </View>
 
@@ -482,7 +489,11 @@ export default function Paywall() {
           hitSlop={12}
           accessibilityRole="button"
           accessibilityLabel="Close"
-          style={styles.close}
+          // top is the device's safe area top + 6pt cushion so the
+          // button always sits just below the Dynamic Island / notch
+          // on every iPhone (was a flat top: 10 which clipped under
+          // the island on 14 Pro+).
+          style={[styles.close, { top: insets.top + 6 }]}
         >
           <Text style={styles.closeGlyph}>×</Text>
         </Pressable>
@@ -494,7 +505,8 @@ export default function Paywall() {
 const styles = StyleSheet.create({
   close: {
     position: 'absolute',
-    top: 10,
+    // `top` is applied inline from useSafeAreaInsets so the button
+    // dodges the Dynamic Island on every device.
     right: 14,
     zIndex: 10,
     width: 42,
