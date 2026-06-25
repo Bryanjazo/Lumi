@@ -544,9 +544,19 @@ export interface UntangleExpect {
   proposalCountMin?: number;
   /** Per-proposal-item assertions. */
   proposal?: Array<{
-    action?: 'schedule' | 'reschedule' | 'defer' | 'surface';
+    action?:
+      | 'schedule'
+      | 'reschedule'
+      | 'defer'
+      | 'surface'
+      | 'create';
     /** Why must contain one of these. */
     whyIncludesAny?: string[];
+    /** Title must contain one of these (case-insensitive). For
+     *  'create' items the LLM provides a title directly. */
+    titleIncludesAny?: string[];
+    /** Required clock time for the action (HH:MM). */
+    atEquals?: string;
     skip?: boolean;
   }>;
   /** Proactive note required? */
@@ -585,7 +595,8 @@ export interface UntangleCase {
     | 'question'
     | 'decision-fatigue'
     | 'empty-pile'
-    | 'tone';
+    | 'tone'
+    | 'create';
   message: string;
   pile: UntanglePileSeed[];
   expect: UntangleExpect;
@@ -736,6 +747,44 @@ export const UNTANGLE_CASES: UntangleCase[] = [
     message: 'help me plan',
     pile: [],
     expect: { proposalCount: 0 },
+  },
+
+  // ── Create flow — user surfaces something they forgot ───────────
+  {
+    name: 'forgot-meeting-create',
+    category: 'create',
+    message: "i'm stressed i forgot i had a client meeting at 8am",
+    pile: STANDARD_PILE,
+    expect: {
+      proposalCountMin: 1,
+      proposal: [
+        {
+          action: 'create',
+          titleIncludesAny: ['meeting', 'client'],
+          atEquals: '08:00',
+        },
+      ],
+      sayExcludes: ['should', 'try', 'just'],
+    },
+    notes:
+      'The user just surfaced a NEW task not on the pile — the LLM must emit a "create" proposal with a sensible title and the 8am time, not invent a reschedule against an existing item.',
+  },
+  {
+    name: 'oh-also-call-david',
+    category: 'create',
+    message: 'oh wait I also need to call david today',
+    pile: STANDARD_PILE,
+    expect: {
+      proposalCountMin: 1,
+      proposal: [
+        {
+          action: 'create',
+          titleIncludesAny: ['call', 'david'],
+        },
+      ],
+    },
+    notes:
+      'Mid-conversation surfacing of a new commitment. Should land as a create, not be ignored or merged into another item.',
   },
 
   // ── Question about pile — answer, no rearrange ──────────────────
@@ -985,6 +1034,20 @@ export const assertUntangle = (
             `proposal[${i}].why: must contain one of ${JSON.stringify(p.whyIncludesAny)} — got "${got.why}"`,
           );
         }
+      }
+      if (p.titleIncludesAny && p.titleIncludesAny.length > 0) {
+        const title = ci(got.title ?? '');
+        const ok = p.titleIncludesAny.some((s) => title.includes(ci(s)));
+        if (!ok) {
+          errs.push(
+            `proposal[${i}].title: must contain one of ${JSON.stringify(p.titleIncludesAny)} — got "${got.title}"`,
+          );
+        }
+      }
+      if (p.atEquals && got.at !== p.atEquals) {
+        errs.push(
+          `proposal[${i}].at: expected ${p.atEquals}, got ${got.at ?? '(none)'}`,
+        );
       }
     });
   }

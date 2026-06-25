@@ -547,6 +547,15 @@ const proposalLine = (
   p: UntangleProposalItem,
   pileById: Map<string, Quest>,
 ): string => {
+  // 'create' items don't have a pile id — they ship their title
+  // directly. Surface them as "Add 'X' at 8am" so the user sees
+  // what they're agreeing to.
+  if (p.action === 'create') {
+    const title = p.title ? `"${p.title}"` : '(new task)';
+    if (p.at) return `Add ${title} at ${p.at}`;
+    if (p.date) return `Add ${title} on ${formatDayLabel(p.date).toLowerCase()}`;
+    return `Add ${title}`;
+  }
   const q = pileById.get(p.taskId);
   const title = q ? `"${q.title}"` : '(missing task)';
   const winLabel = (w?: string): string => {
@@ -1060,10 +1069,61 @@ export default function Untangle() {
 
   // Apply a proposal returned by the LLM. Each item is re-validated
   // against the LIVE pile (the model may have stale ids) — invalid
-  // items are silently dropped. Returns the count actually applied.
+  // items are silently dropped. 'create' items don't reference an
+  // existing pile id; they mint a NEW task via addQuest instead.
+  // Returns the count actually applied.
   const applyProposal = (items: UntangleProposalItem[]): number => {
     let applied = 0;
     for (const p of items) {
+      // 'create' is the only action that doesn't need a pile lookup —
+      // it mints a brand-new task from the LLM's title + metadata.
+      if (p.action === 'create') {
+        if (!p.title || p.title.trim().length === 0) continue;
+        const imp = p.importance ?? 'medium';
+        const difficulty: 'easy' | 'medium' | 'hard' =
+          imp === 'high' ? 'hard' : imp === 'medium' ? 'medium' : 'easy';
+        const defaultDur =
+          imp === 'high' ? 60 : imp === 'medium' ? 30 : 15;
+        // Time landing logic. If the LLM gave a clock time, anchor to
+        // it. Else fall back to a window — defaulting to morning for
+        // high importance, evening for low.
+        if (p.at && /^\d{1,2}:\d{2}$/.test(p.at)) {
+          const [hStr, mStr] = p.at.split(':');
+          const h = parseInt(hStr, 10);
+          const m = parseInt(mStr, 10);
+          if (Number.isFinite(h) && Number.isFinite(m)) {
+            useQuestStore.getState().addQuest({
+              title: p.title.trim(),
+              difficulty,
+              importance: imp,
+              scheduledHour: h,
+              scheduledMinute: m,
+              durationMinutes: p.durationMin ?? defaultDur,
+              ...(p.date ? { date: p.date } : { date: selectedDate }),
+            });
+            applied += 1;
+            continue;
+          }
+        }
+        const win: WindowKey =
+          p.window && p.window !== 'someday'
+            ? (p.window as WindowKey)
+            : imp === 'high'
+              ? 'morning'
+              : imp === 'low'
+                ? 'evening'
+                : 'midday';
+        useQuestStore.getState().addQuest({
+          title: p.title.trim(),
+          difficulty,
+          importance: imp,
+          window: win,
+          durationMinutes: p.durationMin ?? defaultDur,
+          ...(p.date ? { date: p.date } : { date: selectedDate }),
+        });
+        applied += 1;
+        continue;
+      }
       const q = pileById.get(p.taskId);
       if (!q) continue;
       if (p.action === 'schedule') {

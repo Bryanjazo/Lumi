@@ -682,7 +682,8 @@ Output STRICT JSON only, no prose around it:
     { "taskId": "<id from the pile>", "action": "schedule",   "window": "morning"|"midday"|"afternoon"|"evening", "why": "<short reason>" },
     { "taskId": "<id>",               "action": "reschedule", "date":  "YYYY-MM-DD", "at": "HH:MM"|null, "why": "<short reason>" },
     { "taskId": "<id>",               "action": "defer",       "why": "<short reason>" },
-    { "taskId": "<id>",               "action": "surface",     "window": "morning"|"midday"|"afternoon"|"evening", "why": "<short reason>" }
+    { "taskId": "<id>",               "action": "surface",     "window": "morning"|"midday"|"afternoon"|"evening", "why": "<short reason>" },
+    { "taskId": "",                   "action": "create",      "title": "<imperative title>", "at": "HH:MM"|null, "date": "YYYY-MM-DD"|null, "importance": "high"|"medium"|"low", "energyDemand": "high"|"medium"|"low", "durationMin": <number>|null, "why": "<short reason>" }
   ],
   "proactive": "<one short gentle note, or omit>"
 }
@@ -692,9 +693,17 @@ Action rules:
 - "reschedule": move a task to a specific date (and optional clock time at "HH:MM" 24-hour).
 - "defer":      park to "later". Use sparingly.
 - "surface":    pull a task onto the selected day at a given window.
+- "create":     ADD a new task the user just mentioned ("I forgot I had a client meeting at 8am",
+                "wait I also need to call David", "oh, dentist Thursday at 2"). Use when the user
+                surfaces something that ISN'T in the pile and needs to land on a real day.
+                Required: title (imperative, no "I/me/my"), importance, energyDemand.
+                Optional: date (defaults to selected day), at (clock time if user named one),
+                durationMin (only if they implied one — "30-min meeting" → 30).
+                NEVER use 'create' to invent tasks the user didn't actually mention.
 - Energy: high energyDemand → user's PEAK; low → SLUMP/evening; medium → neutral.
 - NEVER stack on top of an anchor (meal/sleep). NEVER duplicate the same task in proposal.
-- Use ONLY taskIds from the pile context. Do not invent ids. If unsure, leave proposal empty.
+- Use ONLY taskIds from the pile context for non-create actions. Do not invent ids. If unsure, leave proposal empty.
+- For 'create', taskId is "" (empty) — the client mints the id when it adds the task.
 - An EMPTY proposal is fine — sometimes a calm reply is enough.
 - "say" should reference moves in plain words ("Report → this morning, your peak"). Do NOT repeat the JSON in prose.
 - Banned words anywhere in say / why: just, should, try, journey, mindful, validate, process, cope, strategies, self-care.
@@ -726,6 +735,20 @@ When to choose which action — common user intents:
     → schedule that ONE task into the PEAK window today. Reply normalizes:
     "Easy to put off — let's slot it in your sharp window so it's done." No
     moralizing.
+- "I forgot I had X at Y" / "wait I also have…" / "oh, I have a meeting at 8"
+  (something NEW the user just surfaced — NOT in the pile):
+    → emit a 'create' proposal with the new task. Pull the title (imperative
+    form — "Client meeting", "Call David", "Dentist"), the time if they named
+    one ("8am" → at: "08:00"), the date if they implied one (today by default).
+    Importance is usually HIGH (forgotten things they're now stressing about
+    are real commitments). EnergyDemand reads from the kind of task (meetings
+    & calls = medium, deep work = high, errands = low).
+    Reply acknowledges WITHOUT amplifying the stress: "Got it — adding
+    [thing] for [time]. Let me see what conflicts."
+    THEN: if any existing pile item is scheduled near that time, ALSO emit a
+    second proposal item that moves the conflict (reschedule or defer) so the
+    user's day actually fits. ALWAYS pair the create with a calm "tap to add"
+    framing — the user is stressed; one clear action chip helps.
 - "I haven't done X in [time]" → same as avoidance: schedule peak, no lecture.
 - "I can't decide" / "idk what to do" / "whatever" / decision fatigue:
     → ALWAYS emit exactly 1 proposal — never an empty proposal with the pick
@@ -756,15 +779,31 @@ Edge cases:
 
 Return ONLY the JSON object.`;
 
-export type UntangleAction = 'schedule' | 'reschedule' | 'defer' | 'surface';
+export type UntangleAction =
+  | 'schedule'
+  | 'reschedule'
+  | 'defer'
+  | 'surface'
+  | 'create';
 
 export interface UntangleProposalItem {
+  /** Pile task id — required for every action EXCEPT 'create'. For
+   *  create the LLM doesn't know an id yet (the task doesn't exist).
+   *  We accept an empty string and the apply layer mints the id. */
   taskId: string;
   action: UntangleAction;
   window?: 'morning' | 'midday' | 'afternoon' | 'evening' | 'someday';
   date?: string;
   at?: string;
   why?: string;
+  // ── 'create' only — let the LLM mint a new task in-thread when
+  // the user surfaces something they forgot ("oh I had a 8am
+  // meeting"). The apply path turns these into addQuest() calls.
+  /** Required for 'create'. Imperative title ("Call David"). */
+  title?: string;
+  importance?: 'high' | 'medium' | 'low';
+  energyDemand?: 'high' | 'medium' | 'low';
+  durationMin?: number;
 }
 
 export interface UntangleTurnResponse {
@@ -839,12 +878,26 @@ export const llmUntangle = async (
     const proposal = Array.isArray(parsed.proposal)
       ? parsed.proposal
           .map((p): UntangleProposalItem | null => {
-            if (!p || typeof p.taskId !== 'string' || p.taskId.length === 0) return null;
+            if (!p || typeof p.taskId !== 'string') return null;
+            const isCreate = p.action === 'create';
+            // 'create' is the only action allowed to have an empty
+            // taskId (the task doesn't exist yet). For everything
+            // else, an empty/missing taskId is a hard reject.
+            if (!isCreate && p.taskId.length === 0) return null;
             if (
               p.action !== 'schedule' &&
               p.action !== 'reschedule' &&
               p.action !== 'defer' &&
-              p.action !== 'surface'
+              p.action !== 'surface' &&
+              p.action !== 'create'
+            ) {
+              return null;
+            }
+            // Create requires a non-empty title — without it the task
+            // would commit as untitled. Skip silently rather than crash.
+            if (
+              isCreate &&
+              (typeof p.title !== 'string' || p.title.trim().length === 0)
             ) {
               return null;
             }
@@ -869,6 +922,34 @@ export const llmUntangle = async (
             }
             if (typeof p.why === 'string' && p.why.length > 0) {
               item.why = String(p.why).slice(0, 120);
+            }
+            // Create-only fields. We clamp and validate so a hostile
+            // LLM response can't smuggle in a 9-digit duration or a
+            // 400-char title that crashes the UI.
+            if (isCreate && typeof p.title === 'string') {
+              item.title = p.title.trim().slice(0, 140);
+            }
+            if (
+              p.importance === 'high' ||
+              p.importance === 'medium' ||
+              p.importance === 'low'
+            ) {
+              item.importance = p.importance;
+            }
+            if (
+              p.energyDemand === 'high' ||
+              p.energyDemand === 'medium' ||
+              p.energyDemand === 'low'
+            ) {
+              item.energyDemand = p.energyDemand;
+            }
+            if (
+              typeof p.durationMin === 'number' &&
+              Number.isFinite(p.durationMin) &&
+              p.durationMin > 0 &&
+              p.durationMin <= 600
+            ) {
+              item.durationMin = Math.round(p.durationMin);
             }
             return item;
           })
