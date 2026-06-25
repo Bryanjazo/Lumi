@@ -424,7 +424,12 @@ const reflectionCards = (ans: Answers): ReflectionCard[] => {
 // per lumi-monetization-model-spec-2.md: the offer is now a separate
 // optional two-button screen at /onboarding/trial-choice, shown after
 // onboarding finalizes. Free-first model means no forced trial gate.
-const TOTAL_STEPS = 6;
+// 7 steps: intro, struggles, rhythm, brain-dump, anchors, reflection,
+// companion-mode. The companion-mode pick is the last decision before
+// landing in the app — by then the user has felt the warm interview
+// tone and can decide if they want the cozy companion layer or the
+// pure organizer. Per companion-mode-spec.md §3.
+const TOTAL_STEPS = 7;
 
 export default function Onboarding() {
   const router = useRouter();
@@ -432,6 +437,7 @@ export default function Onboarding() {
     (s) => s.completeOnboardingWith,
   );
   const markOnboardedForUser = useUserStore((s) => s.markOnboardedForUser);
+  const setCompanionMode = useUserStore((s) => s.setCompanionMode);
   const addQuest = useQuestStore((s) => s.addQuest);
   const { session } = useSession();
   const effectiveWindows = useEffectiveWindows();
@@ -451,6 +457,14 @@ export default function Onboarding() {
       Object.fromEntries(
         ANCHOR_DEFS.map((a) => [a.key, a.def]),
       ) as unknown as DailyAnchors,
+  );
+  // Companion-mode picker (step 6). Default 'full' so the cozy
+  // companion stays the natural choice unless the user dials down.
+  // Only 'full' and 'focused' are offered in onboarding; 'minimal'
+  // is available later from Profile → Personalize so we don't
+  // overwhelm the first-time decision.
+  const [companionPick, setCompanionPick] = useState<'full' | 'focused'>(
+    'full',
   );
 
   // Slide transition between steps (and between anchor sub-steps).
@@ -610,6 +624,12 @@ export default function Onboarding() {
     const rhythmDef = RHYTHMS.find((r) => r.key === rhythm);
     const sharp = rhythmDef?.sharp ?? null;
     const foggy = rhythmDef?.foggy ?? null;
+
+    // Apply the user's companion-mode pick before completing
+    // onboarding so the very first Home render reflects their choice
+    // (cozy room + XP visible for 'full', clean organizer for
+    // 'focused'). The setter is a single Zustand call — no async.
+    setCompanionMode(companionPick);
 
     completeOnboardingWith({
       struggles,
@@ -1064,13 +1084,151 @@ export default function Onboarding() {
               </View>
               {revealed >= cards.length && (
                 <View style={{ marginTop: 24 }}>
-                  {/* Finalize lands the user at /(tabs); the root
-                      layout's gate then surfaces the optional
-                      trial-choice screen (free-first model — see
-                      lumi-monetization-model-spec-2.md §0). */}
-                  <ContinueBtn onPress={finalize} label="This feels right →" />
+                  {/* Advance to the Companion Mode picker (the very
+                      last screen). The final finalize() call lives
+                      on that screen's CTA so the mode is applied
+                      before the user lands in the app. */}
+                  <ContinueBtn onPress={next} label="One more thing →" />
                 </View>
               )}
+            </ScrollView>
+          )}
+
+          {/* Step 6 — Companion Mode picker.
+              Two presets only (Full + Focused). Minimal is a more
+              nuanced mid-point that's available later via
+              Profile → Personalize — surfacing three options here
+              would overload the first-time decision. */}
+          {step === 6 && (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={[styles.stepWrap, { paddingTop: 6 }]}
+              showsVerticalScrollIndicator={false}
+            >
+              <Says sub="There’s a cozy side to Lumi — a pixel cat in a little world that grows as you care for yourself. Lovely for some, not for everyone. Your call.">
+                How do you want Lumi to feel?
+              </Says>
+
+              <View style={{ gap: 12, marginTop: 18 }}>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setCompanionPick('full');
+                  }}
+                  style={[
+                    styles.companionCard,
+                    companionPick === 'full' && styles.companionCardOn,
+                  ]}
+                >
+                  <View style={styles.companionCardHeader}>
+                    <Text style={styles.companionCardGlyph}>◈◈</Text>
+                    <Text
+                      style={[
+                        styles.companionCardTitle,
+                        companionPick === 'full' && {
+                          color: C.ember,
+                        },
+                      ]}
+                    >
+                      A cozy companion
+                    </Text>
+                    <View
+                      style={[
+                        styles.companionCardRadio,
+                        companionPick === 'full' && {
+                          backgroundColor: C.ember,
+                          borderColor: C.ember,
+                        },
+                      ]}
+                    >
+                      {companionPick === 'full' && (
+                        <Text style={styles.companionCardCheck}>✓</Text>
+                      )}
+                    </View>
+                  </View>
+                  <Text style={styles.companionCardBody}>
+                    Lumi the pixel cat, a living room that blooms, gentle
+                    streaks &amp; little rewards as you go.
+                  </Text>
+                  <View style={styles.companionTagRow}>
+                    {['PIXEL PET', 'STREAKS', 'REWARDS'].map((t) => (
+                      <View key={t} style={styles.companionTag}>
+                        <Text style={styles.companionTagText}>{t}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setCompanionPick('focused');
+                  }}
+                  style={[
+                    styles.companionCard,
+                    companionPick === 'focused' && styles.companionCardOn,
+                  ]}
+                >
+                  <View style={styles.companionCardHeader}>
+                    <Text style={styles.companionCardGlyph}>◷</Text>
+                    <Text
+                      style={[
+                        styles.companionCardTitle,
+                        companionPick === 'focused' && {
+                          color: C.ember,
+                        },
+                      ]}
+                    >
+                      Just the essentials
+                    </Text>
+                    <View
+                      style={[
+                        styles.companionCardRadio,
+                        companionPick === 'focused' && {
+                          backgroundColor: C.ember,
+                          borderColor: C.ember,
+                        },
+                      ]}
+                    >
+                      {companionPick === 'focused' && (
+                        <Text style={styles.companionCardCheck}>✓</Text>
+                      )}
+                    </View>
+                  </View>
+                  <Text style={styles.companionCardBody}>
+                    No pet, no points, no streaks. A calm, clean planner
+                    and nothing extra.
+                  </Text>
+                  <View style={styles.companionTagRow}>
+                    {['QUIET', 'NO GAME', 'MINIMAL'].map((t) => (
+                      <View
+                        key={t}
+                        style={[
+                          styles.companionTag,
+                          styles.companionTagMuted,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.companionTagText,
+                            { color: C.mute },
+                          ]}
+                        >
+                          {t}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </Pressable>
+              </View>
+
+              <Text style={styles.companionFootHint}>
+                You can switch anytime in Settings.
+              </Text>
+
+              <View style={{ marginTop: 18 }}>
+                <ContinueBtn onPress={finalize} label="Continue" />
+              </View>
             </ScrollView>
           )}
         </Animated.View>
@@ -1189,6 +1347,87 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingTop: 14,
     paddingBottom: 22,
+  },
+
+  // ── Companion Mode picker (step 6) ──
+  companionCard: {
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: C.hair,
+    backgroundColor: C.void2,
+    padding: 18,
+    gap: 10,
+  },
+  companionCardOn: {
+    borderColor: C.ember,
+    backgroundColor: hexA(C.ember, 0.08),
+  },
+  companionCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  companionCardGlyph: {
+    color: C.ember,
+    fontSize: 13,
+  },
+  companionCardTitle: {
+    flex: 1,
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 19,
+    color: C.bone,
+    letterSpacing: -0.3,
+  },
+  companionCardRadio: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: C.boneDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  companionCardCheck: {
+    color: C.void,
+    fontFamily: fonts.interSemi,
+    fontSize: 14,
+    lineHeight: 14,
+  },
+  companionCardBody: {
+    fontFamily: fonts.inter,
+    fontSize: 13.5,
+    color: C.boneDim,
+    lineHeight: 19,
+  },
+  companionTagRow: {
+    flexDirection: 'row',
+    gap: 6,
+    flexWrap: 'wrap',
+    marginTop: 2,
+  },
+  companionTag: {
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: hexA(C.ember, 0.45),
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  companionTagMuted: {
+    borderColor: hexA(C.bone, 0.18),
+  },
+  companionTagText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 10,
+    color: C.ember,
+    letterSpacing: 1,
+  },
+  companionFootHint: {
+    fontFamily: fonts.inter,
+    fontSize: 12.5,
+    color: C.mute,
+    textAlign: 'center',
+    marginTop: 22,
   },
   centerWrap: {
     alignItems: 'center',
