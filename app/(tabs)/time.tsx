@@ -656,7 +656,15 @@ const Item = ({
           }}
         />
       )}
-      {!hideTime && (
+      {/* Time label.
+          Normally hidden when this row shares the same minute as
+          the row above (dedup against the wake anchor or another
+          task at the same time — keeps the left rail uncluttered).
+          BUT during a drag, the user needs to see where they're
+          landing — so the dedup is suppressed and the ember preview
+          renders regardless. That's why this conditional ORs in
+          `proposedMin != null`. */}
+      {(!hideTime || proposedMin != null) && (
         <Text
           style={{
             position: 'absolute',
