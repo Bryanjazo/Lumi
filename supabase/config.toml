@@ -391,6 +391,15 @@ port = 54327
 # Configure one of the supported backends: `postgres`, `bigquery`.
 backend = "postgres"
 
+# ── Edge function: revenuecat-webhook ──
+# JWT verification is OFF for this function because the caller is
+# RevenueCat (not an authenticated Supabase user). The function does
+# its own auth check against the RC_WEBHOOK_AUTH secret. Without
+# verify_jwt = false, Supabase rejects RC's Bearer token (a random
+# hex string, not a Supabase JWT) before our code runs.
+[functions.revenuecat-webhook]
+verify_jwt = false
+
 # Experimental features may be deprecated any time
 [experimental]
 # Configures Postgres storage engine to use OrioleDB (S3)

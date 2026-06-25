@@ -7,6 +7,7 @@ import { LunaPixel } from './auth/LunaPixel';
 import { useUserStore } from '../store/userStore';
 import { useSession } from '../lib/auth';
 import { useAccessStatus } from '../lib/subscription';
+import { useAmbientLunaMood } from '../lib/luna-mood';
 
 /**
  * The big tappable Profile entry-point that lives on the Home tab.
@@ -18,6 +19,7 @@ export const ProfileCard = () => {
   const name = useUserStore((s) => s.name);
   const { session } = useSession();
   const access = useAccessStatus(session);
+  const lunaMood = useAmbientLunaMood();
 
   const email = session?.user.email;
 
@@ -41,7 +43,7 @@ export const ProfileCard = () => {
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
       <View style={styles.avatar}>
-        <LunaPixel mood="happy" size={44} />
+        <LunaPixel mood={lunaMood} size={44} />
       </View>
       <View style={styles.meta}>
         <Text style={styles.name}>{name || 'Your profile'}</Text>

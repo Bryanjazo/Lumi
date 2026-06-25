@@ -16,7 +16,13 @@ import { supabase, isSupabaseConfigured } from './supabase';
 import { useUserStore } from '../store/userStore';
 import { useQuestStore, type Quest } from '../store/questStore';
 import { importanceFromDifficulty } from '../constants/importance';
+import {
+  deriveWindowFor,
+  getEffectiveWindows,
+  type WindowKey,
+} from '../constants/windows';
 import { useCheckinStore, type Checkin } from '../store/checkinStore';
+import { readState, energyValue } from '../constants/moodMap';
 import { usePetStore } from '../store/petStore';
 
 const DEBOUNCE_MS = 1500;
@@ -187,22 +193,47 @@ export const pullAll = async (userId: string): Promise<void> => {
   // Profile — cloud wins for fields that exist remotely, else keep local.
   const userRow = u.data;
   if (userRow) {
+    const localState = useUserStore.getState();
+    // Subscription source-of-truth precedence (top wins):
+    //   1. Local 'active' from the RC SDK customer-info listener
+    //      (optimistic on a fresh purchase) — never demote this just
+    //      because the webhook hasn't reached the DB yet.
+    //   2. DB value (set by the RC → Supabase webhook).
+    //   3. 'free' fallback — free-first is the floor.
+    const dbSub = userRow.subscription_status as
+      | 'free'
+      | 'trial'
+      | 'active'
+      | 'past_due'
+      | 'cancelled'
+      | 'expired'
+      | null;
+    const localIsActive = localState.subscriptionStatus === 'active';
+    const dbIsActive = dbSub === 'active';
+    const nextSubStatus = localIsActive && !dbIsActive
+      ? localState.subscriptionStatus // protect a fresh purchase
+      : (dbSub ?? 'free');
+    const nextSubTier = localIsActive && !dbIsActive
+      ? localState.subscriptionTier
+      : (userRow.subscription_tier ?? null);
+    const nextSubEnd = localIsActive && !dbIsActive
+      ? localState.subscriptionCurrentPeriodEnd
+      : (userRow.subscription_current_period_end ?? null);
+
     useUserStore.setState({
-      name: userRow.name ?? useUserStore.getState().name,
-      petName: userRow.pet_name ?? useUserStore.getState().petName,
-      adhdType: userRow.adhd_type ?? useUserStore.getState().adhdType,
-      xp: Math.max(useUserStore.getState().xp, userRow.xp ?? 0),
-      streak: Math.max(useUserStore.getState().streak, userRow.streak ?? 0),
-      lastActiveDate:
-        userRow.last_active_date ?? useUserStore.getState().lastActiveDate,
+      name: userRow.name ?? localState.name,
+      petName: userRow.pet_name ?? localState.petName,
+      adhdType: userRow.adhd_type ?? localState.adhdType,
+      xp: Math.max(localState.xp, userRow.xp ?? 0),
+      streak: Math.max(localState.streak, userRow.streak ?? 0),
+      lastActiveDate: userRow.last_active_date ?? localState.lastActiveDate,
       shieldAvailable: userRow.shield_available ?? true,
       shieldUsedThisWeek: userRow.shield_used_this_week ?? false,
-      onboarded: userRow.onboarded ?? useUserStore.getState().onboarded,
+      onboarded: userRow.onboarded ?? localState.onboarded,
       offlineMode: userRow.offline_mode ?? false,
-      subscriptionStatus: userRow.subscription_status ?? 'trial',
-      subscriptionTier: userRow.subscription_tier ?? null,
-      subscriptionCurrentPeriodEnd:
-        userRow.subscription_current_period_end ?? null,
+      subscriptionStatus: nextSubStatus,
+      subscriptionTier: nextSubTier,
+      subscriptionCurrentPeriodEnd: nextSubEnd,
     });
   }
 
@@ -211,12 +242,22 @@ export const pullAll = async (userId: string): Promise<void> => {
     const local = useQuestStore.getState().quests;
     const byId = new Map<string, Quest>();
     for (const lq of local) byId.set(lq.id, lq);
+    const effective = getEffectiveWindows();
     for (const r of q.data) {
+      const win: WindowKey =
+        r.window ??
+        (r.scheduled_hour != null
+          ? deriveWindowFor(
+              effective,
+              r.scheduled_hour * 60 + (r.scheduled_minute ?? 0),
+            )
+          : 'midday');
       byId.set(r.id, {
         id: r.id,
         title: r.title,
         difficulty: r.difficulty,
         importance: importanceFromDifficulty(r.difficulty),
+        window: win,
         xpReward: r.xp_reward,
         completed: r.completed,
         completedAt: r.completed_at,
@@ -243,8 +284,22 @@ export const pullAll = async (userId: string): Promise<void> => {
       } catch {
         /* ignore malformed */
       }
+      // Coordinate fields aren't yet round-tripped to Supabase — until
+      // the columns land, plant cloud rows at center and derive zone/
+      // energy from that. Local rows already carry their own coord and
+      // win on the next sync push.
+      const x = 0.5;
+      const y = 0.5;
       byId.set(r.id, {
         id: r.id,
+        x,
+        y,
+        energy: energyValue(x, y),
+        zone: readState(x, y).name,
+        route: 'drag',
+        aiCause: null,
+        confirmed: null,
+        note: null,
         mood: r.mood,
         text: r.text_input ?? '',
         state: parsed.state ?? r.emotional_state ?? '',

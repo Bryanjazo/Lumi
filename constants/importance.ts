@@ -2,14 +2,43 @@ import { colors } from './colors';
 
 export type Importance = 'high' | 'medium' | 'low';
 
-export const IMPORTANCE: Record<
-  Importance,
-  { color: string; label: string; icon: string }
-> = {
-  high: { color: colors.terra, label: 'Must', icon: '▲' },
-  medium: { color: colors.honey, label: 'Steady', icon: '■' },
-  low: { color: colors.sage, label: 'Gentle', icon: '●' },
+export interface TierMeta {
+  color: string;
+  label: string;
+  /** Legacy single icon (kept so existing screens don't break). */
+  icon: string;
+  /** New: stacked diamonds, used on the redesigned Home tab. */
+  sigil: string;
+  /** Drop-rate scalar — bigger = more loot per completion. */
+  rank: number;
+}
+
+export const IMPORTANCE: Record<Importance, TierMeta> = {
+  high: {
+    color: '#E07A4F',
+    label: 'Trial',
+    icon: '▲',
+    sigil: '◆◆◆',
+    rank: 3,
+  },
+  medium: {
+    color: '#C9A06A',
+    label: 'Task',
+    icon: '■',
+    sigil: '◆◆',
+    rank: 2,
+  },
+  low: {
+    color: '#869072',
+    label: 'Whim',
+    icon: '●',
+    sigil: '◆',
+    rank: 1,
+  },
 };
+
+/** Back-compat alias — many older screens import IMPORTANCE.label as TIER. */
+export const TIER = IMPORTANCE;
 
 export const importanceFromDifficulty = (
   d: 'easy' | 'medium' | 'hard',

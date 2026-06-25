@@ -11,8 +11,13 @@ export const TrialBanner = () => {
   const { session } = useSession();
   const access = useAccessStatus(session);
 
-  if (access.hasActiveSubscription) return null;
+  // Free-first model: the banner exists ONLY to surface the
+  // remaining days of an active opt-in trial. Free users see
+  // nothing here (no nagging); active subscribers see nothing
+  // either. The upgrade-conversation surface is the cap-hit
+  // sheet, not a persistent banner.
   if (!session) return null;
+  if (!access.inTrial) return null;
 
   const onTap = () => {
     Haptics.selectionAsync();
@@ -32,13 +37,9 @@ export const TrialBanner = () => {
       <View style={[styles.dot, { backgroundColor: accent }]} />
       <Text style={styles.text}>
         <Text style={[styles.strong, { color: accent }]}>
-          {access.inTrial
-            ? `${days} ${days === 1 ? 'day' : 'days'} left in trial`
-            : 'Trial ended'}
+          {`${days} ${days === 1 ? 'day' : 'days'} left in trial`}
         </Text>
-        <Text style={styles.dim}>
-          {access.inTrial ? '  ·  See plans' : '  ·  Pick a plan'}
-        </Text>
+        <Text style={styles.dim}>{'  ·  See plans'}</Text>
       </Text>
       <Text style={[styles.arrow, { color: accent }]}>→</Text>
     </Pressable>

@@ -3,16 +3,20 @@
     "name": "Lumi",
     "slug": "lumi",
     "scheme": "lumi",
-    "version": "1.0.0",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.lumi.app",
+      "bundleIdentifier": "app.lumi.ios",
+      "usesAppleSignIn": true,
+      "buildNumber": "14",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Lumi uses your microphone so you can speak your check-ins instead of typing.",
-        "NSSpeechRecognitionUsageDescription": "Lumi transcribes your voice to text so Luna can respond."
+        "NSSpeechRecognitionUsageDescription": "Lumi transcribes your voice to text on this device so Luna can respond.",
+        "NSPhotoLibraryUsageDescription": "Lumi can use a photo from your library as your profile avatar.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -50,10 +54,30 @@
           "color": "#C4A0E0"
         }
       ],
-      "expo-audio"
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Lumi uses your microphone so you can speak your check-ins instead of typing.",
+          "speechRecognitionPermission": "Lumi transcribes your voice to text on this device so Luna can respond."
+        }
+      ],
+      "expo-apple-authentication",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.921718778396-9anbj3agm6i6qon3j7pr3ln8nbgv8j8h"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "ec38684c-3245-47a5-b0fe-ac3f0f14bce3"
+      }
+    },
+    "owner": "bryanjazo88"
   }
 }

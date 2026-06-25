@@ -18,6 +18,7 @@ import { AuthField } from '../../components/auth/AuthField';
 import { AuthButton } from '../../components/auth/AuthButton';
 import { requestPasswordReset } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
+import { useAmbientLunaMood } from '../../lib/luna-mood';
 
 export default function ForgotPasswordScreen() {
   const insets = useSafeAreaInsets();
@@ -27,6 +28,7 @@ export default function ForgotPasswordScreen() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const ambient = useAmbientLunaMood();
 
   const handleSend = async () => {
     Haptics.selectionAsync();
@@ -73,7 +75,11 @@ export default function ForgotPasswordScreen() {
         >
           <View style={styles.lunaArea}>
             <View style={styles.lunaGlow} />
-            <LunaPixel mood={sent ? 'happy' : 'idle'} size={80} />
+            {/* `sent` is a real contextual signal — the user just
+                successfully kicked off the reset email — so we
+                upgrade to happy in that moment. Otherwise reflect
+                the ambient state. */}
+            <LunaPixel mood={sent ? 'happy' : ambient} size={80} />
             <Text selectable={false} style={styles.heading}>
               {sent ? 'Check your email.' : 'Reset password.'}
             </Text>

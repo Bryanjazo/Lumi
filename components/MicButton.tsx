@@ -12,6 +12,7 @@ import * as Haptics from 'expo-haptics';
 import { colors } from '../constants/colors';
 import { fonts } from '../constants/fonts';
 import { useVoice } from '../lib/voice';
+import { MicIcon } from './MicIcon';
 
 interface Props {
   /** Called with the final transcribed text. */
@@ -106,9 +107,10 @@ export const MicButton = ({
             ]}
           />
         ) : (
-          <Text style={[styles.glyph, size === 'small' && { fontSize: 14 }]}>
-            🎙
-          </Text>
+          <MicIcon
+            size={size === 'small' ? 14 : 20}
+            color={colors.terra}
+          />
         )}
       </Pressable>
       {showError && error && <Text style={styles.errorText}>{error}</Text>}

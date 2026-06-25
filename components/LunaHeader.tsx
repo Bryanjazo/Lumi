@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { View, StyleSheet, Dimensions } from 'react-native';
+import { View, StyleSheet, Dimensions, Image } from 'react-native';
 import Svg, { Rect, G } from 'react-native-svg';
 import { colors } from '../constants/colors';
+import { lunaSource } from '../lib/luna-source';
+import { useAmbientLunaMood } from '../lib/luna-mood';
 import { LunaState } from '../lib/gamification';
 import { usePetStore } from '../store/petStore';
 import { skins } from '../constants/skins';
@@ -107,6 +109,11 @@ const PAL = {
 export const LunaHeader = ({ state, height = 140 }: Props) => {
   const skinId = usePetStore((s) => s.skinId);
   const skin = skins.find((s) => s.id === skinId) ?? skins[0];
+  // Mood is derived from app-wide signals, with one override: the
+  // legacy `state` prop's "away" still maps to sleep, since "away"
+  // means the user hasn't shown up in a while.
+  const ambient = useAmbientLunaMood();
+  const mood = state === 'away' ? 'sleep' : ambient;
 
   const screenWidth = Math.min(Dimensions.get('window').width, 480);
   const width = screenWidth;
@@ -216,52 +223,37 @@ export const LunaHeader = ({ state, height = 140 }: Props) => {
         <Rect x={25} y={57} width={110} height={1} fill={p.rugAccent} />
         <Rect x={25} y={104} width={110} height={1} fill={p.rugAccent} />
 
-        {/* Cat */}
-        <G>
-          {/* shadow */}
-          <Rect x={catX - 6} y={catY + 9} width={12} height={2} fill="rgba(0,0,0,0.2)" />
-          {state === 'away' ? (
-            // Sleeping
-            <G>
-              <Rect x={catX - 5} y={catY} width={10} height={7} fill={skin.primary} />
-              <Rect x={catX - 4} y={catY + 1} width={8} height={5} fill={skin.secondary} />
-              <Rect x={catX + 4} y={catY + 2} width={3} height={2} fill={skin.primary} />
-              <Rect x={catX + 5} y={catY + 4} width={2} height={3} fill={skin.primary} />
-              <Rect x={catX - 6} y={catY + 2} width={6} height={5} fill={skin.primary} />
-            </G>
-          ) : (
-            <G>
-              {/* tail */}
-              <Rect x={catX + 4} y={catY + 2} width={2} height={2} fill={skin.primary} />
-              <Rect x={catX + 5} y={catY + (phase % 2)} width={2} height={2} fill={skin.primary} />
-              <Rect x={catX + 6} y={catY + (phase % 2) - 2} width={2} height={2} fill={skin.primary} />
-              {/* body */}
-              <Rect x={catX - 4} y={catY} width={8} height={8} fill={skin.primary} />
-              <Rect x={catX - 2} y={catY + 3} width={4} height={4} fill={skin.secondary} />
-              {/* stripes */}
-              <Rect x={catX - 3} y={catY + 1} width={1} height={5} fill={skin.secondary} />
-              <Rect x={catX + 2} y={catY + 1} width={1} height={5} fill={skin.secondary} />
-              {/* legs */}
-              <Rect x={catX - 3} y={catY + 7} width={2} height={3} fill={skin.primary} />
-              <Rect x={catX + 1} y={catY + 7} width={2} height={3} fill={skin.primary} />
-              {/* head */}
-              <Rect x={catX - 3} y={catY - 5} width={7} height={6} fill={skin.primary} />
-              <Rect x={catX - 3} y={catY - 7} width={2} height={3} fill={skin.primary} />
-              <Rect x={catX + 2} y={catY - 7} width={2} height={3} fill={skin.primary} />
-              {/* eyes */}
-              <Rect x={catX - 2} y={catY - 4} width={2} height={2} fill="#8AACCF" />
-              <Rect x={catX + 1} y={catY - 4} width={2} height={2} fill="#8AACCF" />
-              <Rect x={catX - 1} y={catY - 4} width={1} height={1} fill="#0A0810" />
-              <Rect x={catX + 2} y={catY - 4} width={1} height={1} fill="#0A0810" />
-              {/* nose */}
-              <Rect x={catX} y={catY - 2} width={1} height={1} fill="#E07A8A" />
-              {/* whiskers */}
-              <Rect x={catX - 5} y={catY - 2} width={3} height={1} fill={skin.secondary} />
-              <Rect x={catX + 3} y={catY - 2} width={3} height={1} fill={skin.secondary} />
-            </G>
-          )}
-        </G>
+        {/* Cat shadow — kept as a small ellipse on the rug so the
+           GIF cat (overlaid outside the SVG below) doesn't look
+           floaty. The pixel-rect cat body has been replaced by the
+           GIF. */}
+        <Rect
+          x={catX - 6}
+          y={catY + 9}
+          width={12}
+          height={2}
+          fill="rgba(0,0,0,0.2)"
+        />
       </Svg>
+      {/* GIF cat — overlays the SVG room at the same screen position
+         the SVG cat used to draw at. Position math: catX/catY are in
+         SVG coords (160×120 viewBox), so we multiply by `scale` to
+         get the rendered pixel position. The GIF is anchored so its
+         FEET (bottom of the 64×64 sprite) sit at (catY+10)*scale —
+         the same baseline as the old SVG cat's feet — and its center
+         is at catX*scale. */}
+      <Image
+        source={lunaSource(mood)}
+        style={{
+          position: 'absolute',
+          left: catX * scale - 32,
+          top: (catY + 10) * scale - 64,
+          width: 64,
+          height: 64,
+        }}
+        resizeMode="contain"
+        accessibilityLabel="Luna"
+      />
     </View>
   );
 };

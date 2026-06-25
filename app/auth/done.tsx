@@ -14,6 +14,7 @@ import * as Haptics from 'expo-haptics';
 import { colors } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { LunaPixel } from '../../components/auth/LunaPixel';
+import { useAmbientLunaMood } from '../../lib/luna-mood';
 import { useUserStore } from '../../store/userStore';
 
 const SIGNUP_XP_REWARD = 30;
@@ -23,6 +24,7 @@ export default function DoneScreen() {
   const router = useRouter();
   const addXp = useUserStore((s) => s.addXp);
   const registerActivity = useUserStore((s) => s.registerActivity);
+  const lunaMood = useAmbientLunaMood();
 
   const lunaFloat = useRef(new Animated.Value(0)).current;
   const fadeIn = useRef(new Animated.Value(0)).current;
@@ -109,13 +111,13 @@ export default function DoneScreen() {
               alignItems: 'center',
             }}
           >
-            <LunaPixel mood="excited" size={130} />
+            <LunaPixel mood={lunaMood} size={130} />
           </Animated.View>
 
           <Text style={styles.h1}>
             You're <Text style={styles.italic}>in.</Text>
           </Text>
-          <Text style={styles.line}>Luna is awake.</Text>
+          <Text style={styles.line}>Lumi is awake.</Text>
           <Text style={styles.line}>She's been waiting for this.</Text>
 
           <Animated.View

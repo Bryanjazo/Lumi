@@ -1,0 +1,28 @@
+{
+  "cli": {
+    "version": ">= 18.13.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://xnvutyllebwijisltott.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhudnV0eWxsZWJ3aWppc2x0b3R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMDMwNzksImV4cCI6MjA5Njg3OTA3OX0.mqM_4LTS0BHgzubABq5-v1Os2bb8kRWLqeeDNZJhb58",
+        "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "appl_OidSboFwOHNeqxUTyrvBHdXwsWn",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "921718778396-2t8dk6if8bsso710gm55n1p7ccko1de3.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "921718778396-9anbj3agm6i6qon3j7pr3ln8nbgv8j8h.apps.googleusercontent.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
