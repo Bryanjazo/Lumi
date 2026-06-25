@@ -403,6 +403,11 @@ export default function AccountScreen() {
   // Insight panel + anchors disclosure
   const [knowOpen, setKnowOpen] = useState<string | null>(null);
   const [anchorsOpen, setAnchorsOpen] = useState(false);
+  // Collapsible state for the Companion-mode picker. Matches the
+  // anchors / language patterns elsewhere in Personalize — the
+  // current pick is shown summarized while collapsed so users
+  // don't have to expand it to see what they're on.
+  const [companionOpen, setCompanionOpen] = useState(false);
 
   // Identity
   const name = useUserStore((s) => s.name) || 'Friend';
@@ -791,6 +796,11 @@ export default function AccountScreen() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setAnchorsOpen((o) => !o);
   };
+  const toggleCompanion = () => {
+    Haptics.selectionAsync();
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setCompanionOpen((o) => !o);
+  };
 
   const nudgeAnchor = (k: keyof DailyAnchors, delta: number) => {
     Haptics.selectionAsync();
@@ -1108,76 +1118,115 @@ export default function AccountScreen() {
               </View>
             )}
 
-            {/* Companion Mode — how present the playful layer is. */}
-            <View style={styles.personalCell}>
-              <Text style={styles.personalLabel}>How playful is Lumi?</Text>
-              <Text style={styles.personalHint}>
-                Dial the companion / game layer up or down. Your
-                level, streak, and progress keep accruing in every
-                mode — flipping back later is non-destructive.
-              </Text>
-              <View style={styles.companionModeRow}>
-                {(
-                  [
-                    {
-                      k: 'full',
-                      title: 'Full',
-                      sub: `${petName} + the room + XP — a cozy companion that organizes you`,
-                    },
-                    {
-                      k: 'minimal',
-                      title: 'Minimal',
-                      sub: `Small quiet ${petName}, streak kept, XP & unlocks hidden — a warm clean organizer`,
-                    },
-                    {
-                      k: 'focused',
-                      title: 'Focused',
-                      sub: 'No cat, no game — a pure calm AI organizer',
-                    },
-                  ] as const
-                ).map((opt) => {
-                  const on = companionMode === opt.k;
-                  return (
-                    <Pressable
-                      key={opt.k}
-                      onPress={() => {
-                        Haptics.selectionAsync();
-                        setCompanionMode(opt.k);
-                      }}
+            {/* Companion Mode — collapsible dropdown.
+                Collapsed: shows current pick + chevron, same
+                visual pattern as Daily anchors.
+                Expanded: reveals the three preset cards. */}
+            {(() => {
+              const modeOptions = [
+                {
+                  k: 'full' as const,
+                  title: 'Full',
+                  sub: `${petName} + the room + XP — a cozy companion that organizes you`,
+                },
+                {
+                  k: 'minimal' as const,
+                  title: 'Minimal',
+                  sub: `Small quiet ${petName}, streak kept, XP & unlocks hidden — a warm clean organizer`,
+                },
+                {
+                  k: 'focused' as const,
+                  title: 'Focused',
+                  sub: 'No cat, no game — a pure calm AI organizer',
+                },
+              ];
+              const current = modeOptions.find((o) => o.k === companionMode);
+              return (
+                <>
+                  <Pressable
+                    onPress={toggleCompanion}
+                    style={styles.anchorsHead}
+                  >
+                    <Text style={styles.anchorsGlyph}>✦</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.personalRowLabel}>
+                        How playful is Lumi?
+                      </Text>
+                      <Text style={styles.personalRowSub}>
+                        {current?.title ?? 'Full'} ·{' '}
+                        {companionMode === 'full'
+                          ? 'cozy companion'
+                          : companionMode === 'minimal'
+                            ? 'warm clean organizer'
+                            : 'pure calm AI organizer'}
+                      </Text>
+                    </View>
+                    <Text
                       style={[
-                        styles.companionModeCard,
-                        on && {
-                          backgroundColor: hexA(accent.fg, 0.1),
-                          borderColor: accent.fg,
+                        styles.anchorsChev,
+                        companionOpen && {
+                          transform: [{ rotate: '90deg' }],
                         },
                       ]}
                     >
-                      <View style={styles.companionModeHeader}>
-                        <Text
-                          style={[
-                            styles.companionModeTitle,
-                            on && { color: accent.fg },
-                          ]}
-                        >
-                          {opt.title}
-                        </Text>
-                        {on && (
-                          <Text
+                      ›
+                    </Text>
+                  </Pressable>
+                  {companionOpen && (
+                    <View style={[styles.companionModeRow, { marginTop: 12 }]}>
+                      <Text style={styles.personalHint}>
+                        Your level, streak, and progress keep accruing
+                        in every mode — flipping back later is
+                        non-destructive.
+                      </Text>
+                      {modeOptions.map((opt) => {
+                        const on = companionMode === opt.k;
+                        return (
+                          <Pressable
+                            key={opt.k}
+                            onPress={() => {
+                              Haptics.selectionAsync();
+                              setCompanionMode(opt.k);
+                            }}
                             style={[
-                              styles.companionModeCheck,
-                              { color: accent.fg },
+                              styles.companionModeCard,
+                              on && {
+                                backgroundColor: hexA(accent.fg, 0.1),
+                                borderColor: accent.fg,
+                              },
                             ]}
                           >
-                            ✓
-                          </Text>
-                        )}
-                      </View>
-                      <Text style={styles.companionModeSub}>{opt.sub}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
+                            <View style={styles.companionModeHeader}>
+                              <Text
+                                style={[
+                                  styles.companionModeTitle,
+                                  on && { color: accent.fg },
+                                ]}
+                              >
+                                {opt.title}
+                              </Text>
+                              {on && (
+                                <Text
+                                  style={[
+                                    styles.companionModeCheck,
+                                    { color: accent.fg },
+                                  ]}
+                                >
+                                  ✓
+                                </Text>
+                              )}
+                            </View>
+                            <Text style={styles.companionModeSub}>
+                              {opt.sub}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Theme accent */}
             <View style={styles.personalCell}>
