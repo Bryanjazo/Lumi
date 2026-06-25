@@ -114,21 +114,31 @@ export const useAmbientLunaMood = (): LunaMood => {
     const todays = quests.filter((q) => q.date === today);
     const hasWork = todays.length > 0;
     const allDone = hasWork && todays.every((q) => q.completed);
+    const completedToday = todays.filter((q) => q.completed).length;
 
     // 2. Clean sweep today — the achievement moment.
     if (allDone) return 'happy';
 
-    // 3. Long streak — Luna's been with them for a while.
+    // 3. Strong momentum today — 3+ completions shows the user is
+    //    actively grinding. This wins over historical overdue piles
+    //    so a productive day with yesterday's backlog still reads
+    //    as 'happy', not 'sad'. The cat should reward today's
+    //    effort, not punish yesterday.
+    if (completedToday >= 3) return 'happy';
+
+    // 4. Long streak — Luna's been with them for a while.
     if (streak >= 5) return 'happy';
 
-    // 4. Overwhelm — many overdue items. Cat commiserates rather
-    //    than cheerleads.
+    // 5. Overwhelm — many overdue items AND no real momentum today.
+    //    The "no momentum" guard prevents the sad face for a user
+    //    who's clearly chipping away (1–2 completions counts as
+    //    starting; we only commiserate when nothing's moving).
     const overdue = quests.filter(
       (q) => !q.completed && q.date && q.date < today,
     ).length;
-    if (overdue >= 5) return 'sad';
+    if (overdue >= 5 && completedToday === 0) return 'sad';
 
-    // 5. Default ambient state.
+    // 6. Default ambient state.
     return 'idle';
     // `quests` is referentially stable while no quest changes; the
     // useMemo dep keeps this O(n) scan from running every render.

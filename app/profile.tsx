@@ -430,6 +430,8 @@ export default function AccountScreen() {
   const captureLang = useUserStore((s) => s.captureLang);
   const theme = useUserStore((s) => s.theme);
   const setTheme = useUserStore((s) => s.setTheme);
+  const companionMode = useUserStore((s) => s.companionMode);
+  const setCompanionMode = useUserStore((s) => s.setCompanionMode);
   const subscriptionStatus = useUserStore((s) => s.subscriptionStatus);
   const subscriptionTier = useUserStore((s) => s.subscriptionTier);
   const subscriptionEnd = useUserStore((s) => s.subscriptionCurrentPeriodEnd);
@@ -1105,6 +1107,77 @@ export default function AccountScreen() {
                 </Pressable>
               </View>
             )}
+
+            {/* Companion Mode — how present the playful layer is. */}
+            <View style={styles.personalCell}>
+              <Text style={styles.personalLabel}>How playful is Lumi?</Text>
+              <Text style={styles.personalHint}>
+                Dial the companion / game layer up or down. Your
+                level, streak, and progress keep accruing in every
+                mode — flipping back later is non-destructive.
+              </Text>
+              <View style={styles.companionModeRow}>
+                {(
+                  [
+                    {
+                      k: 'full',
+                      title: 'Full',
+                      sub: `${petName} + the room + XP — a cozy companion that organizes you`,
+                    },
+                    {
+                      k: 'minimal',
+                      title: 'Minimal',
+                      sub: `Small quiet ${petName}, streak kept, XP & unlocks hidden — a warm clean organizer`,
+                    },
+                    {
+                      k: 'focused',
+                      title: 'Focused',
+                      sub: 'No cat, no game — a pure calm AI organizer',
+                    },
+                  ] as const
+                ).map((opt) => {
+                  const on = companionMode === opt.k;
+                  return (
+                    <Pressable
+                      key={opt.k}
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setCompanionMode(opt.k);
+                      }}
+                      style={[
+                        styles.companionModeCard,
+                        on && {
+                          backgroundColor: hexA(accent.fg, 0.1),
+                          borderColor: accent.fg,
+                        },
+                      ]}
+                    >
+                      <View style={styles.companionModeHeader}>
+                        <Text
+                          style={[
+                            styles.companionModeTitle,
+                            on && { color: accent.fg },
+                          ]}
+                        >
+                          {opt.title}
+                        </Text>
+                        {on && (
+                          <Text
+                            style={[
+                              styles.companionModeCheck,
+                              { color: accent.fg },
+                            ]}
+                          >
+                            ✓
+                          </Text>
+                        )}
+                      </View>
+                      <Text style={styles.companionModeSub}>{opt.sub}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
 
             {/* Theme accent */}
             <View style={styles.personalCell}>
@@ -1788,6 +1861,47 @@ const makeStyles = (accent: Accent) =>
       fontSize: 13.5,
       color: C.bone,
       marginBottom: 10,
+    },
+    personalHint: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.mute,
+      lineHeight: 17,
+      marginTop: -4,
+      marginBottom: 12,
+    },
+    companionModeRow: {
+      gap: 8,
+    },
+    companionModeCard: {
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: C.hair,
+      paddingHorizontal: 13,
+      paddingVertical: 11,
+      backgroundColor: C.void2,
+    },
+    companionModeHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 4,
+    },
+    companionModeTitle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 14,
+      color: C.bone,
+      letterSpacing: -0.1,
+    },
+    companionModeCheck: {
+      fontFamily: fonts.interSemi,
+      fontSize: 14,
+    },
+    companionModeSub: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.boneDim,
+      lineHeight: 17,
     },
     personalRowLabel: {
       fontFamily: fonts.inter,

@@ -29,6 +29,7 @@ import Svg, {
 import { fonts } from '../../constants/fonts';
 import { lunaSource } from '../../lib/luna-source';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
+import { useCompanionMode } from '../../lib/companion-mode';
 import {
   UNLOCKS,
   UNLOCK_CATS,
@@ -1002,6 +1003,10 @@ export default function MeTab() {
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
 
+  // Companion-mode flags — gate the room/XP chrome and pick the
+  // Me-tab variant (Full room vs Focused "You & Lumi" stats screen).
+  const companion = useCompanionMode();
+
   // Real signals
   const quests = useQuestStore((s) => s.quests);
   const checkins = useCheckinStore((s) => s.checkins);
@@ -1060,9 +1065,7 @@ export default function MeTab() {
   // v2 UI state — collapsible feed chips + the "Your corner" hub.
   const [cheer, setCheer] = useState(0);
   const [showFeed, setShowFeed] = useState(false);
-  const [hub, setHub] = useState<
-    null | 'unlocks' | 'rhythm' | 'treats'
-  >(null);
+  const [hub, setHub] = useState<null | 'unlocks' | 'rhythm'>(null);
 
   // Learning digest — drives "What Lumi noticed" + the Week card.
   const digest = useLearningDigest();
@@ -1124,7 +1127,42 @@ export default function MeTab() {
         contentContainerStyle={{ paddingBottom: 50 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* ═══ HERO — Luna's room, FULL-BLEED ═══ */}
+        {/* ═══ Focused-mode header (no cat / no room) ═══
+            Companion-mode spec §3: when the user dialed Lumi all the
+            way down, the Me tab becomes "You & Lumi" — a calm header
+            that lets them go to settings, with no game chrome. */}
+        {companion.isFocused && (
+          <View style={styles.focusedHero}>
+            <Text style={styles.focusedHeroEyebrow}>YOU & LUMI</Text>
+            <Text style={styles.focusedHeroTitle}>
+              A calm organizer, at your pace.
+            </Text>
+            <Text style={styles.focusedHeroBody}>
+              The cat and the game are off — Lumi is just here to
+              keep your day clear. Switch back any time in profile.
+            </Text>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                router.push('/profile');
+              }}
+              style={styles.focusedHeroLink}
+              hitSlop={6}
+            >
+              <Text style={[styles.focusedHeroLinkText, { color: accent.fg }]}>
+                Personalize Lumi →
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* ═══ HERO — Luna's room, FULL-BLEED ═══
+            Skipped entirely in Focused mode (the header above
+            replaces it). Visible in Full + Minimal. The Fragment
+            here lets the conditional wrap the hero Pressable +
+            its sibling poetic/feed/week blocks as one unit. */}
+        {!companion.isFocused && (
+        <>
         <Pressable
           onPress={() => {
             Haptics.selectionAsync();
@@ -1265,6 +1303,8 @@ export default function MeTab() {
             </Text>
           </View>
         </Pressable>
+        </>
+        )}
 
         {/* ═══ YOUR CORNER — the demoted tidy hub ═══ */}
         <View style={styles.cornerBlock}>
@@ -1320,17 +1360,21 @@ export default function MeTab() {
             </Text>
           </View>
 
-          {/* Hub rows — collapsible */}
-          <HubRow
-            glyph="◉"
-            color="#7FA06A"
-            label={`${petName}'s worlds & unlocks`}
-            sub="next-to-unlock + see all"
-            open={hub === 'unlocks'}
-            onToggle={() => setHub(hub === 'unlocks' ? null : 'unlocks')}
-          >
-            <UnlocksShop totalXp={xpTotal} />
-          </HubRow>
+          {/* Hub rows — collapsible.
+              Unlocks/shop ('worlds & unlocks') is the game/XP shop —
+              hidden in Minimal + Focused per spec §3. */}
+          {companion.showXp && (
+            <HubRow
+              glyph="◉"
+              color="#7FA06A"
+              label={`${petName}'s worlds & unlocks`}
+              sub="next-to-unlock + see all"
+              open={hub === 'unlocks'}
+              onToggle={() => setHub(hub === 'unlocks' ? null : 'unlocks')}
+            >
+              <UnlocksShop totalXp={xpTotal} />
+            </HubRow>
+          )}
 
           <HubRow
             glyph="◷"
@@ -1349,37 +1393,6 @@ export default function MeTab() {
                   : 'A few check-ins and Lumi will start to see your rhythm.'}
               </Text>
             </View>
-          </HubRow>
-
-          <HubRow
-            glyph="✨"
-            color="#C9A06A"
-            label="Treats & touches"
-            sub={`spend shards on ${petName}'s world`}
-            open={hub === 'treats'}
-            onToggle={() => setHub(hub === 'treats' ? null : 'treats')}
-          >
-            <View style={styles.careRow}>
-              {[
-                ['🍤', 'Treat', '◈5'],
-                ['🌱', 'Plant', '◈12'],
-                ['✨', 'Decorate', '◈20'],
-              ].map(([g, l, c]) => (
-                <View key={l} style={styles.careCard}>
-                  <Text style={styles.careGlyph}>{g}</Text>
-                  <Text style={styles.careLabel}>{l}</Text>
-                  <Text style={styles.careCost}>{c}</Text>
-                </View>
-              ))}
-            </View>
-            <Text style={styles.careFoot}>
-              Extras to make her world yours. The real bloom comes from
-              caring for{' '}
-              <Text style={{ fontFamily: fonts.fraunces, fontStyle: 'italic' }}>
-                you
-              </Text>
-              .
-            </Text>
           </HubRow>
 
           <HubRow
@@ -1407,6 +1420,47 @@ export default function MeTab() {
 // ═════════════════════════════════════════════════════════════════════
 const makeStyles = (accent: Accent) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.void },
+
+  // ── Focused-mode hero ──
+  //
+  //  Replaces the full-bleed Luna room when companionMode === 'focused'.
+  //  Same vertical footprint, but no cat / vitality / cheer — just a
+  //  calm "you and the organizer" framing + a way back to settings.
+  focusedHero: {
+    paddingTop: 64,
+    paddingBottom: 36,
+    paddingHorizontal: 28,
+    gap: 14,
+  },
+  focusedHeroEyebrow: {
+    fontFamily: fonts.interSemi,
+    fontSize: 11,
+    color: C.boneDim,
+    letterSpacing: 1.4,
+  },
+  focusedHeroTitle: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 28,
+    color: C.bone,
+    letterSpacing: -0.6,
+    lineHeight: 34,
+  },
+  focusedHeroBody: {
+    fontFamily: fonts.inter,
+    fontSize: 14,
+    color: C.boneDim,
+    lineHeight: 21,
+    marginTop: 2,
+  },
+  focusedHeroLink: {
+    marginTop: 2,
+    paddingVertical: 4,
+  },
+  focusedHeroLinkText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 13.5,
+  },
 
   header: {
     paddingHorizontal: 24,
@@ -1921,39 +1975,6 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     lineHeight: 18,
   },
 
-  // ── Care ──
-  careRow: { flexDirection: 'row', gap: 10 },
-  careCard: {
-    flex: 1,
-    paddingVertical: 15,
-    paddingHorizontal: 10,
-    borderRadius: 14,
-    alignItems: 'center',
-    backgroundColor: C.void2,
-    borderWidth: 1,
-    borderColor: C.hair,
-  },
-  careGlyph: { fontSize: 22, marginBottom: 6 },
-  careLabel: {
-    fontFamily: fonts.interSemi,
-    fontSize: 12,
-    color: C.bone,
-    marginBottom: 2,
-  },
-  careCost: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 10,
-    color: C.mute,
-  },
-  careFoot: {
-    fontFamily: fonts.inter,
-    fontSize: 11.5,
-    color: C.mute,
-    marginTop: 12,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
 
   // ── Settings ──
   settingsCard: {

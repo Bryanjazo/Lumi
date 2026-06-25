@@ -53,6 +53,14 @@ export interface NotificationPrefs {
 export type ThemeKey = 'ember' | 'dusk' | 'lichen' | 'amethyst';
 
 /**
+ * How present the companion / game layer is. Per
+ * `lumi-companion-mode-spec.md`. Default 'full' — Lumi's
+ * differentiation IS the warm companion; we lead with it and let
+ * the user dial down.
+ */
+export type CompanionMode = 'full' | 'minimal' | 'focused';
+
+/**
  * Daily anchors — recurring fixtures the user's day is built around.
  * Seeded in onboarding (smart defaults if skipped). The Time tab reads
  * these so a fresh account still has real structure on day one — and
@@ -148,6 +156,19 @@ interface UserState {
   notifPrefs: NotificationPrefs;
   /** Master voice capture toggle (mic in Capture/Oracle/etc). */
   voiceEnabled: boolean;
+  /**
+   * Companion-mode preset — dials the playful layer up or down.
+   * See `lumi-companion-mode-spec.md`.
+   *   'full'    — Luna + room + XP + streaks visible (default, cozy companion)
+   *   'minimal' — small Luna, gentle streaks, NO XP/level/unlocks (warm clean organizer)
+   *   'focused' — no cat, no XP, no room (pure calm AI organizer; Me tab → "You & Lumi")
+   *
+   * CRITICAL: this gates RENDERING ONLY. XP, shards, streak, vitality
+   * and the learning layer keep accruing in every mode so flipping
+   * between presets is non-destructive — switch to Focused for a
+   * month, switch back, your level/streak/room are intact.
+   */
+  companionMode: CompanionMode;
   /** BCP-47 capture language tag for transcription. */
   captureLang: string;
   /** Active accent theme (Premium-gated except 'ember'). */
@@ -226,6 +247,7 @@ interface UserState {
   setVoiceEnabled: (on: boolean) => void;
   setCaptureLang: (lang: string) => void;
   setTheme: (theme: ThemeKey) => void;
+  setCompanionMode: (mode: CompanionMode) => void;
   setAvatar: (avatar: string) => void;
   setNotificationsEnabled: (on: boolean) => void;
   setOfflineMode: (on: boolean) => void;
@@ -306,6 +328,9 @@ export const useUserStore = create<UserState>()(
       voiceEnabled: true,
       captureLang: 'en-US',
       theme: 'ember',
+      // Default to the cozy companion — let users dial down, don't
+      // bury the charm. Per companion-mode-spec §1.
+      companionMode: 'full',
       avatar: 'default',
       subscriptionStatus: 'free',
       subscriptionTier: null,
@@ -406,6 +431,7 @@ export const useUserStore = create<UserState>()(
         set((s) => ({ notifPrefs: { ...s.notifPrefs, [key]: value } })),
       setVoiceEnabled: (on) => set({ voiceEnabled: on }),
       setCaptureLang: (lang) => set({ captureLang: lang }),
+      setCompanionMode: (mode) => set({ companionMode: mode }),
       setTheme: (theme) => set({ theme }),
       setAvatar: (avatar) => set({ avatar }),
       setNotificationsEnabled: (on) => set({ notificationsEnabled: on }),
@@ -468,6 +494,7 @@ export const useUserStore = create<UserState>()(
           voiceEnabled: true,
           captureLang: 'en-US',
           theme: 'ember',
+          companionMode: 'full',
           avatar: 'default',
           subscriptionStatus: 'free',
           subscriptionTier: null,
@@ -479,7 +506,7 @@ export const useUserStore = create<UserState>()(
     {
       name: 'lumi.user',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 12,
+      version: 13,
       /**
        * v1 → v2: re-trigger the canonical onboarding for anyone who
        * went through the OLD terracotta-era flow. We can tell them
@@ -615,6 +642,12 @@ export const useUserStore = create<UserState>()(
           if (state.petName === 'Luna') {
             state.petName = 'Lumi';
           }
+        }
+        if (version < 13) {
+          // Companion-mode field added (companion-mode-spec). Existing
+          // users default to 'full' so the cozy companion stays put
+          // for everyone who was using the app before this feature.
+          if (state.companionMode === undefined) state.companionMode = 'full';
         }
         return state as never;
       },

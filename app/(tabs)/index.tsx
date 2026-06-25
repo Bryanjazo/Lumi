@@ -47,6 +47,7 @@ import { timeColors as C } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { lunaSource } from '../../lib/luna-source';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
+import { useCompanionMode } from '../../lib/companion-mode';
 import { IMPORTANCE, Importance } from '../../constants/importance';
 import {
   WINDOWS,
@@ -1084,9 +1085,36 @@ export default function Home() {
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
   const effectiveWindows = useEffectiveWindows();
+  // Companion-mode flags — gate the playful chrome (Luna, XP, cheer).
+  const companion = useCompanionMode();
   // Ambient mood — reflects sleep window, overdue pile, streak.
   // The nook cat updates as the user's state changes.
   const ambientMood = useAmbientLunaMood();
+  // Transient "celebration" override — when the user completes a
+  // quest, the nook cat flips to 'happy' for ~30s then springs back
+  // to ambient. A small, earned moment of feedback that doesn't
+  // require any cheap toaster animation.
+  const [celebrating, setCelebrating] = useState(false);
+  const celebrateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerCelebrate = () => {
+    if (celebrateTimerRef.current) {
+      clearTimeout(celebrateTimerRef.current);
+    }
+    setCelebrating(true);
+    celebrateTimerRef.current = setTimeout(() => {
+      setCelebrating(false);
+      celebrateTimerRef.current = null;
+    }, 30_000);
+  };
+  // Cleanup on unmount so a stale timeout can't try to setState
+  // after the screen's torn down.
+  useEffect(
+    () => () => {
+      if (celebrateTimerRef.current) clearTimeout(celebrateTimerRef.current);
+    },
+    [],
+  );
+  const nookMood = celebrating ? 'happy' : ambientMood;
 
   // ── Store ────────────────────────────────────────────────────────
   const xp = useUserStore((s) => s.xp);
@@ -1333,18 +1361,26 @@ export default function Home() {
     addShard();
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setCheer((c) => c + 1);
     setSwap(0);
 
-    const fId = q.id + '-' + Date.now();
-    setFloater({
-      id: fId,
-      amount: gain,
-      color: IMPORTANCE[q.importance].color,
-    });
-    setTimeout(() => {
-      setFloater((cur) => (cur?.id === fId ? null : cur));
-    }, 1200);
+    // Celebratory chrome — only fires in Full mode. In Minimal /
+    // Focused the completion stays a quiet check (calmer surface).
+    // The fan-out above (XP, shard, streak, registerActivity) ALWAYS
+    // fires so data accrues consistently — this only gates VISUAL
+    // feedback (companion-mode-spec §2).
+    if (companion.showCheer) {
+      setCheer((c) => c + 1);
+      triggerCelebrate();
+      const fId = q.id + '-' + Date.now();
+      setFloater({
+        id: fId,
+        amount: gain,
+        color: IMPORTANCE[q.importance].color,
+      });
+      setTimeout(() => {
+        setFloater((cur) => (cur?.id === fId ? null : cur));
+      }, 1200);
+    }
 
     // Surface an Undo so accidental taps can be reversed within 6s.
     // The XP guardrail in questStore means an undo doesn't subtract
@@ -2138,8 +2174,11 @@ export default function Home() {
                here would just duplicate the cat. Swap to the same
                person glyph the ProfileIcon uses elsewhere so this
                corner still reads as the profile entry. When the
-               day still has work, keep the GIF cat. */}
-            {allDone ? (
+               day still has work, keep the GIF cat.
+               In Focused companion mode (no cat anywhere) we ALSO
+               fall back to the person glyph so the user still has
+               a tappable profile-entry corner. */}
+            {allDone || !companion.showLuna ? (
               <Svg
                 width={36}
                 height={36}
@@ -2172,11 +2211,13 @@ export default function Home() {
                 />
                 {/* Luna in the nook — reflects the user's ambient
                    state (sleeping past bedtime, sad if overdue
-                   piles, happy on a long streak, idle by default).
+                   piles, happy on a long streak, idle by default),
+                   PLUS a 30-second 'happy' celebration window
+                   whenever a quest gets completed.
                    32×32 native asset rendered at 64×64 = clean 2×
                    for sharp pixels. */}
                 <Image
-                  source={lunaSource(ambientMood)}
+                  source={lunaSource(nookMood)}
                   style={{ width: 64, height: 64 }}
                   resizeMode="contain"
                   accessibilityLabel="Luna"
@@ -2186,12 +2227,17 @@ export default function Home() {
           </Pressable>
         </View>
 
-        {/* ── Quiet "today" line — streak · progress · done/total · +xp ── */}
+        {/* ── Quiet "today" line — streak · progress · done/total · +xp ──
+            Companion-mode gates:
+              showStreak → streak chip (kept in Minimal, off in Focused)
+              showXp     → "+N xp" tint (kept in Full only) */}
         <View style={styles.todayLine}>
-          <View style={styles.streakChip}>
-            <Text style={styles.streakFlame}>🔥</Text>
-            <Text style={styles.streakNum}>{streak}</Text>
-          </View>
+          {companion.showStreak && (
+            <View style={styles.streakChip}>
+              <Text style={styles.streakFlame}>🔥</Text>
+              <Text style={styles.streakNum}>{streak}</Text>
+            </View>
+          )}
           <View style={styles.progressRow}>
             {Array.from({ length: Math.max(totalToday, 1) }).map((_, i) => (
               <View
@@ -2204,10 +2250,15 @@ export default function Home() {
             ))}
           </View>
           <Text style={styles.todayCount}>
-            {doneToday}/{totalToday} ·{' '}
-            <Text style={[styles.xpInline, { color: accent.fg }]}>
-              +{xpToday}
-            </Text>
+            {doneToday}/{totalToday}
+            {companion.showXp && (
+              <>
+                {' · '}
+                <Text style={[styles.xpInline, { color: accent.fg }]}>
+                  +{xpToday}
+                </Text>
+              </>
+            )}
           </Text>
         </View>
 
