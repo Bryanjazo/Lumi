@@ -1,19 +1,16 @@
 // Paywall — the App Store subscription screen.
 //
-// Visual spec lives at lumi-paywall.jsx (the user's mock). The screen
-// is a navigable surface (not a gate) — users push to it from the
-// Profile → Subscription row, from upgrade prompts, and from any
-// in-app CTA that wants to convert.
+// Visual ported from lumi-subscription.jsx (the enhanced design
+// composer mockup) — a warm Free-status card with Luna, a clear
+// Free-vs-Pro comparison table, a plan toggle with savings, an
+// ember upgrade CTA, and a calm Restore footer.
 //
-// Two purchase paths:
-//   • Soft trial (no card needed) — for first-time eligible users.
-//     Calls userStore.startTrial() → flips status to 'trial' for 7d.
-//   • Real IAP purchase — for users who've already trialed OR want
-//     to commit straight away. Calls purchaseTier() → StoreKit sheet
-//     → on success the RC listener updates store optimistically.
+// The screen is a navigable surface (not a gate) — users push to it
+// from the Profile → Subscription row, from upgrade prompts, and
+// from any in-app CTA that wants to convert.
 //
-// Restore + Terms + Privacy footer is App-Store-required. Without
-// them, App Review rejects the build.
+// All RevenueCat plumbing (purchaseTier, restorePurchases, outcome
+// dispatch, error UX) is preserved from the prior implementation.
 
 import { useMemo, useState } from 'react';
 import {
@@ -35,7 +32,6 @@ import Svg, { Path } from 'react-native-svg';
 import { fonts } from '../constants/fonts';
 import { timeColors as C } from '../constants/colors';
 import { lunaSource } from '../lib/luna-source';
-import { useAmbientLunaMood } from '../lib/luna-mood';
 import { useSession } from '../lib/auth';
 import { useAccessStatus, PRICING } from '../lib/subscription';
 import { useUserStore } from '../store/userStore';
@@ -46,7 +42,7 @@ const hexA = (hex: string, a: number) => {
   return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
 };
 
-// Reusable check icon (matches the mock's stroke-only style).
+// Reusable check icon (the mock's stroke-only style).
 const CheckIcon = ({ color, size = 13 }: { color: string; size?: number }) => (
   <Svg width={size} height={size} viewBox="0 0 24 24">
     <Path
@@ -60,27 +56,29 @@ const CheckIcon = ({ color, size = 13 }: { color: string; size?: number }) => (
   </Svg>
 );
 
+// Free / Pro comparison rows — taken straight from the mockup.
+// Pure copy; nothing here is dynamic. Free values match the actual
+// app caps (e.g. 3 captures/day for free) so this isn't aspirational.
+const COMPARE_ROWS = [
+  { label: 'Daily brain-dumps', free: '3 / day', pro: 'Unlimited' },
+  { label: 'AI sorting & re-plan', free: 'Basic', pro: 'Smart' },
+  { label: 'Weekly reflection', free: 'Snippet', pro: 'Full story' },
+  { label: 'Calendar sync', free: '1 calendar', pro: 'Multi-cal' },
+  { label: "Luna's worlds & skins", free: 'Starter', pro: 'All' },
+];
+
 export default function Paywall() {
   const router = useRouter();
   const { session } = useSession();
   const access = useAccessStatus(session);
   const petName = useUserStore((s) => s.petName);
-  // Read the real safe-area top inset so the close button sits below
-  // the Dynamic Island / notch on every device, not at the literal
-  // top edge of the screen (where iOS clips it). The SafeAreaView
-  // edges only inset its CHILD container; the absolutely-positioned
-  // close button needs the value applied directly.
   const insets = useSafeAreaInsets();
-  // Honest mood — even on a sales surface. If the user is tired or
-  // overwhelmed when they hit the paywall, showing a beaming cat
-  // would feel performative. Let Luna reflect their actual state.
-  const lunaMood = useAmbientLunaMood();
 
   const [selected, setSelected] = useState<'annual' | 'monthly'>('annual');
   const [purchasing, setPurchasing] = useState(false);
 
-  // Savings % on the annual first-year vs paying monthly × 12.
-  // Used in the "Save N%" pill on the year card.
+  // Savings % — annual first-year vs paying monthly × 12. Drives
+  // the "Save N%" badge on the Yearly card.
   const annualSavePct = useMemo(() => {
     const monthlyYearly = PRICING.monthly.amountUSD * 12;
     return Math.round(
@@ -89,48 +87,10 @@ export default function Paywall() {
     );
   }, []);
 
-  const features = useMemo(
-    () => [
-      {
-        glyph: '✦',
-        color: C.ember,
-        title: 'Unlimited brain-dumps',
-        sub: 'Untangle as much as you need — no daily cap.',
-      },
-      {
-        glyph: '◔',
-        color: C.honey,
-        title: 'Smart re-planning',
-        sub: 'Lumi reshapes your day around your energy.',
-      },
-      {
-        glyph: '❉',
-        color: C.lichen,
-        title: `${petName}'s full world`,
-        sub: 'Every room, companion & skin to unlock.',
-      },
-      {
-        glyph: '◷',
-        color: C.dusk,
-        title: 'Weekly reflections',
-        sub: 'Your patterns, gently surfaced each Sunday.',
-      },
-      {
-        glyph: '☾',
-        color: C.amethyst,
-        title: 'Custom rhythms & themes',
-        sub: 'Anchors, accents and reminders, your way.',
-      },
-    ],
-    [petName],
-  );
+  // ── Handlers — preserved verbatim from the prior implementation ──
 
   const handleClose = () => {
     Haptics.selectionAsync();
-    // `router.canGoBack()` can lie when the paywall was opened as a
-    // stack root (e.g. deep-link, programmatic replace). Always
-    // fall through to `/(tabs)` if back doesn't actually navigate
-    // so the user can never get stranded here.
     try {
       if (router.canGoBack()) {
         router.back();
@@ -142,22 +102,6 @@ export default function Paywall() {
     router.replace('/(tabs)');
   };
 
-  // PRIMARY CTA — always triggers the real Apple StoreKit purchase.
-  //
-  //  Previously this branched on `canStartTrial` and gave free-tier
-  //  users a "soft trial" (a 7-day local flag with no Apple receipt)
-  //  instead of opening StoreKit. That was the source of the
-  //  "subscribe button just sends me to home" bug: users tapped the
-  //  primary CTA expecting to pay, but it skipped the Apple sheet
-  //  entirely and just bounced them into the app on a fake trial.
-  //
-  //  The "trial" mechanism for paid plans now lives where it should:
-  //  Apple's Introductory Offer on the Annual product ($59.99 for
-  //  the first year, then $89.99/yr). StoreKit shows this clearly in
-  //  the sheet so the user sees what they're committing to.
-  //
-  //  The card-less soft trial is still available — but as an
-  //  explicit secondary action below, only when the user is eligible.
   const handlePurchase = async () => {
     Haptics.selectionAsync();
     setPurchasing(true);
@@ -165,10 +109,6 @@ export default function Paywall() {
     setPurchasing(false);
     if (outcome.kind === 'success') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Confirm visibly before navigating — otherwise a successful
-      // purchase looks identical to a cancelled one (both just close
-      // the StoreKit sheet and return to Lumi). The Alert gives the
-      // user proof and a clear "continue" gesture.
       Alert.alert(
         'You’re on Pro 💛',
         outcome.tier === 'annual'
@@ -179,11 +119,8 @@ export default function Paywall() {
       );
       return;
     }
-    if (outcome.kind === 'cancelled') return; // silent — they backed out
+    if (outcome.kind === 'cancelled') return;
     if (outcome.kind === 'unavailable') {
-      // Map each diagnostic reason to user-facing copy. Helps both
-      // the user understand what's wrong AND lets me triage support
-      // tickets without guessing.
       const msg =
         outcome.reason === 'no-sdk'
           ? 'In-app purchases need the App Store build. If you’re testing in Expo Go or a dev preview, install via TestFlight instead.'
@@ -234,232 +171,285 @@ export default function Paywall() {
     Linking.openURL(url).catch(() => {});
   };
 
-  const selPrice =
-    selected === 'annual'
-      ? PRICING.annual.firstYearLabel
-      : PRICING.monthly.label;
-  const selPer = selected === 'annual' ? '/ year' : '/ month';
-
-  // CTA always commits to a real purchase via StoreKit. The label
-  // reflects the introductory offer Apple will show in the sheet so
-  // the user sees the actual headline before tapping:
-  //   • Annual: "$59.99 first year" (Pay-As-You-Go intro), then
-  //     renews $89.99/yr
-  //   • Monthly: "Start 7 days free" (Free Trial intro), then
-  //     $14.99/mo
-  // Apple's sheet handles the truth — if the user already used the
-  // intro on this Apple ID, the headline shows the base price
-  // instead. We just give them the best-case headline up front.
+  // CTA label reflects the actual StoreKit intro offer the user
+  // will see in the Apple sheet.
   const ctaLabel =
     selected === 'annual'
-      ? `Subscribe — ${PRICING.annual.firstYearLabel} first year`
-      : 'Start 7 days free';
+      ? `Upgrade to Pro · ${PRICING.annual.firstYearLabel} / year`
+      : `Upgrade to Pro · ${PRICING.monthly.label} / month`;
+
+  // Status card varies per access state. Free is the mockup baseline;
+  // trial and active land here occasionally (deep link, profile row)
+  // and deserve their own copy instead of an awkward "Free" pill.
+  const statusContent = (() => {
+    if (access.hasActiveSubscription) {
+      return {
+        pill: 'PRO',
+        pillColor: C.ember,
+        headline: 'You’re on Pro.',
+        body: 'All of Lumi’s extras are unlocked. Manage your plan in App Store Settings.',
+      };
+    }
+    if (access.inTrial) {
+      return {
+        pill: `TRIAL · ${access.trialDaysLeft}D LEFT`,
+        pillColor: C.glow,
+        headline: 'Enjoy your taste of Pro.',
+        body: 'Pick a plan below to keep everything when the trial ends.',
+      };
+    }
+    return {
+      pill: 'FREE PLAN',
+      pillColor: C.boneDim,
+      headline: 'Free Lumi, always.',
+      body: 'The baseline is yours forever — capture, plan, and Luna’s company. No pressure to ever pay.',
+    };
+  })();
 
   return (
     <View style={{ flex: 1, backgroundColor: C.void }}>
-      {/* Top ember-glow gradient (radial-feel via a downward fade). */}
+      {/* Top ember-radial fade — same atmosphere as the mockup. */}
       <LinearGradient
-        colors={[hexA(C.ember, 0.18), hexA(C.ember, 0.06), 'rgba(0,0,0,0)']}
-        locations={[0, 0.25, 0.55]}
+        colors={[hexA(C.ember, 0.12), 'rgba(0,0,0,0)']}
+        locations={[0, 0.42]}
         style={StyleSheet.absoluteFill}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
       />
 
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        {/* Header — back chevron + centered title. Matches mockup. */}
+        <View style={[styles.header, { paddingTop: 6 }]}>
+          <Pressable
+            onPress={handleClose}
+            hitSlop={12}
+            style={styles.headerBack}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Text style={styles.headerBackGlyph}>‹</Text>
+          </Pressable>
+          <Text style={styles.headerTitle}>Subscription</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+
         <ScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
         >
-          {/* ── Hero ── */}
-          <View style={styles.hero}>
-            <View style={styles.lunaWrap}>
-              <View style={styles.lunaGlow} />
-              <Image
-                source={lunaSource(lunaMood)}
-                style={styles.luna}
-              />
-            </View>
-            <View style={styles.eyebrow}>
-              <Text style={[styles.eyebrowGlyph, { color: C.glow }]}>✦</Text>
-              <Text style={[styles.eyebrowText, { color: C.glow }]}>
-                LUMI PREMIUM
-              </Text>
-            </View>
-            <Text style={styles.h1}>
-              Give your brain{'\n'}all the room it needs.
-            </Text>
-            <Text style={styles.heroSub}>
-              {petName === 'Lumi'
-                ? 'Unlock everything Lumi can do — and keep your whole world growing.'
-                : `Unlock everything Lumi & ${petName} can do — and keep your whole world growing.`}
-            </Text>
-          </View>
-
-          {/* ── Features ── */}
-          <View style={styles.features}>
-            {features.map((f, i) => (
+          {/* ── Status card ── */}
+          <View style={styles.statusCard}>
+            <Image
+              source={lunaSource('idle')}
+              style={styles.statusLuna}
+            />
+            <View
+              style={[
+                styles.statusPill,
+                { borderColor: hexA(statusContent.pillColor, 0.4) },
+              ]}
+            >
               <View
-                key={i}
                 style={[
-                  styles.feature,
-                  i < features.length - 1 && styles.featureBorder,
+                  styles.statusPillDot,
+                  { backgroundColor: statusContent.pillColor },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.statusPillText,
+                  { color: statusContent.pillColor },
                 ]}
               >
-                <View
-                  style={[
-                    styles.featureIcon,
-                    {
-                      backgroundColor: hexA(f.color, 0.12),
-                      borderColor: hexA(f.color, 0.32),
-                    },
-                  ]}
-                >
-                  <Text style={{ color: f.color, fontSize: 16 }}>
-                    {f.glyph}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.featureTitle}>{f.title}</Text>
-                  <Text style={styles.featureSub}>{f.sub}</Text>
-                </View>
-                <CheckIcon color={f.color} />
+                {statusContent.pill}
+              </Text>
+            </View>
+            <Text style={styles.statusHeadline}>{statusContent.headline}</Text>
+            <Text style={styles.statusBody}>{statusContent.body}</Text>
+          </View>
+
+          {/* ── "What Pro adds" eyebrow ── */}
+          <View style={styles.eyebrowRow}>
+            <Text style={[styles.eyebrowGlyph, { color: C.ember }]}>✦</Text>
+            <Text style={styles.eyebrowText}>What Pro adds</Text>
+          </View>
+
+          {/* ── Comparison table ── */}
+          <View style={styles.table}>
+            <View style={styles.tableHead}>
+              <View style={{ flex: 1 }} />
+              <Text style={styles.tableHeadFreeCell}>Free</Text>
+              <Text style={styles.tableHeadProCell}>Pro</Text>
+            </View>
+            {COMPARE_ROWS.map((r, i) => (
+              <View
+                key={r.label}
+                style={[
+                  styles.tableRow,
+                  i < COMPARE_ROWS.length - 1 && styles.tableRowBorder,
+                ]}
+              >
+                <Text style={styles.tableRowLabel}>{r.label}</Text>
+                <Text style={styles.tableFreeCell}>{r.free}</Text>
+                <Text style={styles.tableProCell}>{r.pro}</Text>
               </View>
             ))}
           </View>
 
-          {/* ── Plan picker ── */}
-          <View style={styles.plans}>
-            {(['annual', 'monthly'] as const).map((k) => {
-              const on = selected === k;
-              const label = k === 'annual' ? 'Yearly' : 'Monthly';
-              const price =
-                k === 'annual'
-                  ? PRICING.annual.firstYearLabel
-                  : PRICING.monthly.label;
-              const per = k === 'annual' ? '/ year' : '/ month';
-              const note =
-                k === 'annual'
-                  ? `then ${PRICING.annual.renewalLabel}/yr · billed annually`
-                  : 'billed monthly';
-              const save =
-                k === 'annual' && annualSavePct > 0
-                  ? `Save ${annualSavePct}%`
-                  : null;
-              return (
-                <Pressable
-                  key={k}
-                  onPress={() => {
-                    Haptics.selectionAsync();
-                    setSelected(k);
-                  }}
-                  style={[
-                    styles.plan,
-                    on
-                      ? { borderColor: C.ember, backgroundColor: C.void2 }
-                      : { borderColor: C.hair, backgroundColor: C.void2 },
-                  ]}
-                >
-                  {save && (
-                    <View style={styles.savePill}>
-                      <Text style={styles.savePillText}>{save}</Text>
-                    </View>
-                  )}
-                  <View style={styles.planTop}>
-                    <Text
+          {/* ── Plan toggle — only when there's still a plan choice
+              to make. Active subscribers see a "Manage in Settings"
+              row instead of the upgrade flow. ── */}
+          {!access.hasActiveSubscription && (
+            <>
+              <View style={styles.plansRow}>
+                {(['annual', 'monthly'] as const).map((k) => {
+                  const on = selected === k;
+                  const label = k === 'annual' ? 'Yearly' : 'Monthly';
+                  const price =
+                    k === 'annual'
+                      ? PRICING.annual.firstYearLabel
+                      : PRICING.monthly.label;
+                  const per = k === 'annual' ? '/yr' : '/mo';
+                  const note =
+                    k === 'annual'
+                      ? `then ${PRICING.annual.renewalLabel}/yr · billed yearly`
+                      : 'billed monthly';
+                  const save =
+                    k === 'annual' && annualSavePct > 0
+                      ? `Save ${annualSavePct}%`
+                      : null;
+                  return (
+                    <Pressable
+                      key={k}
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setSelected(k);
+                      }}
                       style={[
-                        styles.planLabel,
-                        { color: on ? C.bone : C.boneDim },
-                      ]}
-                    >
-                      {label.toUpperCase()}
-                    </Text>
-                    <View
-                      style={[
-                        styles.planRadio,
+                        styles.planCard,
                         on
-                          ? { borderColor: C.ember, backgroundColor: C.ember }
-                          : { borderColor: C.ash },
+                          ? {
+                              borderColor: C.ember,
+                              backgroundColor: hexA(C.ember, 0.1),
+                            }
+                          : { borderColor: C.hair, backgroundColor: C.void2 },
                       ]}
                     >
-                      {on && <CheckIcon color={C.void} size={11} />}
-                    </View>
-                  </View>
-                  <View style={styles.planPriceRow}>
-                    <Text
-                      style={[
-                        styles.planPrice,
-                        { color: on ? C.bone : C.boneDim },
-                      ]}
-                    >
-                      {price}
-                    </Text>
-                    <Text style={styles.planPer}>{per}</Text>
-                  </View>
-                  <Text style={styles.planNote}>{note}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
+                      {save && (
+                        <View style={styles.savePill}>
+                          <Text style={styles.savePillText}>{save}</Text>
+                        </View>
+                      )}
+                      <View style={styles.planTop}>
+                        <Text
+                          style={[
+                            styles.planLabel,
+                            { color: on ? C.bone : C.boneDim },
+                          ]}
+                        >
+                          {label}
+                        </Text>
+                        <View
+                          style={[
+                            styles.planRadio,
+                            on
+                              ? {
+                                  borderColor: C.ember,
+                                  backgroundColor: C.ember,
+                                }
+                              : { borderColor: C.ash },
+                          ]}
+                        >
+                          {on && <CheckIcon color={C.void} size={11} />}
+                        </View>
+                      </View>
+                      <View style={styles.planPriceRow}>
+                        <Text
+                          style={[
+                            styles.planPrice,
+                            { color: on ? C.bone : C.boneDim },
+                          ]}
+                        >
+                          {price}
+                        </Text>
+                        <Text style={styles.planPer}>{per}</Text>
+                      </View>
+                      <Text style={styles.planNote}>{note}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
 
-          {/* ── Apple intro-offer hint — varies per plan to mirror
-              the actual StoreKit sheet copy. Annual = "$59.99 first
-              year, renews $89.99". Monthly = "7 days free, then
-              $14.99/mo". ── */}
-          <View style={styles.trialLine}>
-            <Text style={{ color: C.dusk, fontSize: 12 }}>✦</Text>
-            <Text style={styles.trialText}>
-              {selected === 'annual' ? (
-                <>
-                  <Text style={{ color: C.bone, fontWeight: '600' }}>
-                    First year ${PRICING.annual.firstYearAmountUSD}
-                  </Text>
-                  , renews at ${PRICING.annual.renewalAmountUSD}/yr.
-                  Cancel anytime in Settings.
-                </>
-              ) : (
-                <>
-                  <Text style={{ color: C.bone, fontWeight: '600' }}>
-                    7 days free
-                  </Text>
-                  , then ${PRICING.monthly.amountUSD}/month. Cancel
-                  anytime in Settings.
-                </>
-              )}
-            </Text>
-          </View>
+              {/* ── CTA ── */}
+              <Pressable
+                onPress={handlePurchase}
+                disabled={purchasing}
+                style={[styles.cta, purchasing && { opacity: 0.6 }]}
+                accessibilityRole="button"
+                accessibilityLabel={ctaLabel}
+              >
+                {purchasing ? (
+                  <ActivityIndicator color={C.void} />
+                ) : (
+                  <>
+                    <Text style={styles.ctaGlyph}>✦</Text>
+                    <Text style={styles.ctaText}>{ctaLabel}</Text>
+                  </>
+                )}
+              </Pressable>
+              <Text style={styles.ctaDisclaimer}>
+                {selected === 'annual'
+                  ? `${PRICING.annual.firstYearLabel} first year, renews at ${PRICING.annual.renewalLabel}/yr. Cancel anytime — your free plan never expires.`
+                  : `7-day free trial, then ${PRICING.monthly.label}/mo. Cancel anytime — your free plan never expires.`}
+              </Text>
+            </>
+          )}
 
-          {/* ── PRIMARY CTA — always opens StoreKit ── */}
-          <Pressable
-            onPress={handlePurchase}
-            disabled={purchasing}
-            style={[styles.cta, purchasing && { opacity: 0.6 }]}
-            accessibilityRole="button"
-            accessibilityLabel={ctaLabel}
-          >
-            {purchasing ? (
-              <ActivityIndicator color={C.void} />
-            ) : (
-              <Text style={styles.ctaText}>{ctaLabel}</Text>
-            )}
-          </Pressable>
-          <Text style={styles.ctaSub}>
-            Cancel anytime · Manage in App Store Settings
-          </Text>
-
-          {/* ── Apple-required legal footer ── */}
-          <View style={styles.legalRow}>
-            <Pressable onPress={handleRestore} hitSlop={8}>
-              <Text style={styles.legalLink}>Restore</Text>
-            </Pressable>
-            <View style={styles.legalDot} />
+          {access.hasActiveSubscription && (
             <Pressable
-              onPress={openLink('https://lumi.app/terms')}
-              hitSlop={8}
+              onPress={() =>
+                Linking.openURL('https://apps.apple.com/account/subscriptions')
+              }
+              style={styles.manageRow}
             >
+              <Text style={styles.manageRowText}>
+                Manage in App Store Settings →
+              </Text>
+            </Pressable>
+          )}
+
+          {/* ── Restore — calm, App-Store-required ── */}
+          <Pressable
+            onPress={handleRestore}
+            style={styles.restoreRow}
+            hitSlop={8}
+          >
+            <Svg width={14} height={14} viewBox="0 0 24 24">
+              <Path
+                d="M3.5 9a9 9 0 1 1-1 5"
+                stroke={C.mute}
+                strokeWidth={1.8}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+              />
+              <Path
+                d="M3 4v5h5"
+                stroke={C.mute}
+                strokeWidth={1.8}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+              />
+            </Svg>
+            <Text style={styles.restoreText}>Restore purchase</Text>
+          </Pressable>
+
+          {/* ── Terms / Privacy ── */}
+          <View style={styles.legalRow}>
+            <Pressable onPress={openLink('https://lumi.app/terms')} hitSlop={8}>
               <Text style={styles.legalLink}>Terms</Text>
             </Pressable>
-            <View style={styles.legalDot} />
             <Pressable
               onPress={openLink('https://lumi.app/privacy')}
               hitSlop={8}
@@ -472,28 +462,18 @@ export default function Paywall() {
             automatically unless cancelled at least 24 hours before
             the period ends. Manage or cancel in App Store settings.
           </Text>
-
-          {/* Belt-and-suspenders escape — the × at the top can be
-              missed on first scroll. A clear "Maybe later" at the
-              bottom guarantees the user always has a way back. */}
-          <Pressable onPress={handleClose} style={styles.maybeLaterBtn}>
-            <Text style={styles.maybeLaterText}>Maybe later</Text>
-          </Pressable>
         </ScrollView>
 
-        {/* Close (×) — rendered AFTER the ScrollView so iOS reliably
-            routes taps to it instead of swallowing them into the
-            scrollable area. zIndex alone isn't enough on iOS. */}
+        {/* Close (×) — kept as a belt-and-suspenders escape in the
+            top-right for users who entered the screen modally. Sits
+            below the safe-area inset so it never clips under the
+            Dynamic Island. */}
         <Pressable
           onPress={handleClose}
           hitSlop={12}
           accessibilityRole="button"
           accessibilityLabel="Close"
-          // top is the device's safe area top + 6pt cushion so the
-          // button always sits just below the Dynamic Island / notch
-          // on every iPhone (was a flat top: 10 which clipped under
-          // the island on 14 Pro+).
-          style={[styles.close, { top: insets.top + 6 }]}
+          style={[styles.closeAbs, { top: insets.top + 6 }]}
         >
           <Text style={styles.closeGlyph}>×</Text>
         </Pressable>
@@ -503,15 +483,44 @@ export default function Paywall() {
 }
 
 const styles = StyleSheet.create({
-  close: {
+  // ── Header ──
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 22,
+    paddingBottom: 10,
+    height: 48,
+  },
+  headerBack: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerBackGlyph: {
+    fontSize: 26,
+    color: C.boneDim,
+    lineHeight: 28,
+  },
+  headerTitle: {
+    flex: 1,
+    fontFamily: fonts.interSemi,
+    fontSize: 16,
+    color: C.bone,
+    textAlign: 'center',
+    letterSpacing: -0.2,
+  },
+  headerSpacer: { width: 32 },
+
+  // Close (×) — absolute, separate from the header chevron so users
+  // who came in modally always have a tappable dismiss.
+  closeAbs: {
     position: 'absolute',
-    // `top` is applied inline from useSafeAreaInsets so the button
-    // dodges the Dynamic Island on every device.
     right: 14,
     zIndex: 10,
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: C.void2,
     borderWidth: 1,
     borderColor: hexA(C.bone, 0.18),
@@ -520,142 +529,177 @@ const styles = StyleSheet.create({
   },
   closeGlyph: {
     color: C.bone,
-    fontSize: 24,
-    lineHeight: 26,
+    fontSize: 22,
+    lineHeight: 24,
     marginTop: -2,
     fontWeight: '300',
   },
-  maybeLaterBtn: {
-    alignSelf: 'center',
-    marginTop: 18,
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-  },
-  maybeLaterText: {
-    fontFamily: fonts.interSemi,
-    fontSize: 13,
-    color: C.boneDim,
-    textDecorationLine: 'underline',
-    textDecorationColor: C.boneDim,
-  },
+
   scroll: {
-    paddingHorizontal: 26,
-    paddingTop: 6,
-    paddingBottom: 32,
+    paddingHorizontal: 22,
+    paddingTop: 4,
+    paddingBottom: 40,
   },
 
-  // ── Hero ──
-  hero: {
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  lunaWrap: {
+  // ── Status card ──
+  statusCard: {
+    borderRadius: 22,
+    padding: 20,
+    backgroundColor: C.void2,
+    borderWidth: 1,
+    borderColor: C.hair,
+    marginBottom: 24,
+    overflow: 'hidden',
     position: 'relative',
-    width: 92,
-    height: 92,
-    marginBottom: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  lunaGlow: {
+  statusLuna: {
     position: 'absolute',
-    width: 136,
-    height: 136,
-    borderRadius: 68,
-    backgroundColor: hexA(C.glow, 0.16),
-    top: -22,
-    left: -22,
+    bottom: -8,
+    right: 6,
+    width: 88,
+    height: 88,
+    opacity: 0.95,
   },
-  luna: {
-    width: 92,
-    height: 92,
-  },
-  eyebrow: {
+  statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
-    paddingHorizontal: 13,
-    paddingVertical: 5,
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    paddingHorizontal: 11,
     borderRadius: 100,
-    backgroundColor: hexA(C.glow, 0.12),
+    backgroundColor: hexA(C.bone, 0.08),
     borderWidth: 1,
-    borderColor: hexA(C.glow, 0.4),
     marginBottom: 14,
   },
-  eyebrowGlyph: { fontSize: 11 },
-  eyebrowText: {
+  statusPillDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusPillText: {
     fontFamily: fonts.interSemi,
-    fontSize: 10.5,
-    letterSpacing: 2,
+    fontSize: 10,
+    letterSpacing: 1.5,
     fontWeight: '700',
   },
-  h1: {
+  statusHeadline: {
     fontFamily: fonts.fraunces,
     fontStyle: 'italic',
-    fontSize: 32,
+    fontSize: 26,
     color: C.bone,
-    letterSpacing: -0.8,
-    lineHeight: 38,
-    textAlign: 'center',
-    paddingTop: 6,
+    letterSpacing: -0.5,
+    lineHeight: 30,
+    marginBottom: 8,
+    maxWidth: 240,
   },
-  heroSub: {
+  statusBody: {
     fontFamily: fonts.inter,
+    fontSize: 13,
     color: C.boneDim,
-    fontSize: 14,
-    lineHeight: 22,
-    marginTop: 13,
-    textAlign: 'center',
-    maxWidth: 300,
+    lineHeight: 19,
+    maxWidth: 230,
   },
 
-  // ── Features ──
-  features: {
-    marginTop: 26,
-  },
-  feature: {
+  // ── "What Pro adds" eyebrow ──
+  eyebrowRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 4,
+    gap: 8,
+    marginBottom: 14,
   },
-  featureBorder: {
+  eyebrowGlyph: { fontSize: 13 },
+  eyebrowText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 11,
+    letterSpacing: 2,
+    color: C.ember,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+
+  // ── Comparison table ──
+  table: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: C.hair,
+    backgroundColor: C.void2,
+    overflow: 'hidden',
+    marginBottom: 24,
+  },
+  tableHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: C.hair,
+    backgroundColor: hexA(C.surface, 0.5),
+  },
+  tableHeadFreeCell: {
+    width: 74,
+    textAlign: 'center',
+    fontFamily: fonts.interSemi,
+    fontSize: 10,
+    letterSpacing: 1,
+    color: C.mute,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  tableHeadProCell: {
+    width: 84,
+    textAlign: 'center',
+    fontFamily: fonts.interSemi,
+    fontSize: 10,
+    letterSpacing: 1,
+    color: C.ember,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+  },
+  tableRowBorder: {
     borderBottomWidth: 1,
     borderBottomColor: hexA(C.hair, 0.6),
   },
-  featureIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  featureTitle: {
-    fontFamily: fonts.interSemi,
-    color: C.bone,
-    fontSize: 15,
-    letterSpacing: -0.2,
-  },
-  featureSub: {
+  tableRowLabel: {
+    flex: 1,
     fontFamily: fonts.inter,
+    fontSize: 13.5,
+    color: C.bone,
+    letterSpacing: -0.1,
+  },
+  tableFreeCell: {
+    width: 74,
+    textAlign: 'center',
+    fontFamily: fonts.inter,
+    fontSize: 12,
     color: C.mute,
+  },
+  tableProCell: {
+    width: 84,
+    textAlign: 'center',
+    fontFamily: fonts.interSemi,
     fontSize: 12.5,
-    marginTop: 2,
-    lineHeight: 17,
+    color: '#E0A488',
+    fontWeight: '600',
   },
 
   // ── Plans ──
-  plans: {
+  plansRow: {
     flexDirection: 'row',
-    gap: 11,
-    marginTop: 28,
+    gap: 10,
+    marginBottom: 14,
+    marginTop: 4,
   },
-  plan: {
+  planCard: {
     flex: 1,
     position: 'relative',
-    borderRadius: 17,
+    borderRadius: 16,
     borderWidth: 1.5,
     paddingHorizontal: 14,
     paddingTop: 16,
@@ -663,11 +707,11 @@ const styles = StyleSheet.create({
   },
   savePill: {
     position: 'absolute',
-    top: -10,
-    alignSelf: 'center',
+    top: -9,
+    right: 12,
     backgroundColor: C.glow,
     borderRadius: 100,
-    paddingHorizontal: 10,
+    paddingHorizontal: 9,
     paddingVertical: 3,
   },
   savePillText: {
@@ -676,17 +720,18 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     letterSpacing: 0.5,
     fontWeight: '700',
+    textTransform: 'uppercase',
   },
   planTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   planLabel: {
     fontFamily: fonts.interSemi,
-    fontSize: 12.5,
-    letterSpacing: 0.4,
+    fontSize: 13,
+    fontWeight: '600',
   },
   planRadio: {
     width: 18,
@@ -716,74 +761,93 @@ const styles = StyleSheet.create({
   planNote: {
     fontFamily: fonts.inter,
     color: C.mute,
-    fontSize: 11,
-    marginTop: 6,
-    lineHeight: 15,
-  },
-
-  // ── Trial line ──
-  trialLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    justifyContent: 'center',
-    marginTop: 16,
-  },
-  trialText: {
-    fontFamily: fonts.inter,
-    color: C.boneDim,
-    fontSize: 12.5,
+    fontSize: 10.5,
+    marginTop: 3,
+    lineHeight: 14,
   },
 
   // ── CTA ──
   cta: {
-    marginTop: 14,
     width: '100%',
     backgroundColor: C.ember,
-    borderRadius: 16,
-    paddingVertical: 18,
+    borderRadius: 15,
+    paddingVertical: 17,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     shadowColor: C.ember,
-    shadowOpacity: 0.34,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.3,
+    shadowRadius: 26,
+    shadowOffset: { width: 0, height: 10 },
     elevation: 6,
+  },
+  ctaGlyph: {
+    color: C.void,
+    fontSize: 14,
+    fontWeight: '700',
   },
   ctaText: {
     fontFamily: fonts.interSemi,
     color: C.void,
-    fontSize: 16,
-    letterSpacing: 0.2,
-    fontWeight: '700',
+    fontSize: 15,
+    letterSpacing: 0.1,
+    fontWeight: '600',
   },
-  ctaSub: {
-    fontFamily: fonts.inter,
-    color: C.mute,
-    fontSize: 11.5,
+  ctaDisclaimer: {
     textAlign: 'center',
-    marginTop: 11,
+    fontFamily: fonts.inter,
+    fontSize: 11.5,
+    color: C.mute,
+    marginTop: 12,
+    marginBottom: 22,
+    lineHeight: 17,
+    paddingHorizontal: 4,
   },
-  // ── Legal ──
-  legalRow: {
+
+  // ── Active-subscription manage row (shown instead of plans + CTA)
+  manageRow: {
+    alignSelf: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: hexA(C.ember, 0.4),
+    backgroundColor: hexA(C.ember, 0.08),
+    marginBottom: 18,
+  },
+  manageRowText: {
+    fontFamily: fonts.interSemi,
+    color: C.ember,
+    fontSize: 13,
+  },
+
+  // ── Restore ──
+  restoreRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  },
+  restoreText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 13,
+    color: C.boneDim,
+    fontWeight: '500',
+  },
+
+  // ── Terms / Privacy ──
+  legalRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     gap: 18,
-    marginTop: 18,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: hexA(C.hair, 0.6),
+    marginTop: 6,
   },
   legalLink: {
-    fontFamily: fonts.interSemi,
-    color: C.boneDim,
-    fontSize: 12,
-  },
-  legalDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: C.hair,
+    fontFamily: fonts.inter,
+    fontSize: 11,
+    color: C.mute,
   },
   boilerplate: {
     fontFamily: fonts.inter,
