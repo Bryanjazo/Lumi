@@ -466,12 +466,13 @@ export default function Onboarding() {
   );
   // Companion-mode picker (step 6). Default 'full' so the cozy
   // companion stays the natural choice unless the user dials down.
-  // Only 'full' and 'focused' are offered in onboarding; 'minimal'
-  // is available later from Profile → Personalize so we don't
-  // overwhelm the first-time decision.
-  const [companionPick, setCompanionPick] = useState<'full' | 'focused'>(
-    'full',
-  );
+  // All three modes (Full / Minimal / Focused) are surfaced — matches
+  // what's in Profile → Personalize. Earlier versions only offered
+  // Full + Focused; users landing in Full never realized Minimal
+  // existed as a middle ground.
+  const [companionPick, setCompanionPick] = useState<
+    'full' | 'minimal' | 'focused'
+  >('full');
   // Calendar-connect step (7) — single state machine for the button.
   // 'connected' freezes the row to its success state so the user
   // can move on without re-tapping; 'error' shows the iOS error so
@@ -1222,6 +1223,55 @@ export default function Onboarding() {
                   </Text>
                   <View style={styles.companionTagRow}>
                     {['PIXEL PET', 'STREAKS', 'REWARDS'].map((t) => (
+                      <View key={t} style={styles.companionTag}>
+                        <Text style={styles.companionTagText}>{t}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setCompanionPick('minimal');
+                  }}
+                  style={[
+                    styles.companionCard,
+                    companionPick === 'minimal' && styles.companionCardOn,
+                  ]}
+                >
+                  <View style={styles.companionCardHeader}>
+                    <Text style={styles.companionCardGlyph}>◐</Text>
+                    <Text
+                      style={[
+                        styles.companionCardTitle,
+                        companionPick === 'minimal' && {
+                          color: C.ember,
+                        },
+                      ]}
+                    >
+                      A warm clean organizer
+                    </Text>
+                    <View
+                      style={[
+                        styles.companionCardRadio,
+                        companionPick === 'minimal' && {
+                          backgroundColor: C.ember,
+                          borderColor: C.ember,
+                        },
+                      ]}
+                    >
+                      {companionPick === 'minimal' && (
+                        <Text style={styles.companionCardCheck}>✓</Text>
+                      )}
+                    </View>
+                  </View>
+                  <Text style={styles.companionCardBody}>
+                    Small quiet Lumi in the corner, gentle streaks. No XP,
+                    no unlocks — the middle ground.
+                  </Text>
+                  <View style={styles.companionTagRow}>
+                    {['QUIET PET', 'STREAKS', 'NO GAME'].map((t) => (
                       <View key={t} style={styles.companionTag}>
                         <Text style={styles.companionTagText}>{t}</Text>
                       </View>
