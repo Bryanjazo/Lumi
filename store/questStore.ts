@@ -12,6 +12,7 @@ import {
 } from '../constants/windows';
 import { RecurRule, nextOccurrence } from '../constants/recur';
 import { useUserStore } from './userStore';
+import { upsertEventForQuest, deleteEventForQuest } from '../lib/calendar';
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -58,6 +59,14 @@ export interface Quest {
    * extracted context. Capped at 280 chars to keep the card calm.
    */
   comment?: string;
+  /**
+   * Event id returned by expo-calendar when this quest was mirrored
+   * to the user's connected calendar. Stored on the quest so updates
+   * (anchor changes, title edits, delete) can hit the matching event
+   * without a per-write lookup. Undefined when the quest hasn't been
+   * pushed to a calendar (either no time, or calendar not connected).
+   */
+  calendarEventId?: string;
 }
 
 interface QuestState {
@@ -116,6 +125,12 @@ interface QuestState {
   /** Replace the user-added comment on a quest. Empty/whitespace clears it. */
   setComment: (id: string, comment: string) => void;
   remove: (id: string) => void;
+  /**
+   * Persist the calendar event id returned by expo-calendar after a
+   * successful upsert. Internal — called by lib/calendar.ts after
+   * createEventAsync. Pass null to clear (deletion / disconnect).
+   */
+  setCalendarEventId: (id: string, eventId: string | null) => void;
   /** Stop a quest from repeating (clears the recur rule). */
   stopRecurring: (id: string) => void;
   /**
@@ -135,6 +150,36 @@ interface QuestState {
 const accents: Quest['accent'][] = ['plum', 'terra', 'moss', 'caramel', 'mist'];
 
 const newId = () => `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+// ── Calendar side-effects ───────────────────────────────────────────
+// Fire-and-forget mirroring of quest writes into the user's connected
+// calendar. Never throws — calendar perms revoked / SDK missing must
+// not break a task save. Quests without a time are no-ops by design;
+// only anchored items become real events.
+const shouldMirror = (): { on: boolean; calendarId: string | null } => {
+  const u = useUserStore.getState();
+  const on =
+    u.calendarEnabled && u.autoSyncTasksWithTimes && !!u.calendarId;
+  return { on, calendarId: u.calendarId };
+};
+
+const mirrorUpsert = (quest: Quest): void => {
+  const { on, calendarId } = shouldMirror();
+  if (!on || !calendarId) return;
+  if (quest.scheduledHour == null) return;
+  void (async () => {
+    const eventId = await upsertEventForQuest(quest, calendarId);
+    if (eventId && eventId !== quest.calendarEventId) {
+      // Persist the new event id so subsequent updates target it.
+      useQuestStore.getState().setCalendarEventId(quest.id, eventId);
+    }
+  })();
+};
+
+const mirrorDelete = (quest: Pick<Quest, 'calendarEventId'>): void => {
+  if (!quest.calendarEventId) return;
+  void deleteEventForQuest(quest);
+};
 
 export const useQuestStore = create<QuestState>()(
   persist(
@@ -190,6 +235,7 @@ export const useQuestStore = create<QuestState>()(
           ...(q.note && q.note.length > 0 ? { note: q.note } : {}),
         };
         set((s) => ({ quests: [...s.quests, quest] }));
+        mirrorUpsert(quest);
         return quest;
       },
       addMany: (list) => {
@@ -225,6 +271,7 @@ export const useQuestStore = create<QuestState>()(
         return created;
       },
       moveWindow: (id, window) => {
+        const prev = get().quests.find((q) => q.id === id);
         set((s) => ({
           quests: s.quests.map((q) =>
             q.id === id
@@ -238,6 +285,12 @@ export const useQuestStore = create<QuestState>()(
               : q,
           ),
         }));
+        // Un-anchoring drops the calendar event too — the quest is
+        // no longer scheduled, so the mirror shouldn't be either.
+        if (prev?.calendarEventId) {
+          mirrorDelete(prev);
+          get().setCalendarEventId(id, null);
+        }
       },
       anchor: (id, hour, minute) => {
         const win = deriveWindowFor(getEffectiveWindows(), hour * 60 + minute);
@@ -256,8 +309,11 @@ export const useQuestStore = create<QuestState>()(
               : q,
           ),
         }));
+        const next = get().quests.find((q) => q.id === id);
+        if (next) mirrorUpsert(next);
       },
       setDate: (id, dateISO) => {
+        const prev = get().quests.find((q) => q.id === id);
         set((s) => ({
           quests: s.quests.map((q) =>
             q.id === id
@@ -272,6 +328,11 @@ export const useQuestStore = create<QuestState>()(
               : q,
           ),
         }));
+        // setDate un-anchors → no longer a real event. Drop the mirror.
+        if (prev?.calendarEventId) {
+          mirrorDelete(prev);
+          get().setCalendarEventId(id, null);
+        }
       },
       updateTitle: (id, title) => {
         const t = title.trim();
@@ -281,6 +342,8 @@ export const useQuestStore = create<QuestState>()(
             q.id === id ? { ...q, title: t } : q,
           ),
         }));
+        const next = get().quests.find((q) => q.id === id);
+        if (next?.calendarEventId) mirrorUpsert(next);
       },
       setNote: (id, note) => {
         const trimmed = note.trim();
@@ -328,8 +391,24 @@ export const useQuestStore = create<QuestState>()(
         }));
         return next;
       },
-      remove: (id) =>
-        set((s) => ({ quests: s.quests.filter((q) => q.id !== id) })),
+      remove: (id) => {
+        const prev = get().quests.find((q) => q.id === id);
+        set((s) => ({ quests: s.quests.filter((q) => q.id !== id) }));
+        if (prev) mirrorDelete(prev);
+      },
+      setCalendarEventId: (id, eventId) =>
+        set((s) => ({
+          quests: s.quests.map((q) =>
+            q.id === id
+              ? eventId == null
+                ? (() => {
+                    const { calendarEventId: _drop, ...rest } = q;
+                    return rest;
+                  })()
+                : { ...q, calendarEventId: eventId }
+              : q,
+          ),
+        })),
       stopRecurring: (id) =>
         set((s) => ({
           quests: s.quests.map((q) =>
