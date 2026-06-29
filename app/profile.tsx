@@ -915,32 +915,75 @@ export default function AccountScreen() {
     access.trialDaysLeft,
   ]);
 
-  // ── Lifetime snapshot — real numbers from history ────────────────
-  const stats = useMemo(() => {
-    const completedQuests = quests.filter((q) => q.completed).length;
-    const untangleCount = checkins.length;
-    const days = daysBetween(onboardedAt);
-    const longest = longestStreakFromQuests(quests);
-    return [
-      { label: 'days with Lumi', value: String(days), color: C.honey },
-      {
-        label: 'untangled',
-        value: String(untangleCount),
-        color: C.dusk,
-      },
-      {
-        label: 'quests cleared',
-        value: String(completedQuests),
-        color: C.ember,
-      },
-      {
-        label: 'longest streak',
-        value: String(longest),
-        suffix: 'd',
-        color: C.bloom,
-      },
-    ];
-  }, [quests, checkins, onboardedAt]);
+  // ── "How far you've come" — per lumi-stats-section-spec.md ──────
+  // Four tiles that always climb and read warmly:
+  //   1) Days with Lumi  → account-age (already grows on its own)
+  //   2) Things done     → lifetime completed (neutral rename — works
+  //                        in Focused mode too, no "quests"/"XP")
+  //   3) Current streak  → from userStore.streak (more motivating
+  //                        than longest; pairs with a flame)
+  //   4) This week       → completions in last 7 days, w/ 7-bar
+  //                        mini chart for momentum at a glance
+  // Encouraging empty states throughout — no bare "0" reproaches.
+  const userStreak = useUserStore((s) => s.streak);
+
+  const last7Days = useMemo(() => {
+    // [today, yesterday, … 6 days ago] — completion count per day.
+    // Used by both the "This week" tile (total + bar chart) and the
+    // "Days with Lumi" tile (active-days dot row).
+    const todayMs = new Date().setHours(0, 0, 0, 0);
+    const counts: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      const dayStart = todayMs - i * 86400000;
+      const dayEnd = dayStart + 86400000;
+      const count = quests.filter((q) => {
+        if (!q.completed || !q.completedAt) return false;
+        const t = new Date(q.completedAt).getTime();
+        return t >= dayStart && t < dayEnd;
+      }).length;
+      counts.push(count);
+    }
+    return counts;
+  }, [quests]);
+
+  const thisWeekTotal = useMemo(
+    () => last7Days.reduce((a, b) => a + b, 0),
+    [last7Days],
+  );
+  const activeDaysThisWeek = useMemo(
+    () => last7Days.filter((c) => c > 0).length,
+    [last7Days],
+  );
+
+  const lifetimeDone = useMemo(
+    () => quests.filter((q) => q.completed).length,
+    [quests],
+  );
+
+  const daysWithLumi = useMemo(
+    () => Math.max(1, daysBetween(onboardedAt)),
+    [onboardedAt],
+  );
+
+  // Things-done milestone targets — small early, generous later.
+  const MILESTONES = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+  const nextMilestone = useMemo(
+    () => MILESTONES.find((m) => m > lifetimeDone) ?? lifetimeDone + 100,
+    [lifetimeDone],
+  );
+  const prevMilestone = useMemo(
+    () =>
+      [...MILESTONES].reverse().find((m) => m <= lifetimeDone) ?? 0,
+    [lifetimeDone],
+  );
+  const milestoneProgress = Math.max(
+    0,
+    Math.min(
+      1,
+      (lifetimeDone - prevMilestone) /
+        Math.max(1, nextMilestone - prevMilestone),
+    ),
+  );
 
   // ── Weekly archive ───────────────────────────────────────────────
   const weeks = useMemo(() => buildWeekBuckets(quests).slice(0, 4), [quests]);
@@ -1488,34 +1531,303 @@ export default function AccountScreen() {
           </View>
         </View>
 
-        {/* ── 2 · LIFETIME SNAPSHOT ───────────────────────────────── */}
+        {/* ── 2 · HOW FAR YOU'VE COME ─────────────────────────────────
+            Per lumi-stats-section-spec.md — four warm always-climbing
+            stats with encouraging empty states. Order: Days with Lumi
+            (honey) · Things done (ember) · Current streak (bloom) ·
+            This week (dusk). */}
         <View style={styles.sectionWrap}>
           <SectionLabel>How far you've come</SectionLabel>
           <View style={styles.statsGrid}>
-            {stats.map((s) => (
+            {/* 1 · Days with Lumi — never zero (clamped to 1+) */}
+            <View
+              style={[
+                styles.statCard,
+                {
+                  backgroundColor: hexA(C.honey, 0.07),
+                  borderColor: hexA(C.honey, 0.22),
+                },
+              ]}
+            >
               <View
-                key={s.label}
                 style={[
-                  styles.statCard,
+                  styles.statIconBox,
                   {
-                    backgroundColor: hexA(s.color, 0.07),
-                    borderColor: hexA(s.color, 0.22),
+                    backgroundColor: hexA(C.honey, 0.12),
+                    borderColor: hexA(C.honey, 0.32),
                   },
                 ]}
               >
-                <View style={styles.statValueRow}>
-                  <Text style={[styles.statValue, { color: s.color }]}>
-                    {s.value}
-                  </Text>
-                  {s.suffix && (
-                    <Text style={[styles.statSuffix, { color: s.color }]}>
-                      {s.suffix}
-                    </Text>
-                  )}
-                </View>
-                <Text style={styles.statLabel}>{s.label}</Text>
+                <Text style={[styles.statIconGlyph, { color: C.honey }]}>
+                  ❖
+                </Text>
               </View>
-            ))}
+              <Text style={[styles.statValue, { color: C.honey }]}>
+                {daysWithLumi}
+              </Text>
+              <Text style={styles.statLabel}>days with Lumi</Text>
+              {/* Active-day dots — one per day of last 7, lit if any
+                 task was completed that day. Reflects engagement
+                 without the heaviness of a number. */}
+              <View style={styles.statDotsRow}>
+                {Array.from({ length: 7 }).map((_, i) => {
+                  // i=0 is 6 days ago, i=6 is today — read left→right
+                  // as chronological week.
+                  const lit = last7Days[6 - i] > 0;
+                  return (
+                    <View
+                      key={i}
+                      style={[
+                        styles.statDot,
+                        {
+                          backgroundColor: lit
+                            ? C.honey
+                            : hexA(C.honey, 0.18),
+                        },
+                      ]}
+                    />
+                  );
+                })}
+                <Text style={styles.statDotsLabel}>this week</Text>
+              </View>
+            </View>
+
+            {/* 2 · Things done — milestone progress bar */}
+            <View
+              style={[
+                styles.statCard,
+                {
+                  backgroundColor: hexA(C.ember, 0.07),
+                  borderColor: hexA(C.ember, 0.22),
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.statIconBox,
+                  {
+                    backgroundColor: hexA(C.ember, 0.12),
+                    borderColor: hexA(C.ember, 0.32),
+                  },
+                ]}
+              >
+                <Text style={[styles.statIconGlyph, { color: C.ember }]}>
+                  ✓
+                </Text>
+              </View>
+              {lifetimeDone === 0 ? (
+                <>
+                  <Text
+                    style={[
+                      styles.statValueSoft,
+                      { color: hexA(C.ember, 0.8) },
+                    ]}
+                  >
+                    Your first
+                  </Text>
+                  <Text style={styles.statLabel}>one&apos;s coming</Text>
+                  <View style={styles.statBarTrack}>
+                    <View
+                      style={[
+                        styles.statBarFill,
+                        { width: '4%', backgroundColor: C.ember },
+                      ]}
+                    />
+                  </View>
+                  <Text style={[styles.statBarSub, { color: C.ember }]}>
+                    0 to {nextMilestone}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={[styles.statValue, { color: C.ember }]}>
+                    {lifetimeDone}
+                  </Text>
+                  <Text style={styles.statLabel}>things done</Text>
+                  <View style={styles.statBarTrack}>
+                    <View
+                      style={[
+                        styles.statBarFill,
+                        {
+                          width: `${Math.max(4, milestoneProgress * 100)}%`,
+                          backgroundColor: C.ember,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={[styles.statBarSub, { color: C.ember }]}>
+                    {nextMilestone - lifetimeDone} to {nextMilestone}
+                  </Text>
+                </>
+              )}
+            </View>
+
+            {/* 3 · Current streak — bloom + flame */}
+            <View
+              style={[
+                styles.statCard,
+                {
+                  backgroundColor: hexA(C.bloom, 0.07),
+                  borderColor: hexA(C.bloom, 0.22),
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.statIconBox,
+                  {
+                    backgroundColor: hexA(C.bloom, 0.12),
+                    borderColor: hexA(C.bloom, 0.32),
+                  },
+                ]}
+              >
+                <Text style={[styles.statIconGlyph, { color: C.bloom }]}>
+                  ♨
+                </Text>
+              </View>
+              {userStreak === 0 ? (
+                <>
+                  <Text
+                    style={[
+                      styles.statValueSoft,
+                      { color: hexA(C.bloom, 0.85) },
+                    ]}
+                  >
+                    Start
+                  </Text>
+                  <Text style={styles.statLabel}>today</Text>
+                  <View style={styles.statPromptRow}>
+                    <View
+                      style={[
+                        styles.statPromptDot,
+                        { backgroundColor: C.bloom },
+                      ]}
+                    />
+                    <Text
+                      style={[styles.statPromptText, { color: C.bloom }]}
+                    >
+                      a fresh start
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={styles.statValueRow}>
+                    <Text style={[styles.statValue, { color: C.bloom }]}>
+                      {userStreak}
+                    </Text>
+                    <Text
+                      style={[styles.statSuffix, { color: C.bloom }]}
+                    >
+                      d
+                    </Text>
+                  </View>
+                  <Text style={styles.statLabel}>current streak</Text>
+                  <View style={styles.statPromptRow}>
+                    <View
+                      style={[
+                        styles.statPromptDot,
+                        { backgroundColor: C.bloom },
+                      ]}
+                    />
+                    <Text
+                      style={[styles.statPromptText, { color: C.bloom }]}
+                    >
+                      keep it lit
+                    </Text>
+                  </View>
+                </>
+              )}
+            </View>
+
+            {/* 4 · This week — bar-chart of last 7 days */}
+            <View
+              style={[
+                styles.statCard,
+                {
+                  backgroundColor: hexA(C.dusk, 0.07),
+                  borderColor: hexA(C.dusk, 0.22),
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.statIconBox,
+                  {
+                    backgroundColor: hexA(C.dusk, 0.12),
+                    borderColor: hexA(C.dusk, 0.32),
+                  },
+                ]}
+              >
+                <Text style={[styles.statIconGlyph, { color: C.dusk }]}>
+                  ↻
+                </Text>
+              </View>
+              {thisWeekTotal === 0 ? (
+                <>
+                  <Text
+                    style={[
+                      styles.statValueSoft,
+                      { color: hexA(C.dusk, 0.85) },
+                    ]}
+                  >
+                    A fresh
+                  </Text>
+                  <Text style={styles.statLabel}>week</Text>
+                  <View style={styles.statBarsRow}>
+                    {Array.from({ length: 7 }).map((_, i) => (
+                      <View
+                        key={i}
+                        style={[
+                          styles.statBarMini,
+                          {
+                            height: 4,
+                            backgroundColor: hexA(C.dusk, 0.22),
+                          },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={[styles.statValue, { color: C.dusk }]}>
+                    {thisWeekTotal}
+                  </Text>
+                  <Text style={styles.statLabel}>this week</Text>
+                  {/* 7 bars, chronological L→R, height ∝ that day's
+                     count vs the week's max. Active days at full
+                     dusk; empty days faint. */}
+                  <View style={styles.statBarsRow}>
+                    {(() => {
+                      const max = Math.max(...last7Days, 1);
+                      return Array.from({ length: 7 }).map((_, i) => {
+                        const v = last7Days[6 - i];
+                        const h = 4 + Math.round((v / max) * 18);
+                        return (
+                          <View
+                            key={i}
+                            style={[
+                              styles.statBarMini,
+                              {
+                                height: h,
+                                backgroundColor:
+                                  v > 0 ? C.dusk : hexA(C.dusk, 0.22),
+                              },
+                            ]}
+                          />
+                        );
+                      });
+                    })()}
+                  </View>
+                  <Text style={styles.statBarsSub}>
+                    {activeDaysThisWeek === 7
+                      ? 'every day'
+                      : `${activeDaysThisWeek} active day${activeDaysThisWeek === 1 ? '' : 's'}`}
+                  </Text>
+                </>
+              )}
+            </View>
           </View>
         </View>
 
@@ -3032,6 +3344,96 @@ const makeStyles = (accent: Accent) =>
       fontSize: 11.5,
       color: C.boneDim,
       marginTop: 7,
+    },
+    // Stats-section (lumi-stats-section-spec.md) — icon box on each
+    // tile, soft "encouraging" empty-state styling, plus the per-tile
+    // decorations (week dots, milestone bar, prompt row, bar chart).
+    statIconBox: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 6,
+    },
+    statIconGlyph: {
+      fontSize: 14,
+      lineHeight: 16,
+      fontFamily: fonts.interSemi,
+    },
+    statValueSoft: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 22,
+      letterSpacing: -0.5,
+      lineHeight: 30,
+      paddingRight: 6,
+    },
+    statDotsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginTop: 12,
+    },
+    statDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 3,
+    },
+    statDotsLabel: {
+      fontFamily: fonts.inter,
+      fontSize: 10.5,
+      color: C.boneDim,
+      marginLeft: 8,
+    },
+    statBarTrack: {
+      height: 3,
+      borderRadius: 2,
+      backgroundColor: hexA(C.ember, 0.16),
+      overflow: 'hidden',
+      marginTop: 12,
+    },
+    statBarFill: {
+      height: '100%',
+      borderRadius: 2,
+    },
+    statBarSub: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10.5,
+      marginTop: 6,
+    },
+    statPromptRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 12,
+    },
+    statPromptDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+    statPromptText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11.5,
+    },
+    statBarsRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 4,
+      height: 22,
+      marginTop: 12,
+    },
+    statBarMini: {
+      flex: 1,
+      borderRadius: 2,
+    },
+    statBarsSub: {
+      fontFamily: fonts.inter,
+      fontSize: 10.5,
+      color: C.boneDim,
+      marginTop: 6,
     },
 
     // ── 3 · What Lumi knows (dusk) ──
