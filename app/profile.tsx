@@ -1744,8 +1744,14 @@ export default function AccountScreen() {
             </View>
 
             {/* Anchors (expandable) */}
+            {/* Wrapping View so measureLayout has a real host
+                component to target. Pressable forwards refs as a
+                logical wrapper, not a native view — calling
+                measureLayout on it crashes ("must be called with a
+                ref to a native component"). collapsable=false keeps
+                the View from being optimized out on Android. */}
+            <View ref={anchorsTriggerRef} collapsable={false}>
             <Pressable
-              ref={anchorsTriggerRef}
               onPress={toggleAnchors}
               style={styles.anchorsHead}
             >
@@ -1782,6 +1788,7 @@ export default function AccountScreen() {
                 ›
               </Text>
             </Pressable>
+            </View>
             {anchorsOpen && (
               <View style={styles.anchorsList}>
                 {/* Live "shape of your day" ribbon — colored part-of-

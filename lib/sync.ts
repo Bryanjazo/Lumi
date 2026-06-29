@@ -14,7 +14,7 @@ import { useEffect, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { useUserStore } from '../store/userStore';
-import { useQuestStore, type Quest } from '../store/questStore';
+import { useQuestStore, UUID_V4_RE, type Quest } from '../store/questStore';
 import { importanceFromDifficulty } from '../constants/importance';
 import {
   deriveWindowFor,
@@ -68,20 +68,27 @@ const pushUser = async (userId: string) => {
 const pushQuests = async (userId: string) => {
   const quests = useQuestStore.getState().quests;
   if (quests.length === 0) return;
-  const rows = quests.map((q) => ({
-    id: q.id,
-    user_id: userId,
-    title: q.title,
-    difficulty: q.difficulty,
-    xp_reward: q.xpReward,
-    completed: q.completed,
-    completed_at: q.completedAt,
-    date: q.date,
-    scheduled_hour: q.scheduledHour ?? null,
-    scheduled_minute: q.scheduledMinute ?? null,
-    duration_minutes: q.durationMinutes ?? null,
-    accent: q.accent ?? null,
-  }));
+  // Skip legacy non-UUID ids (the old `q_<ts>_<rand>` format from
+  // pre-1019 builds). The cloud column is `uuid`; sending strings
+  // that don't parse trips a 400 on every push. Those quests stay
+  // local-only until the user re-creates them.
+  const rows = quests
+    .filter((q) => UUID_V4_RE.test(q.id))
+    .map((q) => ({
+      id: q.id,
+      user_id: userId,
+      title: q.title,
+      difficulty: q.difficulty,
+      xp_reward: q.xpReward,
+      completed: q.completed,
+      completed_at: q.completedAt,
+      date: q.date,
+      scheduled_hour: q.scheduledHour ?? null,
+      scheduled_minute: q.scheduledMinute ?? null,
+      duration_minutes: q.durationMinutes ?? null,
+      accent: q.accent ?? null,
+    }));
+  if (rows.length === 0) return;
   const { error } = await supabase.from('quests').upsert(rows, {
     onConflict: 'id',
   });
@@ -153,9 +160,18 @@ const pushPet = async (userId: string) => {
     })),
   ];
   if (ownedRows.length) {
+    // owned_items has SELECT/INSERT/DELETE RLS policies but no
+    // UPDATE — supabase's default upsert (ON CONFLICT DO UPDATE)
+    // hits the missing UPDATE policy and fails. These rows are
+    // append-only (you only ever unlock new things, never edit
+    // an existing one), so ignoreDuplicates flips this to ON
+    // CONFLICT DO NOTHING which avoids the UPDATE path entirely.
     const { error: ownedErr } = await supabase
       .from('owned_items')
-      .upsert(ownedRows, { onConflict: 'user_id,kind,ref_id' });
+      .upsert(ownedRows, {
+        onConflict: 'user_id,kind,ref_id',
+        ignoreDuplicates: true,
+      });
     if (ownedErr) console.warn('[sync] pushOwned', ownedErr.message);
   }
 
