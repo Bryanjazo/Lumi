@@ -34,6 +34,16 @@ import { useTourTarget } from './SpotlightTour';
 // reads as too busy on small screens.
 const VARIANT: 'pill' | 'dock' = 'pill';
 
+// ── Public layout constant ─────────────────────────────────────────
+// How much vertical space the floating nav consumes from the bottom
+// of the screen. Screens import this and add it to their bottom
+// padding (ScrollView contentContainerStyle paddingBottom, fixed
+// input bars, etc.) so content can scroll past / sit clear of the
+// nav. Approximation: pill height (~80) + bottom offset (~40 on
+// Dynamic Island devices). Slightly generous so the last row of
+// content has breathing room above the glass, not jammed against it.
+export const FLOATING_NAV_CLEARANCE = 120;
+
 // ── Tokens (kept local — palette matches the mockup) ───────────────
 const C = {
   void: '#120E0C',

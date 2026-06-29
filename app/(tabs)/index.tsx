@@ -95,6 +95,7 @@ import {
   type UnderstandContext,
   type UnderstoodTask,
 } from '../../lib/anthropic';
+import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -3248,7 +3249,10 @@ const makeStyles = (accent: Accent) =>
     scroll: {
       paddingHorizontal: 22,
       paddingTop: 26,
-      paddingBottom: 40,
+      // Clearance for the floating glass nav so the last card
+      // (typically the brain-dump quick capture or empty-state
+      // suggestion) isn't hidden under the pill.
+      paddingBottom: FLOATING_NAV_CLEARANCE,
     },
 
     // ── Toast ──
@@ -3275,7 +3279,9 @@ const makeStyles = (accent: Accent) =>
     },
     undoToast: {
       position: 'absolute',
-      bottom: 26,
+      // Above the floating glass nav, with a small gap so the toast
+      // doesn't kiss the pill.
+      bottom: FLOATING_NAV_CLEARANCE + 8,
       left: 22,
       right: 22,
       flexDirection: 'row',

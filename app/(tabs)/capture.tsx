@@ -44,6 +44,7 @@ import { useAccent, accentFor, type Accent } from '../../lib/theme';
 import { useVoice, isVoiceConfigured } from '../../lib/voice';
 import { HintBanner } from '../../components/HintBanner';
 import { MicIcon } from '../../components/MicIcon';
+import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 // Same brain Home uses — single structured-extraction call so Capture
 // produces the same quality tasks (note, importance, duration, recur,
 // date inference, brain-dump splitting, etc.) as the in-app quick
@@ -1628,7 +1629,7 @@ export default function CaptureScreen() {
       {/* ── SENSE ── */}
       {phase === 'sense' && result && (
         <ScrollView
-          contentContainerStyle={{ paddingBottom: 50 }}
+          contentContainerStyle={{ paddingBottom: FLOATING_NAV_CLEARANCE }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >

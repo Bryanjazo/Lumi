@@ -60,6 +60,7 @@ import { useDeleteConfirm } from '../../components/TaskDeleteWrap';
 import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
 import { useUserStore } from '../../store/userStore';
 import { MicIcon } from '../../components/MicIcon';
+import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 import {
   useCorrectionsStore,
   summarizeCorrections,
@@ -2217,7 +2218,10 @@ const styles = StyleSheet.create({
   inputWrap: {
     paddingHorizontal: 18,
     paddingTop: 12,
-    paddingBottom: 14,
+    // Bottom padding includes clearance for the floating glass nav
+    // so the chat input bar (mic + send + textfield) doesn't sit
+    // underneath the pill. Without this the input is unreachable.
+    paddingBottom: 14 + FLOATING_NAV_CLEARANCE,
     borderTopWidth: 1,
     borderTopColor: C.hair,
     backgroundColor: C.void,

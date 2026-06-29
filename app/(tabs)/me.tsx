@@ -45,6 +45,7 @@ import {
 } from '../../lib/vitality';
 import { last7DaysEnergy, useLearningDigest } from '../../lib/learning';
 import { SoftGlow } from '../../components/SoftGlow';
+import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 import {
   useQuestStore,
   selectTodayQuests,
@@ -1182,7 +1183,7 @@ export default function MeTab() {
   return (
     <SafeAreaView style={styles.safe} edges={[]}>
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 50 }}
+        contentContainerStyle={{ paddingBottom: FLOATING_NAV_CLEARANCE }}
         showsVerticalScrollIndicator={false}
       >
         {/* ═══ Focused-mode header (no cat / no room) ═══

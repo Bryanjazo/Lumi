@@ -64,6 +64,7 @@ import {
   useDeleteConfirm,
   useUncompleteConfirm,
 } from '../../components/TaskDeleteWrap';
+import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 
 // ═════════════════════════════════════════════════════════════════════
 // Layout constants
@@ -1348,7 +1349,11 @@ const DayThread = ({
     <ScrollView
       ref={scrollRef}
       style={{ flex: 1 }}
-      contentContainerStyle={{ height: dayHeight }}
+      // dayHeight + nav clearance so the user can scroll the last
+      // anchor (Sleep) clear of the floating glass nav. Without
+      // this Sleep sits flush at the bottom and gets hidden under
+      // the pill.
+      contentContainerStyle={{ height: dayHeight + FLOATING_NAV_CLEARANCE }}
       showsVerticalScrollIndicator={false}
     >
       <View style={{ height: dayHeight, position: 'relative' }}>
@@ -1551,7 +1556,10 @@ const WeekView = ({
   return (
     <ScrollView
       style={{ flex: 1 }}
-      contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 28 }}
+      contentContainerStyle={{
+        paddingHorizontal: 20,
+        paddingBottom: FLOATING_NAV_CLEARANCE,
+      }}
       showsVerticalScrollIndicator={false}
     >
       {days.map((d, i) => {
