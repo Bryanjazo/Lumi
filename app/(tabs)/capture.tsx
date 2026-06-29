@@ -1910,7 +1910,10 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
   micArea: {
     paddingHorizontal: 24,
     paddingTop: 20,
-    paddingBottom: 24,
+    // Bottom padding includes the floating-nav clearance — the mic
+    // button + "Make sense of this" CTA were sitting underneath the
+    // pill during the DUMP phase.
+    paddingBottom: 24 + FLOATING_NAV_CLEARANCE,
     alignItems: 'center',
     gap: 16,
   },
