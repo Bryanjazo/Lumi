@@ -147,45 +147,75 @@ const buildEventPayload = (quest: Quest, calendarId: string) => {
 };
 
 /**
- * Mirror a quest into the user's calendar. Creates if no
- * calendarEventId yet, updates in place if there is one. Returns
- * the event id on success, or null on any failure (perms revoked,
- * SDK missing, untimed quest). Never throws — callers are mutation
- * paths and a calendar write should never break a task save.
+ * Mirror a quest into each calendar in `calendarIds`. For every
+ * calendar: updates the matching event if one exists in the quest's
+ * calendarEventIds map; otherwise creates a new one. Returns the
+ * resulting calendarId → eventId map (which the caller persists onto
+ * the quest). On any per-calendar failure the failing entry is just
+ * omitted — we never throw out of this function (calendar perms
+ * revoked / SDK missing must not break a task save).
  */
 export const upsertEventForQuest = async (
   quest: Quest,
-  calendarId: string,
-): Promise<string | null> => {
+  calendarIds: string[],
+): Promise<Record<string, string>> => {
   const Cal = loadCalendar();
-  if (!Cal) return null;
-  const payload = buildEventPayload(quest, calendarId);
-  if (!payload) return null;
-  try {
-    if (quest.calendarEventId) {
-      await Cal.updateEventAsync(quest.calendarEventId, payload);
-      return quest.calendarEventId;
+  if (!Cal) return {};
+  if (calendarIds.length === 0) return {};
+  // Build the payload once (it's the same content, only calendarId
+  // differs per write).
+  const out: Record<string, string> = {};
+  // Pull any existing mirror so we update in place where possible.
+  const existing = quest.calendarEventIds ?? {};
+  // Also identify orphans — calendars we previously wrote to but are
+  // no longer in calendarIds — so we can delete those events. (The
+  // user unchecked a calendar in Settings; mirror should follow.)
+  const stale = Object.entries(existing).filter(
+    ([calId]) => !calendarIds.includes(calId),
+  );
+  for (const [calId, eventId] of stale) {
+    try {
+      await Cal.deleteEventAsync(eventId);
+    } catch {
+      // Already gone or no perms — silent.
     }
-    const id = await Cal.createEventAsync(calendarId, payload);
-    return id;
-  } catch {
-    return null;
+    void calId;
   }
+  for (const calendarId of calendarIds) {
+    const payload = buildEventPayload(quest, calendarId);
+    if (!payload) continue;
+    try {
+      const prevEventId = existing[calendarId];
+      if (prevEventId) {
+        await Cal.updateEventAsync(prevEventId, payload);
+        out[calendarId] = prevEventId;
+      } else {
+        const id = await Cal.createEventAsync(calendarId, payload);
+        out[calendarId] = id;
+      }
+    } catch {
+      // This one calendar failed — keep going with the rest. The
+      // failing calendar simply doesn't get an entry in `out`.
+    }
+  }
+  return out;
 };
 
 /**
- * Remove a quest's mirrored event from the user's calendar.
- * No-op if the quest never had one. Silent on failure (the user
- * may have revoked perms or removed the event manually).
+ * Remove a quest's mirrored events from every calendar it lives on.
+ * No-op if the quest never had any. Silent on per-event failure (the
+ * user may have revoked perms or removed the event manually).
  */
 export const deleteEventForQuest = async (
-  quest: Pick<Quest, 'calendarEventId'>,
+  quest: Pick<Quest, 'calendarEventIds'>,
 ): Promise<void> => {
   const Cal = loadCalendar();
-  if (!Cal || !quest.calendarEventId) return;
-  try {
-    await Cal.deleteEventAsync(quest.calendarEventId);
-  } catch {
-    // Already gone or perms gone — either way, we tried.
+  if (!Cal || !quest.calendarEventIds) return;
+  for (const eventId of Object.values(quest.calendarEventIds)) {
+    try {
+      await Cal.deleteEventAsync(eventId);
+    } catch {
+      // Already gone or perms gone — either way, we tried.
+    }
   }
 };

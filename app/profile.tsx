@@ -18,6 +18,8 @@ import {
   ScrollView,
   Image,
   Alert,
+  Animated,
+  Easing,
   Linking,
   Platform,
   Share,
@@ -386,6 +388,46 @@ const STRUGGLE_LABELS: Record<StruggleKey, string> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────
+// PulseDot — small steady-pulse status indicator used in the calendar
+// "Synced just now" affordance. Loops opacity 1 ↔ 0.3 on a 2s cycle,
+// matching the design composer mockup's @keyframes cpulse animation.
+// ─────────────────────────────────────────────────────────────────────
+const PulseDot = ({ color, size = 6 }: { color: string; size?: number }) => {
+  const op = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(op, {
+          toValue: 0.3,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(op, {
+          toValue: 1,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [op]);
+  return (
+    <Animated.View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: color,
+        opacity: op,
+      }}
+    />
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────
 // Screen
 // ─────────────────────────────────────────────────────────────────────
 export default function AccountScreen() {
@@ -453,8 +495,9 @@ export default function AccountScreen() {
   const setCompanionMode = useUserStore((s) => s.setCompanionMode);
   const calendarEnabled = useUserStore((s) => s.calendarEnabled);
   const setCalendarEnabled = useUserStore((s) => s.setCalendarEnabled);
-  const calendarId = useUserStore((s) => s.calendarId);
-  const setCalendarId = useUserStore((s) => s.setCalendarId);
+  const calendarIds = useUserStore((s) => s.calendarIds);
+  const setCalendarIds = useUserStore((s) => s.setCalendarIds);
+  const toggleCalendarId = useUserStore((s) => s.toggleCalendarId);
   const autoSyncTasksWithTimes = useUserStore(
     (s) => s.autoSyncTasksWithTimes,
   );
@@ -879,10 +922,11 @@ export default function AccountScreen() {
       setCalendarList(writable);
       setCalendarEnabled(true);
       // Pre-select the OS default writable calendar so the user
-      // doesn't have to make a choice just to start.
-      if (!calendarId) {
+      // doesn't have to make a choice just to start. Multi-cal: we
+      // initialize with just the default; the user can tick others.
+      if (calendarIds.length === 0) {
         const def = await getDefaultCalendarId();
-        if (def) setCalendarId(def);
+        if (def) setCalendarIds([def]);
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
@@ -1341,191 +1385,358 @@ export default function AccountScreen() {
               );
             })()}
 
-            {/* Calendar — collapsible. Closed shows current status
-                (Not connected / calendar title). Expanded shows the
-                connect button, the writable-calendar picker, and the
-                global auto-sync toggle. Mirrors the Daily anchors /
-                Companion patterns above. */}
-            <Pressable onPress={toggleCalendar} style={styles.anchorsHead}>
-              <Text style={styles.anchorsGlyph}>◷</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.personalRowLabel}>Calendar</Text>
-                <Text style={styles.personalRowSub}>
-                  {calendarEnabled
-                    ? autoSyncTasksWithTimes
-                      ? `Auto-adding timed tasks${
-                          calendarList.find((c) => c.id === calendarId)?.title
-                            ? ` to ${calendarList.find((c) => c.id === calendarId)?.title}`
-                            : ''
-                        }`
-                      : 'Connected · auto-sync off'
-                    : 'Not connected'}
-                </Text>
-              </View>
-              <Text
-                style={[
-                  styles.anchorsChev,
-                  calendarOpen && { transform: [{ rotate: '90deg' }] },
-                ]}
-              >
-                ›
-              </Text>
-            </Pressable>
-            {calendarOpen && (
-              <View style={[styles.companionModeRow, { marginTop: 12 }]}>
-                {!calendarEnabled ? (
-                  <>
-                    <Text style={styles.personalHint}>
-                      Lumi can add tasks that have a time to your
-                      device calendar (iCloud, Google, Outlook —
-                      whatever you already use). Off until you turn
-                      it on.
-                    </Text>
-                    <Pressable
-                      onPress={connectCalendar}
-                      disabled={calendarBusy}
-                      style={[
-                        styles.companionModeCard,
-                        {
-                          backgroundColor: hexA(accent.fg, 0.08),
-                          borderColor: accent.fg,
-                          alignItems: 'center',
-                          opacity: calendarBusy ? 0.6 : 1,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.companionModeTitle,
-                          { color: accent.fg },
-                        ]}
-                      >
-                        {calendarBusy ? 'Connecting…' : 'Connect calendar'}
-                      </Text>
-                    </Pressable>
-                    {calendarError && (
-                      <Text
-                        style={[styles.personalHint, { color: '#C97A6E' }]}
-                      >
-                        {calendarError}
-                      </Text>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <View style={styles.personalCell}>
-                      <View style={styles.personalLabelRow}>
-                        <Text style={styles.personalLabel}>
-                          Auto-add timed tasks
-                        </Text>
-                        <Switch
-                          value={autoSyncTasksWithTimes}
-                          onValueChange={(v) => {
-                            Haptics.selectionAsync();
-                            setAutoSyncTasksWithTimes(v);
-                          }}
-                          trackColor={{
-                            false: '#3A322B',
-                            true: accent.fg,
-                          }}
-                          thumbColor="#F4EBDB"
-                        />
-                      </View>
-                      <Text style={styles.personalHint}>
-                        New, rescheduled, and deleted tasks with a
-                        time sync to your calendar automatically.
+            {/* ── Calendar — enhanced "connection" card ──────────────
+                Ported from lumi-calendar-settings.jsx. Three visual
+                tiers depending on state:
+                  - Not connected → row-style trigger + connect CTA
+                  - Connected     → live status header (collapsible),
+                                    auto-add card w/ what-syncs chips,
+                                    multi-select calendar picker,
+                                    weekly sync stat, calm disconnect
+            */}
+            {(() => {
+              const LICHEN = '#869072';
+              const DUSK = '#8EA0B4';
+              const connectedCals = calendarList.filter((c) =>
+                calendarIds.includes(c.id),
+              );
+              // Week stat — count quests whose calendarEventIds map is
+              // populated AND that were created in the last 7 days.
+              // Cheap O(n) walk; quests list is bounded.
+              const weekSynced = (() => {
+                const now = Date.now();
+                const week = 7 * 86400000;
+                return quests.filter(
+                  (q) =>
+                    q.calendarEventIds &&
+                    Object.keys(q.calendarEventIds).length > 0 &&
+                    new Date(q.createdAt).getTime() > now - week,
+                ).length;
+              })();
+              return (
+                <>
+                  {/* Trigger row — same shape as Anchors / Companion
+                      so it sits visually consistent in the Personalize
+                      group when collapsed. */}
+                  <Pressable
+                    onPress={toggleCalendar}
+                    style={styles.anchorsHead}
+                  >
+                    <Text style={styles.anchorsGlyph}>◷</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.personalRowLabel}>Calendar</Text>
+                      <Text style={styles.personalRowSub}>
+                        {calendarEnabled
+                          ? autoSyncTasksWithTimes
+                            ? connectedCals.length === 1
+                              ? `Syncing to ${connectedCals[0].title}`
+                              : connectedCals.length > 1
+                                ? `Syncing to ${connectedCals.length} calendars`
+                                : 'Connected · pick a calendar'
+                            : 'Connected · auto-sync off'
+                          : 'Not connected'}
                       </Text>
                     </View>
-
-                    <Text style={styles.personalHint}>
-                      Writing to:
+                    <Text
+                      style={[
+                        styles.anchorsChev,
+                        calendarOpen && { transform: [{ rotate: '90deg' }] },
+                      ]}
+                    >
+                      ›
                     </Text>
-                    {calendarList.length === 0 ? (
-                      <Text style={styles.personalHint}>
-                        Looking for calendars…
-                      </Text>
-                    ) : (
-                      calendarList.map((c) => {
-                        const on = calendarId === c.id;
-                        return (
+                  </Pressable>
+
+                  {calendarOpen && (
+                    <View style={[styles.companionModeRow, { marginTop: 12 }]}>
+                      {!calendarEnabled ? (
+                        // ── Not connected: gentle intro + CTA ──
+                        <>
+                          <Text style={styles.personalHint}>
+                            Lumi can add tasks with a time to whichever
+                            calendar you already use — Apple, Google,
+                            Outlook. Off until you turn it on.
+                          </Text>
                           <Pressable
-                            key={c.id}
-                            onPress={() => {
-                              Haptics.selectionAsync();
-                              setCalendarId(c.id);
-                            }}
+                            onPress={connectCalendar}
+                            disabled={calendarBusy}
                             style={[
                               styles.companionModeCard,
-                              on && {
-                                backgroundColor: hexA(accent.fg, 0.1),
+                              {
+                                backgroundColor: hexA(accent.fg, 0.08),
                                 borderColor: accent.fg,
+                                alignItems: 'center',
+                                opacity: calendarBusy ? 0.6 : 1,
                               },
                             ]}
                           >
-                            <View style={styles.companionModeHeader}>
-                              <View
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  flex: 1,
-                                  gap: 8,
-                                }}
-                              >
+                            <Text
+                              style={[
+                                styles.companionModeTitle,
+                                { color: accent.fg },
+                              ]}
+                            >
+                              {calendarBusy ? 'Connecting…' : 'Connect calendar'}
+                            </Text>
+                          </Pressable>
+                          {calendarError && (
+                            <Text
+                              style={[
+                                styles.personalHint,
+                                { color: '#C97A6E' },
+                              ]}
+                            >
+                              {calendarError}
+                            </Text>
+                          )}
+                        </>
+                      ) : (
+                        // ── Connected: rich design per mockup ──
+                        <>
+                          {/* Status header — live "Connected" pill +
+                              pulsing dot + "Synced just now" line. */}
+                          <View
+                            style={[
+                              styles.calStatusCard,
+                              { borderColor: hexA(LICHEN, 0.35) },
+                            ]}
+                          >
+                            <View style={styles.calStatusGlyphBox}>
+                              <Text style={styles.calStatusGlyph}>📅</Text>
+                            </View>
+                            <View style={{ flex: 1, minWidth: 0 }}>
+                              <View style={styles.calStatusRow}>
+                                <Text style={styles.calStatusTitle}>
+                                  Your calendar
+                                </Text>
                                 <View
-                                  style={{
-                                    width: 10,
-                                    height: 10,
-                                    borderRadius: 5,
-                                    backgroundColor: c.color || accent.fg,
-                                  }}
-                                />
-                                <Text
                                   style={[
-                                    styles.companionModeTitle,
-                                    on && { color: accent.fg },
+                                    styles.calConnectedPill,
+                                    {
+                                      borderColor: hexA(LICHEN, 0.4),
+                                      backgroundColor: hexA(LICHEN, 0.14),
+                                    },
                                   ]}
                                 >
-                                  {c.title}
+                                  <Text
+                                    style={[
+                                      styles.calConnectedPillText,
+                                      { color: LICHEN },
+                                    ]}
+                                  >
+                                    Connected
+                                  </Text>
+                                </View>
+                              </View>
+                              <View style={styles.calStatusSubRow}>
+                                <PulseDot color={LICHEN} />
+                                <Text style={styles.calStatusSub}>
+                                  {connectedCals.length > 0
+                                    ? 'In sync'
+                                    : 'Pick a calendar below'}
                                 </Text>
                               </View>
-                              {on && (
-                                <Text
+                            </View>
+                          </View>
+
+                          {/* Auto-add card */}
+                          <View
+                            style={[
+                              styles.calAutoCard,
+                              autoSyncTasksWithTimes && {
+                                borderColor: hexA(accent.fg, 0.35),
+                                backgroundColor: hexA(accent.fg, 0.06),
+                              },
+                            ]}
+                          >
+                            <View style={styles.calAutoHead}>
+                              <View style={{ flex: 1, paddingRight: 12 }}>
+                                <Text style={styles.calAutoTitle}>
+                                  Auto-add timed tasks
+                                </Text>
+                                <Text style={styles.calAutoBody}>
+                                  Tasks with a time flow to your
+                                  calendars automatically — and stay in
+                                  step when you reschedule or delete.
+                                </Text>
+                              </View>
+                              <Switch
+                                value={autoSyncTasksWithTimes}
+                                onValueChange={(v) => {
+                                  Haptics.selectionAsync();
+                                  setAutoSyncTasksWithTimes(v);
+                                }}
+                                trackColor={{
+                                  false: '#3A322B',
+                                  true: accent.fg,
+                                }}
+                                thumbColor="#F4EBDB"
+                              />
+                            </View>
+                            {/* What syncs — three chips */}
+                            <View
+                              style={[
+                                styles.calChipsRow,
+                                {
+                                  opacity: autoSyncTasksWithTimes ? 1 : 0.4,
+                                },
+                              ]}
+                            >
+                              {[
+                                { icon: '＋', label: 'Added' },
+                                { icon: '⟳', label: 'Rescheduled' },
+                                { icon: '✕', label: 'Deleted' },
+                              ].map((s) => (
+                                <View key={s.label} style={styles.calChip}>
+                                  <Text
+                                    style={[
+                                      styles.calChipIcon,
+                                      { color: accent.fg },
+                                    ]}
+                                  >
+                                    {s.icon}
+                                  </Text>
+                                  <Text style={styles.calChipLabel}>
+                                    {s.label}
+                                  </Text>
+                                </View>
+                              ))}
+                            </View>
+                          </View>
+
+                          {/* Multi-select calendar picker */}
+                          <Text style={styles.calSectionLabel}>
+                            Lumi writes to
+                          </Text>
+                          {calendarList.length === 0 ? (
+                            <Text style={styles.personalHint}>
+                              Looking for calendars…
+                            </Text>
+                          ) : (
+                            calendarList.map((c) => {
+                              const on = calendarIds.includes(c.id);
+                              return (
+                                <Pressable
+                                  key={c.id}
+                                  onPress={() => {
+                                    Haptics.selectionAsync();
+                                    toggleCalendarId(c.id);
+                                  }}
                                   style={[
-                                    styles.companionModeCheck,
-                                    { color: accent.fg },
+                                    styles.calPickRow,
+                                    on && {
+                                      borderColor: accent.fg,
+                                      backgroundColor: hexA(accent.fg, 0.07),
+                                    },
                                   ]}
                                 >
-                                  ✓
-                                </Text>
-                              )}
-                            </View>
-                            {c.source && (
-                              <Text style={styles.companionModeSub}>
-                                {c.source}
-                              </Text>
-                            )}
-                          </Pressable>
-                        );
-                      })
-                    )}
+                                  <View
+                                    style={{
+                                      width: 12,
+                                      height: 12,
+                                      borderRadius: 6,
+                                      backgroundColor: c.color || accent.fg,
+                                    }}
+                                  />
+                                  <View style={{ flex: 1, minWidth: 0 }}>
+                                    <Text
+                                      style={[
+                                        styles.calPickTitle,
+                                        on && { color: '#ECE0CB' },
+                                      ]}
+                                      numberOfLines={1}
+                                    >
+                                      {c.title}
+                                    </Text>
+                                    {c.source ? (
+                                      <Text
+                                        style={styles.calPickSub}
+                                        numberOfLines={1}
+                                      >
+                                        {c.source}
+                                      </Text>
+                                    ) : null}
+                                  </View>
+                                  <View
+                                    style={[
+                                      styles.calPickCheck,
+                                      {
+                                        borderColor: on
+                                          ? accent.fg
+                                          : '#5A5650',
+                                        backgroundColor: on
+                                          ? accent.fg
+                                          : 'transparent',
+                                      },
+                                    ]}
+                                  >
+                                    {on && (
+                                      <Text
+                                        style={{
+                                          color: '#120E0C',
+                                          fontFamily: fonts.interSemi,
+                                          fontSize: 12,
+                                        }}
+                                      >
+                                        ✓
+                                      </Text>
+                                    )}
+                                  </View>
+                                </Pressable>
+                              );
+                            })
+                          )}
 
-                    <Pressable
-                      onPress={disconnectCalendar}
-                      style={styles.anchorsWindowsLink}
-                    >
-                      <Text
-                        style={[
-                          styles.anchorsWindowsLinkText,
-                          { color: '#C97A6E' },
-                        ]}
-                      >
-                        Disconnect calendar
-                      </Text>
-                    </Pressable>
-                  </>
-                )}
-              </View>
-            )}
+                          {/* Weekly stat — dusk-lit, gentle */}
+                          {weekSynced > 0 && (
+                            <View
+                              style={[
+                                styles.calWeekStat,
+                                {
+                                  borderColor: hexA(DUSK, 0.25),
+                                  backgroundColor: hexA(DUSK, 0.07),
+                                },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.calWeekStatGlyph,
+                                  { color: DUSK },
+                                ]}
+                              >
+                                ✦
+                              </Text>
+                              <Text style={styles.calWeekStatText}>
+                                <Text style={styles.calWeekStatNum}>
+                                  {weekSynced}{' '}
+                                  {weekSynced === 1 ? 'task' : 'tasks'}
+                                </Text>
+                                {' '}kept in sync this week.
+                              </Text>
+                            </View>
+                          )}
+
+                          {/* Disconnect — calm centered link */}
+                          <Pressable
+                            onPress={disconnectCalendar}
+                            style={styles.anchorsWindowsLink}
+                          >
+                            <Text
+                              style={[
+                                styles.anchorsWindowsLinkText,
+                                { color: hexA(accent.fg, 0.85) },
+                              ]}
+                            >
+                              Disconnect calendar
+                            </Text>
+                          </Pressable>
+                        </>
+                      )}
+                    </View>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Theme accent */}
             <View style={styles.personalCell}>
@@ -2220,6 +2431,180 @@ const makeStyles = (accent: Accent) =>
     },
     companionModeRow: {
       gap: 8,
+    },
+
+    // ── Calendar (enhanced) ─────────────────────────────────────
+    calStatusCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 14,
+      borderRadius: 16,
+      borderWidth: 1,
+      backgroundColor: C.void2,
+      marginBottom: 12,
+    },
+    calStatusGlyphBox: {
+      width: 42,
+      height: 42,
+      borderRadius: 12,
+      backgroundColor: C.surface,
+      borderWidth: 1,
+      borderColor: C.hair,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    calStatusGlyph: {
+      fontSize: 20,
+    },
+    calStatusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    calStatusTitle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 15,
+      color: C.bone,
+      letterSpacing: -0.2,
+    },
+    calConnectedPill: {
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 100,
+      borderWidth: 1,
+    },
+    calConnectedPillText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9.5,
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+    },
+    calStatusSubRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 3,
+    },
+    calStatusSub: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.mute,
+    },
+    calAutoCard: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: C.hair,
+      backgroundColor: C.void2,
+      padding: 14,
+      marginBottom: 12,
+    },
+    calAutoHead: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+    calAutoTitle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 14.5,
+      color: C.bone,
+      marginBottom: 4,
+      letterSpacing: -0.2,
+    },
+    calAutoBody: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.boneDim,
+      lineHeight: 17,
+    },
+    calChipsRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 12,
+    },
+    calChip: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 8,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: C.hair,
+      backgroundColor: C.surface,
+    },
+    calChipIcon: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+    },
+    calChipLabel: {
+      fontFamily: fonts.inter,
+      fontSize: 11,
+      color: C.boneDim,
+    },
+    calSectionLabel: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9.5,
+      letterSpacing: 1.6,
+      textTransform: 'uppercase',
+      color: C.mute,
+      marginTop: 4,
+      marginBottom: 8,
+    },
+    calPickRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 13,
+      borderRadius: 13,
+      borderWidth: 1.5,
+      borderColor: C.hair,
+      backgroundColor: C.void2,
+      marginBottom: 8,
+    },
+    calPickTitle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 14,
+      color: C.boneDim,
+      letterSpacing: -0.1,
+    },
+    calPickSub: {
+      fontFamily: fonts.inter,
+      fontSize: 11,
+      color: C.mute,
+      marginTop: 1,
+    },
+    calPickCheck: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      borderWidth: 1.5,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    calWeekStat: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      marginTop: 6,
+      marginBottom: 12,
+    },
+    calWeekStatGlyph: {
+      fontSize: 14,
+    },
+    calWeekStatText: {
+      flex: 1,
+      fontFamily: fonts.inter,
+      fontSize: 12.5,
+      color: C.boneDim,
+      lineHeight: 17,
+    },
+    calWeekStatNum: {
+      fontFamily: fonts.interSemi,
+      color: C.bone,
     },
     companionModeCard: {
       borderRadius: 12,
