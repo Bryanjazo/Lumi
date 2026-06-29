@@ -1681,9 +1681,16 @@ export default function AccountScreen() {
                   },
                 ]}
               >
-                <Text style={[styles.statIconGlyph, { color: C.bloom }]}>
-                  ♨
-                </Text>
+                {/* Small SVG flame so it picks up the tile's bloom
+                   color — the previous ♨ glyph was a unicode emoji
+                   that iOS renders in its locked red/orange palette
+                   regardless of the text color we set. */}
+                <Svg width={16} height={16} viewBox="0 0 24 24">
+                  <Path
+                    d="M12 2.5c-1 1.5-2.5 4-2.5 6.5 0 1.5.5 2.5 1 3.2-.7-.4-1.6-.6-2.4-.4-1.4.4-2.6 1.9-2.6 4 0 3.3 3.1 6 6.5 6s6.5-2.5 6.5-6c0-2.5-1.5-4.6-3-6 .3-.6.5-1.4.5-2.3 0-2.6-2.4-4-4-5z"
+                    fill={C.bloom}
+                  />
+                </Svg>
               </View>
               {userStreak === 0 ? (
                 <>
