@@ -23,6 +23,7 @@ import { useUserStore } from '../store/userStore';
 import { useCheckinStore } from '../store/checkinStore';
 import { useQuestStore } from '../store/questStore';
 import { useLearningDigest, formatStaleDays } from '../lib/learning';
+import { useCompanionMode, phrasingFor } from '../lib/companion-mode';
 import { useAccent, LUMI_INTELLIGENCE } from '../lib/theme';
 
 // Palette mirrors profile.tsx
@@ -43,6 +44,11 @@ const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export default function InsightsScreen() {
   const router = useRouter();
   const accent = useAccent();
+  // Companion-mode phrasing — in Focused mode, "quest" reads as
+  // "task" so the page matches the calm-organizer framing. Per
+  // companion-mode-spec §3 (Recap/Insights phrasing).
+  const companion = useCompanionMode();
+  const phrase = phrasingFor(companion.mode);
 
   const checkinCount = useCheckinStore((s) => s.checkins.length);
   const questCount = useQuestStore((s) => s.quests.length);
@@ -79,7 +85,7 @@ export default function InsightsScreen() {
           <Text style={styles.introTitle}>Your picture, so far</Text>
           <Text style={styles.introBody}>
             {hasEnoughSignal
-              ? `Built from ${checkinCount} check-in${checkinCount === 1 ? '' : 's'} and ${questCount} quest${questCount === 1 ? '' : 's'} over the last ${Math.max(daysSinceJoin, 1)} day${daysSinceJoin === 1 ? '' : 's'}. This page gets richer every week you keep using Lumi.`
+              ? `Built from ${checkinCount} check-in${checkinCount === 1 ? '' : 's'} and ${questCount} ${questCount === 1 ? phrase.task : phrase.tasks} over the last ${Math.max(daysSinceJoin, 1)} day${daysSinceJoin === 1 ? '' : 's'}. This page gets richer every week you keep using Lumi.`
               : `You just got here. The longer you use Lumi, the sharper this picture gets — your energy patterns, what you avoid, the rhythms only your weeks have. Come back in a week.`}
           </Text>
         </View>

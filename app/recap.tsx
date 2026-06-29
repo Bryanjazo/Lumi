@@ -24,6 +24,7 @@ import Svg, {
 import { fonts } from '../constants/fonts';
 import { useUserStore } from '../store/userStore';
 import { useLearningDigest, formatStaleDays } from '../lib/learning';
+import { useCompanionMode, phrasingFor } from '../lib/companion-mode';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
 import { WINDOWS } from '../constants/windows';
 import { SoftGlow } from '../components/SoftGlow';
@@ -259,6 +260,11 @@ export default function RecapScreen() {
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
   const streak = useUserStore((s) => s.streak);
+  // Companion-mode phrasing — in Focused mode "quest" reads as
+  // "task" so the recap matches the calm-organizer framing. Per
+  // companion-mode-spec §3.
+  const companion = useCompanionMode();
+  const phrase = phrasingFor(companion.mode);
 
   // Single hook runs every detector over the user's own data.
   const digest = useLearningDigest();
@@ -321,7 +327,7 @@ export default function RecapScreen() {
       const winLabel = WINDOWS[pattern.strong].label.toLowerCase();
       return (
         <Text style={styles.nextBody}>
-          Move your hardest quests to{' '}
+          Move your hardest {phrase.tasks} to{' '}
           <Text style={styles.nextBodyAccent}>{winLabel}s</Text> — your proven
           strong window. Lumi will set it up.
         </Text>
@@ -377,7 +383,7 @@ export default function RecapScreen() {
             <CountUp to={done} style={styles.bigCount} />
             <Text style={styles.bigCountDiv}>/ {set}</Text>
           </View>
-          <Text style={styles.bigCountSub}>quests cleared</Text>
+          <Text style={styles.bigCountSub}>{phrase.tasks} cleared</Text>
           {showTrendBest && (
             <View style={styles.trendPill}>
               <Text style={styles.trendUp}>▲</Text>
@@ -548,14 +554,16 @@ export default function RecapScreen() {
             <View style={styles.shareStatsRow}>
               <View>
                 <Text style={styles.shareStatNum}>{done}</Text>
-                <Text style={styles.shareStatLabel}>quests done</Text>
+                <Text style={styles.shareStatLabel}>{phrase.tasks} done</Text>
               </View>
-              <View>
-                <Text style={[styles.shareStatNum, { color: C.honey }]}>
-                  {streak}
-                </Text>
-                <Text style={styles.shareStatLabel}>day streak</Text>
-              </View>
+              {companion.showStreak && (
+                <View>
+                  <Text style={[styles.shareStatNum, { color: C.honey }]}>
+                    {streak}
+                  </Text>
+                  <Text style={styles.shareStatLabel}>day streak</Text>
+                </View>
+              )}
               <View>
                 <Text style={[styles.shareStatNum, { color: C.dusk }]}>
                   {peak.v}
