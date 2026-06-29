@@ -335,11 +335,11 @@ const Row = ({ icon, label, sub, right, onPress, danger, last }: RowProps) => {
 // ─────────────────────────────────────────────────────────────────────
 type RhythmKey = 'morning' | 'afternoon' | 'night' | 'varies';
 
-const RHYTHMS: { key: RhythmKey; label: string }[] = [
-  { key: 'morning', label: 'Morning person' },
-  { key: 'afternoon', label: 'Afternoon peak' },
-  { key: 'night', label: 'Night owl' },
-  { key: 'varies', label: 'It varies' },
+const RHYTHMS: { key: RhythmKey; label: string; icon: string }[] = [
+  { key: 'morning', label: 'Morning person', icon: '☀' },
+  { key: 'afternoon', label: 'Afternoon peak', icon: '◑' },
+  { key: 'night', label: 'Night owl', icon: '☾' },
+  { key: 'varies', label: 'It varies', icon: '∿' },
 ];
 
 const rhythmFromSharpWindow = (
@@ -1385,10 +1385,16 @@ export default function AccountScreen() {
         <View style={styles.sectionWrap}>
           <SectionLabel>Personalize</SectionLabel>
           <Card>
-            {/* Rhythm */}
+            {/* Rhythm — 2-col grid of icon-chip cards (mockup §1).
+                Each chip has an accent-tinted icon box + label;
+                selected = ember border + tinted background + bone label.
+                Lumi leans hardest quests into the sharp window. */}
             <View style={styles.personalCell}>
-              <Text style={styles.personalLabel}>When you're sharpest</Text>
-              <View style={styles.chipRow}>
+              <Text style={styles.personalLabel}>When you’re sharpest</Text>
+              <Text style={styles.personalHint}>
+                Lumi leans your hardest quests into this window.
+              </Text>
+              <View style={styles.chronoGrid}>
                 {RHYTHMS.map((r) => {
                   const on = rhythm === r.key;
                   return (
@@ -1396,17 +1402,43 @@ export default function AccountScreen() {
                       key={r.key}
                       onPress={() => pickRhythm(r.key)}
                       style={[
-                        styles.chip,
-                        {
-                          backgroundColor: on ? accent.fg : 'transparent',
-                          borderColor: on ? accent.fg : C.hair,
+                        styles.chronoChip,
+                        on && {
+                          backgroundColor: hexA(accent.fg, 0.12),
+                          borderColor: accent.fg,
                         },
                       ]}
                     >
+                      <View
+                        style={[
+                          styles.chronoChipIconBox,
+                          on
+                            ? {
+                                backgroundColor: hexA(accent.fg, 0.16),
+                                borderColor: hexA(accent.fg, 0.4),
+                              }
+                            : {
+                                backgroundColor: C.surface,
+                                borderColor: C.hair,
+                              },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.chronoChipIcon,
+                            { color: on ? accent.fg : C.boneDim },
+                          ]}
+                        >
+                          {r.icon}
+                        </Text>
+                      </View>
                       <Text
                         style={[
-                          styles.chipText,
-                          { color: on ? C.void : C.boneDim },
+                          styles.chronoChipLabel,
+                          {
+                            color: on ? C.bone : C.boneDim,
+                            fontFamily: on ? fonts.interSemi : fonts.inter,
+                          },
                         ]}
                       >
                         {r.label}
@@ -1419,7 +1451,24 @@ export default function AccountScreen() {
 
             {/* Anchors (expandable) */}
             <Pressable onPress={toggleAnchors} style={styles.anchorsHead}>
-              <Text style={styles.anchorsGlyph}>❖</Text>
+              <View
+                style={[
+                  styles.personalIconBox,
+                  {
+                    backgroundColor: hexA(C.honey, 0.1),
+                    borderColor: hexA(C.honey, 0.28),
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.personalIconBoxGlyph,
+                    { color: C.honey },
+                  ]}
+                >
+                  ❖
+                </Text>
+              </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.personalRowLabel}>Daily anchors</Text>
                 <Text style={styles.personalRowSub}>
@@ -1529,7 +1578,24 @@ export default function AccountScreen() {
                     onPress={toggleCompanion}
                     style={styles.anchorsHead}
                   >
-                    <Text style={styles.anchorsGlyph}>✦</Text>
+                    <View
+                      style={[
+                        styles.personalIconBox,
+                        {
+                          backgroundColor: hexA(C.ember, 0.1),
+                          borderColor: hexA(C.ember, 0.28),
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.personalIconBoxGlyph,
+                          { color: C.ember },
+                        ]}
+                      >
+                        ✦
+                      </Text>
+                    </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.personalRowLabel}>
                         How playful is Lumi?
@@ -1765,7 +1831,24 @@ export default function AccountScreen() {
                     onPress={toggleCalendar}
                     style={styles.anchorsHead}
                   >
-                    <Text style={styles.anchorsGlyph}>◷</Text>
+                    <View
+                      style={[
+                        styles.personalIconBox,
+                        {
+                          backgroundColor: hexA(C.dusk, 0.1),
+                          borderColor: hexA(C.dusk, 0.28),
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.personalIconBoxGlyph,
+                          { color: C.dusk },
+                        ]}
+                      >
+                        ◷
+                      </Text>
+                    </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.personalRowLabel}>Calendar</Text>
                       <Text style={styles.personalRowSub}>
@@ -3090,6 +3173,46 @@ const makeStyles = (accent: Accent) =>
       marginTop: 2,
     },
     chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+
+    // ── Chronotype grid (mockup §1) ──
+    chronoGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 9,
+      marginTop: 8,
+    },
+    chronoChip: {
+      // 2-up grid via flex-basis ~half minus gap
+      flexBasis: '47.5%',
+      flexGrow: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      borderRadius: 14,
+      borderWidth: 1.5,
+      borderColor: C.hair,
+      backgroundColor: C.void2,
+    },
+    chronoChipIconBox: {
+      width: 26,
+      height: 26,
+      borderRadius: 8,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    chronoChipIcon: {
+      fontSize: 13,
+      lineHeight: 15,
+    },
+    chronoChipLabel: {
+      flex: 1,
+      fontSize: 13,
+      letterSpacing: -0.2,
+      lineHeight: 16,
+    },
     chip: {
       paddingHorizontal: 13,
       paddingVertical: 7,
@@ -3104,7 +3227,7 @@ const makeStyles = (accent: Accent) =>
     anchorsHead: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
+      gap: 14,
       paddingVertical: 14,
       borderBottomWidth: 1,
       borderBottomColor: hexA(C.hair, 0.7),
@@ -3115,7 +3238,22 @@ const makeStyles = (accent: Accent) =>
       textAlign: 'center',
       color: C.boneDim,
     },
-    anchorsChev: { fontSize: 14, color: C.mute },
+    // Mockup-style accent-icon box wrapping each trigger glyph.
+    // 38×38 rounded square tinted with the row's accent color so
+    // each setting reads as its own destination, not a generic row.
+    personalIconBox: {
+      width: 38,
+      height: 38,
+      borderRadius: 11,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    personalIconBoxGlyph: {
+      fontSize: 16,
+      lineHeight: 18,
+    },
+    anchorsChev: { fontSize: 18, color: C.ash },
     anchorsList: {
       paddingVertical: 8,
       borderBottomWidth: 1,
