@@ -279,13 +279,36 @@ export const signInWithGoogle = async (): Promise<{
   // hiccup or "audience mismatch" rejection becomes a clean thrown
   // error the AuthDoor can surface — not an UnhandledPromiseRejection
   // that bubbles out and bricks the JS thread.
+  //
+  // DUPLICATE-ACCOUNT NOTE: Supabase defaults treat email/password and
+  // OAuth identities for the same email as SEPARATE users. So a user
+  // who previously signed up with foo@gmail.com (password) and now
+  // taps "Sign in with Google" using the same Gmail will get a brand-
+  // new auth.users row with no data, while their old account sits
+  // intact but inaccessible.
+  //
+  // The real fix lives in the Supabase dashboard:
+  //   Authentication → Settings → "Allow Manual Linking"
+  // OR enable "Link a new identity to an existing user account if the
+  // email is already registered" if your dashboard version exposes it.
+  // We instrument the post-sign-in user below so we can SEE in logs
+  // when this is happening (created_at very close to now == fresh).
   let supabaseError: { message?: string } | null = null;
+  let signedInUser: { id: string; email?: string; created_at?: string } | null =
+    null;
   try {
-    const { error } = await supabase.auth.signInWithIdToken({
+    const { data, error } = await supabase.auth.signInWithIdToken({
       provider: 'google',
       token: idToken,
     });
     supabaseError = error ?? null;
+    signedInUser = data?.user
+      ? {
+          id: data.user.id,
+          email: data.user.email ?? undefined,
+          created_at: data.user.created_at,
+        }
+      : null;
   } catch (e) {
     supabaseError = e as { message?: string };
   }
@@ -301,6 +324,24 @@ export const signInWithGoogle = async (): Promise<{
       );
     }
     throw new Error(msg);
+  }
+
+  // Instrument: log the user id + whether this looks like a fresh
+  // create. If `created_at` is within the last 5 seconds of now, the
+  // Google sign-in just minted a new row — almost always a sign the
+  // user actually has an existing email/password account that
+  // Supabase isn't linking.
+  if (signedInUser) {
+    const createdMs = signedInUser.created_at
+      ? Date.parse(signedInUser.created_at)
+      : NaN;
+    const isFresh = !isNaN(createdMs) && Date.now() - createdMs < 5_000;
+    console.log(
+      '[google] supabase user',
+      signedInUser.id,
+      signedInUser.email,
+      isFresh ? '(JUST CREATED — possible duplicate)' : '(returning)',
+    );
   }
 
   const fullName =

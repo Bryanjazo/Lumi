@@ -532,6 +532,16 @@ export const AuthDoor = ({ initialMode }: Props) => {
             </Pressable>
           </View>
 
+          {/* Defensive nudge — Lumi treats Google + email as separate
+              accounts by default, so using the wrong button silently
+              creates a fresh empty account. The visible reminder
+              prevents most cases until the Supabase auto-link setting
+              is enabled server-side. */}
+          <Text style={styles.socialHint}>
+            Use the same option you signed up with — Google and email
+            are separate accounts.
+          </Text>
+
           {/* Divider */}
           <View style={styles.divider}>
             <View style={styles.dividerLine} />
@@ -796,6 +806,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: TC.mute,
     letterSpacing: 0.3,
+  },
+  socialHint: {
+    fontFamily: fonts.inter,
+    fontSize: 10.5,
+    color: TC.mute,
+    textAlign: 'center',
+    marginTop: 10,
+    paddingHorizontal: 8,
+    lineHeight: 15,
   },
 
   // ── Field ──
