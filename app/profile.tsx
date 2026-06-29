@@ -51,6 +51,13 @@ import { useAccessStatus } from '../lib/subscription';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
 import { languageLabel } from '../lib/languages';
 import { useLearningDigest } from '../lib/learning';
+import {
+  isCalendarSdkAvailable,
+  requestCalendarAccess,
+  listWritableCalendars,
+  getDefaultCalendarId,
+  type WritableCalendar,
+} from '../lib/calendar';
 import { EditProfileSheet } from '../components/EditProfileSheet';
 import { LanguagePickerSheet } from '../components/LanguagePickerSheet';
 import { WindowEditorSheet } from '../components/WindowEditorSheet';
@@ -408,6 +415,13 @@ export default function AccountScreen() {
   // current pick is shown summarized while collapsed so users
   // don't have to expand it to see what they're on.
   const [companionOpen, setCompanionOpen] = useState(false);
+  // Calendar integration — collapsible card mirrors the anchors /
+  // companion patterns: closed shows current state, expanded shows
+  // the connect button or calendar picker + auto-sync toggle.
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarList, setCalendarList] = useState<WritableCalendar[]>([]);
+  const [calendarBusy, setCalendarBusy] = useState(false);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
 
   // Identity
   const name = useUserStore((s) => s.name) || 'Friend';
@@ -437,6 +451,16 @@ export default function AccountScreen() {
   const setTheme = useUserStore((s) => s.setTheme);
   const companionMode = useUserStore((s) => s.companionMode);
   const setCompanionMode = useUserStore((s) => s.setCompanionMode);
+  const calendarEnabled = useUserStore((s) => s.calendarEnabled);
+  const setCalendarEnabled = useUserStore((s) => s.setCalendarEnabled);
+  const calendarId = useUserStore((s) => s.calendarId);
+  const setCalendarId = useUserStore((s) => s.setCalendarId);
+  const autoSyncTasksWithTimes = useUserStore(
+    (s) => s.autoSyncTasksWithTimes,
+  );
+  const setAutoSyncTasksWithTimes = useUserStore(
+    (s) => s.setAutoSyncTasksWithTimes,
+  );
   const subscriptionStatus = useUserStore((s) => s.subscriptionStatus);
   const subscriptionTier = useUserStore((s) => s.subscriptionTier);
   const subscriptionEnd = useUserStore((s) => s.subscriptionCurrentPeriodEnd);
@@ -800,6 +824,82 @@ export default function AccountScreen() {
     Haptics.selectionAsync();
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setCompanionOpen((o) => !o);
+  };
+  const toggleCalendar = () => {
+    Haptics.selectionAsync();
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setCalendarOpen((o) => !o);
+  };
+
+  // Refresh the writable calendar list whenever the panel opens and
+  // we're connected — covers the case where the user added a new
+  // calendar to iOS Settings between sessions.
+  useEffect(() => {
+    if (!calendarOpen || !calendarEnabled) return;
+    let cancelled = false;
+    listWritableCalendars()
+      .then((list) => {
+        if (!cancelled) setCalendarList(list);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [calendarOpen, calendarEnabled]);
+
+  const connectCalendar = async () => {
+    if (!isCalendarSdkAvailable()) {
+      setCalendarError(
+        'Calendar needs a custom build — not available in Expo Go.',
+      );
+      return;
+    }
+    setCalendarBusy(true);
+    setCalendarError(null);
+    try {
+      const granted = await requestCalendarAccess();
+      if (!granted) {
+        setCalendarError(
+          'Calendar access denied. Open Settings → Lumi → Calendars to enable it.',
+        );
+        return;
+      }
+      const writable = await listWritableCalendars();
+      setCalendarList(writable);
+      setCalendarEnabled(true);
+      // Pre-select the OS default writable calendar so the user
+      // doesn't have to make a choice just to start.
+      if (!calendarId) {
+        const def = await getDefaultCalendarId();
+        if (def) setCalendarId(def);
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      setCalendarError("Couldn't reach your calendar. Try again in a moment.");
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  const disconnectCalendar = () => {
+    Alert.alert(
+      'Disconnect calendar?',
+      "Lumi will stop writing tasks to your calendar. Events already added stay where they are — they won't be removed.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: () => {
+            setCalendarEnabled(false);
+            setCalendarList([]);
+            Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Success,
+            );
+          },
+        },
+      ],
+    );
   };
 
   const nudgeAnchor = (k: keyof DailyAnchors, delta: number) => {
@@ -1227,6 +1327,192 @@ export default function AccountScreen() {
                 </>
               );
             })()}
+
+            {/* Calendar — collapsible. Closed shows current status
+                (Not connected / calendar title). Expanded shows the
+                connect button, the writable-calendar picker, and the
+                global auto-sync toggle. Mirrors the Daily anchors /
+                Companion patterns above. */}
+            <Pressable onPress={toggleCalendar} style={styles.anchorsHead}>
+              <Text style={styles.anchorsGlyph}>◷</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.personalRowLabel}>Calendar</Text>
+                <Text style={styles.personalRowSub}>
+                  {calendarEnabled
+                    ? autoSyncTasksWithTimes
+                      ? `Auto-adding timed tasks${
+                          calendarList.find((c) => c.id === calendarId)?.title
+                            ? ` to ${calendarList.find((c) => c.id === calendarId)?.title}`
+                            : ''
+                        }`
+                      : 'Connected · auto-sync off'
+                    : 'Not connected'}
+                </Text>
+              </View>
+              <Text
+                style={[
+                  styles.anchorsChev,
+                  calendarOpen && { transform: [{ rotate: '90deg' }] },
+                ]}
+              >
+                ›
+              </Text>
+            </Pressable>
+            {calendarOpen && (
+              <View style={[styles.companionModeRow, { marginTop: 12 }]}>
+                {!calendarEnabled ? (
+                  <>
+                    <Text style={styles.personalHint}>
+                      Lumi can add tasks that have a time to your
+                      device calendar (iCloud, Google, Outlook —
+                      whatever you already use). Off until you turn
+                      it on.
+                    </Text>
+                    <Pressable
+                      onPress={connectCalendar}
+                      disabled={calendarBusy}
+                      style={[
+                        styles.companionModeCard,
+                        {
+                          backgroundColor: hexA(accent.fg, 0.08),
+                          borderColor: accent.fg,
+                          alignItems: 'center',
+                          opacity: calendarBusy ? 0.6 : 1,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.companionModeTitle,
+                          { color: accent.fg },
+                        ]}
+                      >
+                        {calendarBusy ? 'Connecting…' : 'Connect calendar'}
+                      </Text>
+                    </Pressable>
+                    {calendarError && (
+                      <Text
+                        style={[styles.personalHint, { color: '#C97A6E' }]}
+                      >
+                        {calendarError}
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.personalCell}>
+                      <View style={styles.personalLabelRow}>
+                        <Text style={styles.personalLabel}>
+                          Auto-add timed tasks
+                        </Text>
+                        <Switch
+                          value={autoSyncTasksWithTimes}
+                          onValueChange={(v) => {
+                            Haptics.selectionAsync();
+                            setAutoSyncTasksWithTimes(v);
+                          }}
+                          trackColor={{
+                            false: '#3A322B',
+                            true: accent.fg,
+                          }}
+                          thumbColor="#F4EBDB"
+                        />
+                      </View>
+                      <Text style={styles.personalHint}>
+                        New, rescheduled, and deleted tasks with a
+                        time sync to your calendar automatically.
+                      </Text>
+                    </View>
+
+                    <Text style={styles.personalHint}>
+                      Writing to:
+                    </Text>
+                    {calendarList.length === 0 ? (
+                      <Text style={styles.personalHint}>
+                        Looking for calendars…
+                      </Text>
+                    ) : (
+                      calendarList.map((c) => {
+                        const on = calendarId === c.id;
+                        return (
+                          <Pressable
+                            key={c.id}
+                            onPress={() => {
+                              Haptics.selectionAsync();
+                              setCalendarId(c.id);
+                            }}
+                            style={[
+                              styles.companionModeCard,
+                              on && {
+                                backgroundColor: hexA(accent.fg, 0.1),
+                                borderColor: accent.fg,
+                              },
+                            ]}
+                          >
+                            <View style={styles.companionModeHeader}>
+                              <View
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  flex: 1,
+                                  gap: 8,
+                                }}
+                              >
+                                <View
+                                  style={{
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: 5,
+                                    backgroundColor: c.color || accent.fg,
+                                  }}
+                                />
+                                <Text
+                                  style={[
+                                    styles.companionModeTitle,
+                                    on && { color: accent.fg },
+                                  ]}
+                                >
+                                  {c.title}
+                                </Text>
+                              </View>
+                              {on && (
+                                <Text
+                                  style={[
+                                    styles.companionModeCheck,
+                                    { color: accent.fg },
+                                  ]}
+                                >
+                                  ✓
+                                </Text>
+                              )}
+                            </View>
+                            {c.source && (
+                              <Text style={styles.companionModeSub}>
+                                {c.source}
+                              </Text>
+                            )}
+                          </Pressable>
+                        );
+                      })
+                    )}
+
+                    <Pressable
+                      onPress={disconnectCalendar}
+                      style={styles.anchorsWindowsLink}
+                    >
+                      <Text
+                        style={[
+                          styles.anchorsWindowsLinkText,
+                          { color: '#C97A6E' },
+                        ]}
+                      >
+                        Disconnect calendar
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
+              </View>
+            )}
 
             {/* Theme accent */}
             <View style={styles.personalCell}>

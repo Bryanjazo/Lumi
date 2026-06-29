@@ -169,6 +169,27 @@ interface UserState {
    * month, switch back, your level/streak/room are intact.
    */
   companionMode: CompanionMode;
+  /**
+   * Calendar integration — when on, tasks with explicit times are
+   * written through expo-calendar to whichever calendar the user
+   * picked, alongside the rest of their day. Off by default; one-
+   * shot enable in Profile → Calendar after granting OS permission.
+   */
+  calendarEnabled: boolean;
+  /**
+   * Calendar id to write events to. Resolved when the user picks
+   * from the writable list (defaults to getDefaultCalendarAsync when
+   * they first connect). Null until they pick.
+   */
+  calendarId: string | null;
+  /**
+   * Global "auto-add timed tasks to my calendar" toggle. When on,
+   * addQuest/anchor/setDate/remove for any task with a time fires
+   * the corresponding calendar mutation. When off, the user can
+   * still nothing-special-happens; per-task quick adds may be wired
+   * later. Off by default — calendar writes are surprising; opt in.
+   */
+  autoSyncTasksWithTimes: boolean;
   /** BCP-47 capture language tag for transcription. */
   captureLang: string;
   /** Active accent theme (Premium-gated except 'ember'). */
@@ -248,6 +269,12 @@ interface UserState {
   setCaptureLang: (lang: string) => void;
   setTheme: (theme: ThemeKey) => void;
   setCompanionMode: (mode: CompanionMode) => void;
+  /** Connect / disconnect calendar writes. Disconnect clears calendarId. */
+  setCalendarEnabled: (on: boolean) => void;
+  /** Pick which calendar Lumi writes events into. */
+  setCalendarId: (id: string | null) => void;
+  /** Global toggle for "auto-write timed tasks to my calendar". */
+  setAutoSyncTasksWithTimes: (on: boolean) => void;
   setAvatar: (avatar: string) => void;
   setNotificationsEnabled: (on: boolean) => void;
   setOfflineMode: (on: boolean) => void;
@@ -331,6 +358,9 @@ export const useUserStore = create<UserState>()(
       // Default to the cozy companion — let users dial down, don't
       // bury the charm. Per companion-mode-spec §1.
       companionMode: 'full',
+      calendarEnabled: false,
+      calendarId: null,
+      autoSyncTasksWithTimes: false,
       avatar: 'default',
       subscriptionStatus: 'free',
       subscriptionTier: null,
@@ -432,6 +462,20 @@ export const useUserStore = create<UserState>()(
       setVoiceEnabled: (on) => set({ voiceEnabled: on }),
       setCaptureLang: (lang) => set({ captureLang: lang }),
       setCompanionMode: (mode) => set({ companionMode: mode }),
+      setCalendarEnabled: (on) =>
+        set((s) =>
+          on
+            ? { calendarEnabled: true }
+            : // Disconnect also clears the picked calendar and the
+              // auto-sync toggle — re-connecting starts clean.
+              {
+                calendarEnabled: false,
+                calendarId: null,
+                autoSyncTasksWithTimes: false,
+              },
+        ),
+      setCalendarId: (id) => set({ calendarId: id }),
+      setAutoSyncTasksWithTimes: (on) => set({ autoSyncTasksWithTimes: on }),
       setTheme: (theme) => set({ theme }),
       setAvatar: (avatar) => set({ avatar }),
       setNotificationsEnabled: (on) => set({ notificationsEnabled: on }),
@@ -495,6 +539,9 @@ export const useUserStore = create<UserState>()(
           captureLang: 'en-US',
           theme: 'ember',
           companionMode: 'full',
+          calendarEnabled: false,
+          calendarId: null,
+          autoSyncTasksWithTimes: false,
           avatar: 'default',
           subscriptionStatus: 'free',
           subscriptionTier: null,
@@ -506,7 +553,7 @@ export const useUserStore = create<UserState>()(
     {
       name: 'lumi.user',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 13,
+      version: 14,
       /**
        * v1 → v2: re-trigger the canonical onboarding for anyone who
        * went through the OLD terracotta-era flow. We can tell them
@@ -648,6 +695,16 @@ export const useUserStore = create<UserState>()(
           // users default to 'full' so the cozy companion stays put
           // for everyone who was using the app before this feature.
           if (state.companionMode === undefined) state.companionMode = 'full';
+        }
+        if (version < 14) {
+          // Calendar integration added. Default everything off — we
+          // do not write to anyone's calendar without an explicit
+          // opt-in, even for existing users.
+          if (state.calendarEnabled === undefined) state.calendarEnabled = false;
+          if (state.calendarId === undefined) state.calendarId = null;
+          if (state.autoSyncTasksWithTimes === undefined) {
+            state.autoSyncTasksWithTimes = false;
+          }
         }
         return state as never;
       },

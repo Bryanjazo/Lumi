@@ -3,7 +3,7 @@
     "name": "Lumi",
     "slug": "lumi",
     "scheme": "lumi",
-    "version": "1.1.6",
+    "version": "1.1.7",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "app.lumi.ios",
       "usesAppleSignIn": true,
-      "buildNumber": "17",
+      "buildNumber": "18",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Lumi uses your microphone so you can speak your check-ins instead of typing.",
         "NSSpeechRecognitionUsageDescription": "Lumi transcribes your voice to text on this device so Luna can respond.",
@@ -66,6 +66,12 @@
         "@react-native-google-signin/google-signin",
         {
           "iosUrlScheme": "com.googleusercontent.apps.921718778396-9anbj3agm6i6qon3j7pr3ln8nbgv8j8h"
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Lumi adds tasks with times to your calendar so they show up alongside the rest of your day."
         }
       ]
     ],
