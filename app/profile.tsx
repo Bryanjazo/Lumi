@@ -10,6 +10,7 @@
 // previous canonical settings screen.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ScrollView as ScrollViewType, View as ViewType } from 'react-native';
 import {
   View,
   Text,
@@ -795,6 +796,13 @@ export default function AccountScreen() {
   // Insight panel + anchors disclosure
   const [knowOpen, setKnowOpen] = useState<string | null>(null);
   const [anchorsOpen, setAnchorsOpen] = useState(false);
+  // Refs for the "Adjust this →" affordance in the Knows section.
+  // When the user taps Adjust on the anchors insight we expand the
+  // Anchors row AND scroll the page to it; without the scroll the
+  // user is left looking at the Knows card with nothing visibly
+  // different, even though the section did open way below.
+  const scrollRef = useRef<ScrollViewType>(null);
+  const anchorsTriggerRef = useRef<ViewType>(null);
   // Collapsible state for the Companion-mode picker. Matches the
   // anchors / language patterns elsewhere in Personalize — the
   // current pick is shown summarized while collapsed so users
@@ -1347,8 +1355,44 @@ export default function AccountScreen() {
 
   const handleInsightAction = (action?: 'anchors' | 'windows') => {
     if (action === 'anchors') {
+      // Expand the Anchors collapsible AND scroll the user to it —
+      // without the scroll, "Adjust this →" appears to do nothing
+      // because the affected section is way below the Knows card.
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setAnchorsOpen(true);
+      // Defer the scroll by a beat so the LayoutAnimation has time
+      // to commit the expanded body, then measure + scroll.
+      setTimeout(() => {
+        const scrollNode = scrollRef.current;
+        const target = anchorsTriggerRef.current;
+        if (!scrollNode || !target) return;
+        // measureLayout against the ScrollView's inner content so
+        // the y we get is in scroll-content coordinates.
+        const scrollInner = (scrollNode as unknown as {
+          getInnerViewNode?: () => number;
+        }).getInnerViewNode;
+        const handle =
+          typeof scrollInner === 'function'
+            ? scrollInner.call(scrollNode)
+            : null;
+        if (handle == null) return;
+        (target as unknown as {
+          measureLayout: (
+            ref: number,
+            ok: (x: number, y: number) => void,
+            fail: () => void,
+          ) => void;
+        }).measureLayout(
+          handle,
+          (_x, y) => {
+            scrollNode.scrollTo({
+              y: Math.max(0, y - 20),
+              animated: true,
+            });
+          },
+          () => {},
+        );
+      }, 120);
     } else if (action === 'windows') {
       setWindowsOpen(true);
     }
@@ -1379,6 +1423,7 @@ export default function AccountScreen() {
       </View>
 
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       >
@@ -1699,7 +1744,11 @@ export default function AccountScreen() {
             </View>
 
             {/* Anchors (expandable) */}
-            <Pressable onPress={toggleAnchors} style={styles.anchorsHead}>
+            <Pressable
+              ref={anchorsTriggerRef}
+              onPress={toggleAnchors}
+              style={styles.anchorsHead}
+            >
               <View
                 style={[
                   styles.personalIconBox,
