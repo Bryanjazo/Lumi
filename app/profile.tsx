@@ -631,6 +631,146 @@ const PulseDot = ({ color, size = 6 }: { color: string; size?: number }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────
+// ConfidenceDots — three dusk dots showing how sure Lumi is about
+// a given insight. Lit dots glow softly; unlit dots are faint at
+// 22% alpha. Per lumi-knows.jsx mockup.
+// ─────────────────────────────────────────────────────────────────────
+const ConfidenceDots = ({ level }: { level: 1 | 2 | 3 }) => (
+  <View style={{ flexDirection: 'row', gap: 5, alignItems: 'center' }}>
+    {[1, 2, 3].map((i) => (
+      <View
+        key={i}
+        style={{
+          width: 5,
+          height: 5,
+          borderRadius: 3,
+          backgroundColor:
+            i <= level ? '#8EA0B4' : 'rgba(142,160,180,0.22)',
+          shadowColor: '#8EA0B4',
+          shadowOpacity: i <= level ? 0.6 : 0,
+          shadowRadius: 4,
+          shadowOffset: { width: 0, height: 0 },
+        }}
+      />
+    ))}
+  </View>
+);
+
+// ─────────────────────────────────────────────────────────────────────
+// RhythmCurve — tiny SVG energy curve under the "Your rhythm" insight.
+// Lights up the peak by the user's sharpWindow: morning peak puts the
+// glow dot at index 1, midday/afternoon at 4, evening at 6. The shape
+// is a fixed gentle wave so the visual is recognizable; only the lit
+// peak position moves.
+// ─────────────────────────────────────────────────────────────────────
+const RhythmCurve = ({ sharp }: { sharp: EnergyWindowKey | null }) => {
+  const W = 240;
+  const H = 40;
+  // Sample 8 x-positions across the day. Each insight's peak fills
+  // its slot to ~0.9 height; the rest taper down. Keeps the silhouette
+  // unambiguous on a small canvas.
+  const peakIdx =
+    sharp === 'morning'
+      ? 1
+      : sharp === 'midday'
+        ? 3
+        : sharp === 'afternoon'
+          ? 5
+          : sharp === 'evening'
+            ? 6
+            : 4;
+  const pts = Array.from({ length: 8 }, (_, i) => {
+    // Gentle bell around peakIdx, floor 0.25
+    const dist = Math.abs(i - peakIdx);
+    return Math.max(0.25, 0.95 - dist * 0.16);
+  });
+  const x = (i: number) => 6 + (i / (pts.length - 1)) * (W - 12);
+  const y = (v: number) => H - 4 - v * (H - 10);
+  // Build smooth quadratic path
+  let d = `M ${x(0)} ${y(pts[0])}`;
+  for (let i = 1; i < pts.length; i++) {
+    const xc = (x(i - 1) + x(i)) / 2;
+    const yc = (y(pts[i - 1]) + y(pts[i])) / 2;
+    d += ` Q ${x(i - 1)} ${y(pts[i - 1])}, ${xc} ${yc}`;
+  }
+  d += ` L ${x(pts.length - 1)} ${y(pts[pts.length - 1])}`;
+  return (
+    <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`}>
+      <Path d={d} stroke="#8EA0B4" strokeWidth={1.6} fill="none" />
+      {/* Peak dot + halo */}
+      <Circle
+        cx={x(peakIdx)}
+        cy={y(pts[peakIdx])}
+        r={5.5}
+        fill="rgba(244,201,138,0.25)"
+      />
+      <Circle
+        cx={x(peakIdx)}
+        cy={y(pts[peakIdx])}
+        r={2.6}
+        fill="#F4C98A"
+      />
+    </Svg>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// MiniRibbon — compact 12px-tall version of the DayRibbon for the
+// "Your daily anchors" insight. Same proportions and palette as the
+// full ribbon in Personalize, just thinner with no labels/markers so
+// it reads as a glanceable strip in the Knows card.
+// ─────────────────────────────────────────────────────────────────────
+const MiniRibbon = ({
+  wakeMin,
+  sleepMin,
+  middayHour,
+  afternoonHour,
+  eveningHour,
+}: {
+  wakeMin: number;
+  sleepMin: number;
+  middayHour: number;
+  afternoonHour: number;
+  eveningHour: number;
+}) => {
+  const span = Math.max(1, sleepMin - wakeMin);
+  const cls = (m: number) => Math.max(wakeMin, Math.min(sleepMin, m));
+  const fracs = [
+    Math.max(0, cls(middayHour * 60) - wakeMin) / span,
+    Math.max(0, cls(afternoonHour * 60) - cls(middayHour * 60)) / span,
+    Math.max(0, cls(eveningHour * 60) - cls(afternoonHour * 60)) / span,
+    Math.max(0, sleepMin - cls(eveningHour * 60)) / span,
+  ];
+  const colors = ['#C9A06A', '#869072', '#E07A4F', '#8EA0B4'];
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        height: 12,
+        borderRadius: 6,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: '#2A2420',
+      }}
+    >
+      {fracs.map((f, i) =>
+        f > 0 ? (
+          <View
+            key={i}
+            style={{
+              flexGrow: f,
+              flexShrink: 1,
+              flexBasis: 0,
+              backgroundColor: colors[i] + '99',
+            }}
+          />
+        ) : null,
+      )}
+    </View>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────
 // Screen
 // ─────────────────────────────────────────────────────────────────────
 export default function AccountScreen() {
@@ -799,6 +939,10 @@ export default function AccountScreen() {
   const totalWeeks = useMemo(() => buildWeekBuckets(quests).length, [quests]);
 
   // ── "What Lumi knows" insights — real, only show if we have data ─
+  // Each item now carries:
+  //   - confidence: 1..3 dots (how sure Lumi is about this insight)
+  //   - viz: 'curve' | 'ribbon' | 'tags' | undefined — what to render
+  //   - tags: optional list for the 'tags' viz
   const knowsItems = useMemo(() => {
     const items: {
       key: string;
@@ -806,10 +950,13 @@ export default function AccountScreen() {
       title: string;
       line: string;
       detail: string;
+      confidence: 1 | 2 | 3;
+      viz?: 'curve' | 'ribbon' | 'tags';
+      tags?: string[];
       action?: 'anchors' | 'windows';
     }[] = [];
 
-    // Rhythm
+    // Rhythm — confidence 3 if we have a sharpWindow seed; curve viz
     if (sharpWindow) {
       const label =
         sharpWindow === 'morning'
@@ -823,23 +970,29 @@ export default function AccountScreen() {
         title: 'Your rhythm',
         line: `Sharpest in the ${label}`,
         detail: `You're at your best in the ${label}. I front-load your hardest quests there and keep the other windows lighter.`,
+        confidence: 3,
+        viz: 'curve',
         action: 'windows',
       });
     }
 
-    // A pattern Lumi noticed (recurring titles the user keeps doing)
+    // Pattern Lumi noticed — confidence based on how many recurring
+    // titles we've seen (1 → 1 dot, 2-3 → 2 dots, 4+ → 3 dots)
     if (digest.recurrence[0]) {
       const p = digest.recurrence[0];
+      const recCount = digest.recurrence.length;
       items.push({
         key: 'pattern',
         glyph: '🔁',
         title: 'A pattern I noticed',
         line: p.title,
         detail: `You've done "${p.title}" — ${p.span.toLowerCase()}. Want me to surface it on its rhythm so it never sneaks up on you?`,
+        confidence: recCount >= 4 ? 3 : recCount >= 2 ? 2 : 1,
       });
     }
 
-    // Daily anchors
+    // Daily anchors — always confidence 3 (we know these from onboarding)
+    // + mini-ribbon viz that mirrors the full DayRibbon
     items.push({
       key: 'anchors',
       glyph: '❖',
@@ -852,25 +1005,32 @@ export default function AccountScreen() {
       )} · Sleep ${fmtTime(
         anchors.sleep,
       )}. These frame every day so there's always a shape to land in.`,
+      confidence: 3,
+      viz: 'ribbon',
       action: 'anchors',
     });
 
-    // What you find hard (top struggles)
+    // What you find hard — confidence by struggle count (1→1, 2-3→2, 4+→3)
     if (struggles.length > 0) {
-      const list = struggles
-        .slice(0, 2)
-        .map((s) => STRUGGLE_LABELS[s])
-        .join(' · ');
+      const tags = struggles
+        .slice(0, 3)
+        .map((s) => STRUGGLE_LABELS[s] ?? s);
       items.push({
         key: 'hard',
         glyph: '❍',
         title: 'What you find hard',
-        line: list,
-        detail: `${list} — so I hand you one small first step, and keep your plate to a doable few.`,
+        line: tags.slice(0, 2).join(' · '),
+        detail: `${tags.join(' · ')} — so I hand you one small first step, and keep your plate to a doable few.`,
+        confidence:
+          struggles.length >= 4 ? 3 : struggles.length >= 2 ? 2 : 1,
+        viz: 'tags',
+        tags,
       });
     }
 
-    // Focus pattern from follow-through stats
+    // Focus pattern from follow-through stats — confidence depends on
+    // whether we have enough quest history to compute it (digest.pattern
+    // is non-null only after a threshold of completed quests)
     if (digest.pattern) {
       items.push({
         key: 'focus',
@@ -878,11 +1038,24 @@ export default function AccountScreen() {
         title: 'How you focus best',
         line: digest.pattern.headline,
         detail: digest.pattern.body,
+        confidence: 2,
       });
     }
 
     return items;
   }, [sharpWindow, anchors, struggles, digest]);
+
+  // Learning meter — how much of Lumi's picture is filled in. Each
+  // source the user has seeded adds 20%. Anchors are always there
+  // (free), so the floor is 20%.
+  const learningPct = useMemo(() => {
+    let pct = 20; // anchors floor
+    if (sharpWindow) pct += 20;
+    if (struggles.length > 0) pct += 20;
+    if (digest.pattern) pct += 20;
+    if (digest.recurrence.length > 0) pct += 20;
+    return Math.min(100, pct);
+  }, [sharpWindow, struggles, digest]);
 
   // ── Handlers ─────────────────────────────────────────────────────
   const handleChangeEmail = () => {
@@ -1302,24 +1475,48 @@ export default function AccountScreen() {
         </View>
 
         {/* ── 3 · WHAT LUMI KNOWS — the heart ─────────────────────── */}
+        {/* Per lumi-knows.jsx — each insight shows its evidence
+            (energy curve / mini day-ribbon / tags) plus a 3-dot
+            confidence meter. Dusk-tinted (Lumi's intelligence). */}
         <View style={styles.sectionWrap}>
           <View style={styles.knowsWrap}>
             <View style={styles.knowsTopBar} />
             <View style={styles.knowsHeader}>
               <View style={styles.knowsEyebrowRow}>
                 <Text style={styles.knowsSpark}>✦</Text>
-                <Text style={styles.knowsEyebrow}>What Lumi knows about you</Text>
+                <Text style={styles.knowsEyebrow}>
+                  What Lumi knows about you
+                </Text>
               </View>
               <Text style={styles.knowsTitle}>
-                The more we go, the better I know you.
+                The more we go,{'\n'}the better I know you.
               </Text>
+              {/* Learning meter — dusk progress bar showing how much
+                 of Lumi's picture is filled in. Grows as the user
+                 seeds more (sharpWindow / struggles / patterns). */}
+              <View style={styles.learningMeterRow}>
+                <View style={styles.learningMeterTrack}>
+                  <View
+                    style={[
+                      styles.learningMeterFill,
+                      { width: `${learningPct}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.learningMeterLabel}>
+                  {learningPct >= 100
+                    ? 'I know you well'
+                    : 'Getting to know you'}
+                </Text>
+              </View>
             </View>
+
             <View style={styles.knowsList}>
               {knowsItems.length === 0 ? (
                 <View style={styles.knowsEmpty}>
                   <Text style={styles.knowsEmptyText}>
-                    I'm still getting to know you. The more you use Lumi, the
-                    more this fills in.
+                    I&apos;m still getting to know you. The more you use
+                    Lumi, the more this fills in.
                   </Text>
                 </View>
               ) : (
@@ -1330,19 +1527,60 @@ export default function AccountScreen() {
                       key={k.key}
                       style={[
                         styles.knowsRow,
-                        i < knowsItems.length - 1 && styles.knowsRowDivider,
+                        i > 0 && styles.knowsRowDivider,
                       ]}
                     >
                       <Pressable
                         onPress={() => toggleKnow(k.key)}
                         style={styles.knowsHead}
                       >
-                        <Text style={styles.knowsGlyph}>{k.glyph}</Text>
+                        {/* Dusk-tinted icon box (30×30) */}
+                        <View style={styles.knowsIconBox}>
+                          <Text style={styles.knowsIconBoxGlyph}>
+                            {k.glyph}
+                          </Text>
+                        </View>
                         <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={styles.knowsRowTitle}>{k.title}</Text>
-                          <Text style={styles.knowsRowLine} numberOfLines={2}>
+                          {/* Label + confidence dots */}
+                          <View style={styles.knowsLabelRow}>
+                            <Text style={styles.knowsRowLabel}>
+                              {k.title}
+                            </Text>
+                            <ConfidenceDots level={k.confidence} />
+                          </View>
+                          {/* Value text */}
+                          <Text
+                            style={styles.knowsRowValue}
+                            numberOfLines={2}
+                          >
                             {k.line}
                           </Text>
+                          {/* Visualization — varies per insight */}
+                          {k.viz === 'curve' && (
+                            <View style={styles.knowsVizWrap}>
+                              <RhythmCurve sharp={sharpWindow} />
+                            </View>
+                          )}
+                          {k.viz === 'ribbon' && (
+                            <View style={styles.knowsVizWrap}>
+                              <MiniRibbon
+                                wakeMin={anchors.wake}
+                                sleepMin={anchors.sleep}
+                                middayHour={windowOverrides.midday}
+                                afternoonHour={windowOverrides.afternoon}
+                                eveningHour={windowOverrides.evening}
+                              />
+                            </View>
+                          )}
+                          {k.viz === 'tags' && k.tags && (
+                            <View style={styles.knowsTagsRow}>
+                              {k.tags.map((t) => (
+                                <View key={t} style={styles.knowsTag}>
+                                  <Text style={styles.knowsTagText}>{t}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          )}
                         </View>
                         <Text
                           style={[
@@ -1377,6 +1615,17 @@ export default function AccountScreen() {
                   );
                 })
               )}
+            </View>
+
+            {/* Footer reassurance — dusk-tinted, calm */}
+            <View style={styles.knowsFooterWrap}>
+              <View style={styles.knowsFooterCard}>
+                <Text style={styles.knowsFooterGlyph}>✦</Text>
+                <Text style={styles.knowsFooterText}>
+                  This stays yours. Lumi learns only to lighten your
+                  load — never to judge it.
+                </Text>
+              </View>
             </View>
           </View>
         </View>
@@ -2820,6 +3069,116 @@ const makeStyles = (accent: Accent) =>
     knowsActionText: {
       fontFamily: fonts.interSemi,
       fontSize: 12,
+    },
+
+    // Mockup additions: learning meter, icon box, viz wrap, tags,
+    // footer reassurance card. All dusk-tinted per the color law.
+    learningMeterRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      marginTop: 14,
+    },
+    learningMeterTrack: {
+      flex: 1,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: hexA(C.dusk, 0.16),
+      overflow: 'hidden',
+    },
+    learningMeterFill: {
+      height: '100%',
+      backgroundColor: C.dusk,
+      borderRadius: 2,
+    },
+    learningMeterLabel: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10.5,
+      color: C.dusk,
+      letterSpacing: 0.2,
+    },
+    knowsIconBox: {
+      width: 30,
+      height: 30,
+      borderRadius: 9,
+      backgroundColor: hexA(C.dusk, 0.1),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.25),
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    knowsIconBoxGlyph: {
+      fontSize: 15,
+      color: C.dusk,
+    },
+    knowsLabelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 3,
+    },
+    knowsRowLabel: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11.5,
+      color: C.dusk,
+      letterSpacing: 0.1,
+    },
+    knowsRowValue: {
+      fontFamily: fonts.inter,
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.15,
+      lineHeight: 18,
+    },
+    knowsVizWrap: {
+      marginTop: 9,
+    },
+    knowsTagsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 7,
+      marginTop: 9,
+    },
+    knowsTag: {
+      paddingHorizontal: 9,
+      paddingVertical: 3,
+      borderRadius: 100,
+      backgroundColor: hexA(C.dusk, 0.12),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.3),
+    },
+    knowsTagText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10.5,
+      color: '#A8B8C8',
+      fontWeight: '600',
+    },
+    knowsFooterWrap: {
+      padding: 18,
+      paddingTop: 4,
+    },
+    knowsFooterCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: 13,
+      backgroundColor: hexA(C.dusk, 0.07),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.2),
+    },
+    knowsFooterGlyph: {
+      fontSize: 13,
+      color: C.dusk,
+    },
+    knowsFooterText: {
+      flex: 1,
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.boneDim,
+      lineHeight: 17,
     },
 
     // ── 4 · Personalize ──

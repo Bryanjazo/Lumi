@@ -84,6 +84,48 @@ export const DEFAULT_ANCHORS: DailyAnchors = {
   sleep: 22 * 60 + 30,
 };
 
+// Ordered list — used by the cascade logic in setAnchor and by any
+// caller that needs to iterate anchors in chronological order. Adjust
+// here if a new anchor (e.g. "snack") is ever added.
+export const ANCHOR_ORDER: (keyof DailyAnchors)[] = [
+  'wake',
+  'breakfast',
+  'lunch',
+  'dinner',
+  'sleep',
+];
+
+// Minimum gap between consecutive anchors (minutes). Prevents two
+// from landing on the same minute and gives the day a sensible
+// rhythm — breakfast can't be the same instant as wake, etc.
+const ANCHOR_GAP = 15;
+
+// Generous ceiling — 6 AM next day — so night-shift / late-night
+// bedtimes (e.g. sleep at 1 AM) still display sanely without
+// crossing through the next day's wake.
+const ANCHOR_HARD_MAX = 30 * 60;
+
+/**
+ * Cascading bounds for a single anchor given the current map.
+ *   - Each anchor must come AFTER the one before it by at least
+ *     ANCHOR_GAP (15 min).
+ *   - Each anchor must come BEFORE the one after it by ANCHOR_GAP.
+ *   - Wake has no lower bound; sleep has no upper sibling.
+ * Used by setAnchor (cascade-clamp on write) and by callers that
+ * want to show min/max hints in the UI.
+ */
+export const anchorBounds = (
+  key: keyof DailyAnchors,
+  anchors: DailyAnchors,
+): { min: number; max: number } => {
+  const i = ANCHOR_ORDER.indexOf(key);
+  const prev = i > 0 ? ANCHOR_ORDER[i - 1] : null;
+  const next = i < ANCHOR_ORDER.length - 1 ? ANCHOR_ORDER[i + 1] : null;
+  const min = prev ? anchors[prev] + ANCHOR_GAP : 0;
+  const max = next ? anchors[next] - ANCHOR_GAP : ANCHOR_HARD_MAX;
+  return { min, max };
+};
+
 /**
  * Boundary hours for the part-of-day windows. Morning starts at the
  * user's wakeHour and evening ends at the sleep anchor (both already
@@ -447,16 +489,48 @@ export const useUserStore = create<UserState>()(
       setWindowOverrides: (overrides) => set({ windowOverrides: overrides }),
       setAnchor: (key, minutes) =>
         set((s) => {
-          const clamped = Math.max(0, Math.min(24 * 60 - 1, minutes));
-          const nextAnchors: DailyAnchors = { ...s.anchors, [key]: clamped };
-          // Mirror wake into wakeHour for back-compat.
-          if (key === 'wake') {
+          // Cascading clamp — enforces the daily ordering invariant
+          // (wake < breakfast < lunch < dinner < sleep with a 15-min
+          // gap each). Two passes:
+          //   1) Clamp the changed value to its own bounds against
+          //      its CURRENT neighbors.
+          //   2) Walk forward and bump any subsequent anchor that
+          //      would now sit too close to its predecessor — so
+          //      pushing wake from 7→11am drags breakfast/lunch/etc
+          //      forward instead of leaving them in the past.
+          // ALSO walk backward (rare: lowering sleep below dinner)
+          // so the chain stays monotonic in both directions.
+          const next: DailyAnchors = { ...s.anchors };
+          const { min: ownMin, max: ownMax } = anchorBounds(key, next);
+          next[key] = Math.max(ownMin, Math.min(ownMax, minutes));
+
+          const idx = ANCHOR_ORDER.indexOf(key);
+          // Forward cascade
+          for (let i = idx + 1; i < ANCHOR_ORDER.length; i++) {
+            const cur = ANCHOR_ORDER[i];
+            const prev = ANCHOR_ORDER[i - 1];
+            if (next[cur] < next[prev] + ANCHOR_GAP) {
+              next[cur] = Math.min(ANCHOR_HARD_MAX, next[prev] + ANCHOR_GAP);
+            }
+          }
+          // Backward cascade
+          for (let i = idx - 1; i >= 0; i--) {
+            const cur = ANCHOR_ORDER[i];
+            const after = ANCHOR_ORDER[i + 1];
+            if (next[cur] > next[after] - ANCHOR_GAP) {
+              next[cur] = Math.max(0, next[after] - ANCHOR_GAP);
+            }
+          }
+
+          // Mirror wake into wakeHour for back-compat with surfaces
+          // that still read s.wakeHour.
+          if (key === 'wake' || next.wake !== s.anchors.wake) {
             return {
-              anchors: nextAnchors,
-              wakeHour: Math.floor(clamped / 60),
+              anchors: next,
+              wakeHour: Math.floor(next.wake / 60),
             };
           }
-          return { anchors: nextAnchors };
+          return { anchors: next };
         }),
       markHintSeen: (key) =>
         set((s) =>
