@@ -33,6 +33,7 @@ import { useSuggestionsStore } from '../store/suggestionsStore';
 import { useSession, handleAuthDeepLink } from '../lib/auth';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useCloudSync } from '../lib/sync';
+import { useWidgetSync } from '../lib/widget';
 import {
   configureRevenueCat,
   identifyUser as identifyRC,
@@ -76,6 +77,9 @@ export default function RootLayout() {
   const markOnboardedForUser = useUserStore((s) => s.markOnboardedForUser);
   const { session, loading: sessionLoading } = useSession();
   useCloudSync(session);
+  // Push the cat's mood + completion count to the iOS home-screen
+  // widget whenever they change. No-op on Android / Expo Go / web.
+  useWidgetSync();
 
   // ── RevenueCat ──
   //

@@ -129,14 +129,15 @@ export const useAmbientLunaMood = (): LunaMood => {
     // 4. Long streak — Luna's been with them for a while.
     if (streak >= 5) return 'happy';
 
-    // 5. Overwhelm — many overdue items AND no real momentum today.
-    //    The "no momentum" guard prevents the sad face for a user
-    //    who's clearly chipping away (1–2 completions counts as
-    //    starting; we only commiserate when nothing's moving).
+    // 5. Overwhelm — several overdue items AND no real momentum today.
+    //    Threshold is 3 (was 5) — 5 was too patient; by then the user
+    //    has already felt the weight. The "no momentum" guard still
+    //    prevents the sad face for a user who's clearly chipping
+    //    away — even 1 completion bumps them out of sad.
     const overdue = quests.filter(
       (q) => !q.completed && q.date && q.date < today,
     ).length;
-    if (overdue >= 5 && completedToday === 0) return 'sad';
+    if (overdue >= 3 && completedToday === 0) return 'sad';
 
     // 6. Default ambient state.
     return 'idle';

@@ -40,6 +40,10 @@ yarn-error.*
 /ios
 /android
 
+# @bacons/apple-targets — regenerated on each prebuild
+targets/*/Assets.xcassets/
+targets/*/generated.entitlements
+
 # env
 .env
 .env.local
