@@ -1,217 +1,4250 @@
-import { useMemo, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  Pressable,
-  Alert,
-  ActivityIndicator,
-} from 'react-native';
-import * as Haptics from 'expo-haptics';
-import { Screen } from '../../components/Screen';
-import { XPBar } from '../../components/XPBar';
-import { QuestCard } from '../../components/QuestCard';
-import { Label } from '../../components/Label';
-import { colors } from '../../constants/colors';
-import { fonts } from '../../constants/fonts';
-import { useUserStore } from '../../store/userStore';
-import { useQuestStore, selectTodayQuests } from '../../store/questStore';
-import { parseBrainDump } from '../../lib/anthropic';
-import { XP } from '../../lib/gamification';
+// Lumi · Home v2 — "Right Now"
+//
+// Spec: lumi-home-v2-spec-2.md (and the mockup at lumi-home-v2.jsx).
+// Thesis: fight task paralysis. Show ONE next thing, big and calm.
+// Bring Luna onto the daily surface (she reacts to your wins). Demote
+// the game layer to one quiet line. Everything else collapses below.
+//
+// What carried over from v1 (per spec §3):
+//   - Single tasks table (questStore) as source of truth
+//   - Full completion fan-out: XP + lifetime XP + shards + streak +
+//     vitality (computed elsewhere) + Luna cheer + XP float
+//   - Hero ranking: current window first, then importance/XP
+//   - "show me another" anti-paralysis swap
+//   - Capture-to-task (writes someday by default)
+//   - Recurrence engine (suggestionsStore + detector); accept writes
+//     `recur`, dismiss suppresses the title
+//   - Spotlight tour on first launch after onboarding
+//   - Refresh-recurring on mount
+//
+// What was intentionally dropped from v1:
+//   - Full composer (mode pickers, recur sheet) → minimal inline capture
+//   - Loot toasts, combo chain, rank-up toast → game layer is one line
+//   - Wall-of-tasks → collapsed "Then, when you're ready"
+//   - Multi-card Lumi-noticed carousel → ONE calm card
+//   - Level/rank display → moved to Me tab (per spec §2)
 
-const greeting = () => {
-  const h = new Date().getHours();
-  if (h < 5) return 'Late night';
-  if (h < 12) return 'Morning';
-  if (h < 17) return 'Afternoon';
-  if (h < 21) return 'Evening';
-  return 'Night';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Animated,
+  Dimensions,
+  Easing,
+  Image,
+  Modal,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  Pressable,
+  ScrollView,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import Svg, { Circle, Path, Rect } from 'react-native-svg';
+
+import { timeColors as C } from '../../constants/colors';
+import { fonts } from '../../constants/fonts';
+import { lunaSource } from '../../lib/luna-source';
+import { useAmbientLunaMood } from '../../lib/luna-mood';
+import { useCompanionMode } from '../../lib/companion-mode';
+import { IMPORTANCE, Importance } from '../../constants/importance';
+import {
+  WINDOWS,
+  WIN_ORDER,
+  WindowKey,
+  useEffectiveWindows,
+  currentWindowFor,
+} from '../../constants/windows';
+import { useUserStore } from '../../store/userStore';
+import { useQuestStore, selectTodayQuests, Quest } from '../../store/questStore';
+import {
+  useSuggestionsStore,
+  type Suggestion,
+} from '../../store/suggestionsStore';
+import {
+  detectRecurrencePatterns,
+  normalizeForSuppression,
+  useLearningDigest,
+} from '../../lib/learning';
+import { useTour, useTourTarget } from '../../components/SpotlightTour';
+import { useAccent, accentFor, type Accent } from '../../lib/theme';
+import {
+  parseSmartCapture,
+  difficultyFromImportance,
+  pickWindowForDemand,
+  type CaptureContext,
+  type SmartTask,
+} from '../../lib/capture';
+import { useVoice } from '../../lib/voice';
+import { todayKey } from '../../lib/gamification';
+import { SoftGlow } from '../../components/SoftGlow';
+import { useDeleteConfirm } from '../../components/TaskDeleteWrap';
+import { HabitScheduleSheet } from '../../components/HabitScheduleSheet';
+import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
+import { EditQuestSheet } from '../../components/EditQuestSheet';
+import { MicIcon } from '../../components/MicIcon';
+import {
+  useCorrectionsStore,
+  summarizeCorrections,
+  type Correction,
+} from '../../store/correctionsStore';
+import {
+  llmUnderstand,
+  isAnthropicConfigured,
+  type UnderstandContext,
+  type UnderstoodTask,
+} from '../../lib/anthropic';
+
+// ═════════════════════════════════════════════════════════════════════
+// LunaPeek — small cozy pixel cat that lives in the header. Reacts to
+// wins via the `cheer` counter (a happy bounce + little hearts).
+// Same SVG-sprite pattern used in profile/checkin. Swap for Ayu's
+// commissioned art later — keep the interface identical.
+// ═════════════════════════════════════════════════════════════════════
+const LunaPeek = ({
+  size = 70,
+  cheer = 0,
+}: {
+  size?: number;
+  cheer?: number;
+}) => {
+  const [, force] = useState(0);
+  const tickRef = useRef({ t: 0, blink: 80, blinking: false, joy: 0 }).current;
+  const lastCheerRef = useRef(cheer);
+
+  // Cheer trigger — every increment kicks joy to 1.
+  useEffect(() => {
+    if (cheer !== lastCheerRef.current) {
+      tickRef.joy = 1;
+      lastCheerRef.current = cheer;
+    }
+  }, [cheer, tickRef]);
+
+  useEffect(() => {
+    let raf: number;
+    const loop = () => {
+      tickRef.t += 1;
+      tickRef.blink -= 1;
+      if (tickRef.blink <= 0) {
+        tickRef.blinking = !tickRef.blinking;
+        tickRef.blink = tickRef.blinking
+          ? 3
+          : 70 + Math.floor(Math.random() * 60);
+      }
+      tickRef.joy = Math.max(0, tickRef.joy - 0.012);
+      force((n) => (n + 1) % 1_000_000);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [tickRef]);
+
+  const joy = tickRef.joy;
+  const bounce = Math.sin(tickRef.t * (0.05 + joy * 0.12)) * (1.2 + joy * 4);
+  const V = 64;
+  const cx = 32;
+  const cyBody = 40 + bounce;
+  const FUR = '#E8DAC0';
+  const FUR2 = '#F5EAD0';
+  const EAR = '#D88878';
+  const OL = '#0E0A08';
+  const hy = cyBody - 9;
+
+  return (
+    <Svg width={size} height={size} viewBox={`0 0 ${V} ${V}`}>
+      {/* body */}
+      <Circle cx={cx} cy={cyBody + 2} r={11} fill={FUR} />
+      <Circle cx={cx} cy={cyBody + 4} r={7} fill={FUR2} />
+      {/* feet */}
+      <Circle cx={cx - 6} cy={cyBody + 11} r={3} fill={FUR} />
+      <Circle cx={cx + 6} cy={cyBody + 11} r={3} fill={FUR} />
+      {/* tail */}
+      <Circle cx={cx + 10} cy={cyBody + 6} r={3} fill={FUR} />
+      <Circle
+        cx={cx + 13}
+        cy={cyBody + 6 + Math.round(Math.sin(tickRef.t * 0.07) * 3)}
+        r={2}
+        fill={FUR2}
+      />
+      {/* head */}
+      <Circle cx={cx} cy={hy} r={10} fill={OL} />
+      <Circle cx={cx} cy={hy} r={9} fill={FUR} />
+      {/* ears */}
+      <Circle cx={cx - 7} cy={hy - 7} r={4} fill={FUR} />
+      <Circle cx={cx + 7} cy={hy - 7} r={4} fill={FUR} />
+      <Circle cx={cx - 7} cy={hy - 7} r={1.5} fill="rgba(216,136,120,0.6)" />
+      <Circle cx={cx + 7} cy={hy - 7} r={1.5} fill="rgba(216,136,120,0.6)" />
+      {/* cheek blush on joy */}
+      {joy > 0.15 && (
+        <>
+          <Circle cx={cx - 6} cy={hy + 2} r={2} fill="rgba(216,136,120,0.3)" />
+          <Circle cx={cx + 6} cy={hy + 2} r={2} fill="rgba(216,136,120,0.3)" />
+        </>
+      )}
+      {/* eyes — blink or open */}
+      {tickRef.blinking ? (
+        <>
+          <Rect x={cx - 5} y={hy - 1} width={3} height={2} fill={OL} />
+          <Rect x={cx + 2} y={hy - 1} width={3} height={2} fill={OL} />
+        </>
+      ) : (
+        <>
+          <Circle cx={cx - 3.5} cy={hy} r={2.5} fill="#9AB4C4" />
+          <Circle cx={cx + 3.5} cy={hy} r={2.5} fill="#9AB4C4" />
+          <Circle cx={cx - 3.5} cy={hy} r={1.2} fill={OL} />
+          <Circle cx={cx + 3.5} cy={hy} r={1.2} fill={OL} />
+        </>
+      )}
+      {/* nose */}
+      <Rect x={cx - 1} y={hy + 3} width={2} height={2} fill={EAR} />
+      {/* mouth — happy smile when joyful, neutral else */}
+      {joy > 0.2 ? (
+        <Rect x={cx - 2} y={hy + 5} width={4} height={2} fill={OL} />
+      ) : (
+        <>
+          <Rect x={cx} y={hy + 5} width={1} height={2} fill={OL} />
+          <Rect x={cx - 2} y={hy + 6} width={2} height={1} fill={OL} />
+          <Rect x={cx + 1} y={hy + 6} width={2} height={1} fill={OL} />
+        </>
+      )}
+      {/* hearts on big cheer */}
+      {joy > 0.4 && (
+        <>
+          <Rect
+            x={cx + 9}
+            y={hy - 12 - (1 - joy) * 8}
+            width={2}
+            height={2}
+            fill={`rgba(224,160,180,${joy})`}
+          />
+          <Rect
+            x={cx + 8}
+            y={hy - 11 - (1 - joy) * 8}
+            width={4}
+            height={1}
+            fill={`rgba(224,160,180,${joy})`}
+          />
+        </>
+      )}
+    </Svg>
+  );
 };
 
+// ═════════════════════════════════════════════════════════════════════
+// XpFloater — small "+N" that floats up from the Mark-it-done button.
+// ═════════════════════════════════════════════════════════════════════
+const XpFloater = ({ amount, color }: { amount: number; color: string }) => {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const ty = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.8)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.delay(420),
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.timing(ty, {
+        toValue: -38,
+        duration: 1100,
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.spring(scale, {
+          toValue: 1.15,
+          friction: 5,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scale, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  }, [opacity, ty, scale]);
+
+  return (
+    <Animated.Text
+      pointerEvents="none"
+      style={[
+        styles.floaterText,
+        {
+          color,
+          opacity,
+          transform: [{ translateY: ty }, { scale }],
+        },
+      ]}
+    >
+      +{amount}
+    </Animated.Text>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// Helpers
+// ═════════════════════════════════════════════════════════════════════
+const greeting = (h: number): string => {
+  if (h < 5) return 'Still up';
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  if (h < 21) return 'Good evening';
+  return 'Winding down';
+};
+
+const formatDate = (d: Date): string => {
+  const days = [
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+  ];
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  return `${days[d.getDay()]} · ${months[d.getMonth()]} ${d.getDate()}`;
+};
+
+const whyLine = (
+  q: Quest,
+  inWindow: boolean,
+  windowLabel: string,
+): string => {
+  if (inWindow && q.importance === 'high')
+    return "The heavy one — easier now, while you're sharp.";
+  if (inWindow) return `A good fit for your ${windowLabel.toLowerCase()}.`;
+  if (q.importance === 'low') return 'A quick win to get moving.';
+  if (q.importance === 'high')
+    return "Big one, whenever you're ready — no rush.";
+  return 'Next up when you want it.';
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// FollowupChip — tappable answer in the guided follow-up card.
+// "Suggested" chips have a soft accent fill (Lumi pre-picked it).
+// ═════════════════════════════════════════════════════════════════════
+const FollowupChip = ({
+  label,
+  onPress,
+  accentColor,
+  suggested,
+}: {
+  label: string;
+  onPress: () => void;
+  accentColor: string;
+  suggested?: boolean;
+}) => (
+  <Pressable
+    onPress={onPress}
+    style={({ pressed }) => [
+      styles.followupChip,
+      suggested && {
+        backgroundColor: `${accentColor}1F`,
+        borderColor: accentColor,
+      },
+      pressed && { opacity: 0.7 },
+    ]}
+    hitSlop={4}
+  >
+    <Text
+      style={[
+        styles.followupChipText,
+        suggested && {
+          color: accentColor,
+          fontFamily: fonts.interSemi,
+        },
+      ]}
+    >
+      {label}
+    </Text>
+  </Pressable>
+);
+
+/** One-line "what Lumi guessed" caption for a previewed SmartTask:
+ *  e.g. "11 pm today · evening", "tomorrow morning", "set to repeat 🔁",
+ *  "someday list". Used inside the preview card. */
+const previewMetaLine = (
+  t: SmartTask,
+  effective: ReturnType<typeof useEffectiveWindows>,
+): string => {
+  const winLabel = effective[t.window]?.label.toLowerCase() ?? t.window;
+  const local = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+  const todayISO = local(new Date());
+  const tomorrowISO = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return local(d);
+  })();
+  const dayWord =
+    t.date === tomorrowISO ? 'tomorrow' : t.date === todayISO ? 'today' : t.date;
+  if (t.recur) return 'set to repeat 🔁';
+  if (t.window === 'someday') return 'someday list';
+  if (t.timeMode === 'anchored' && t.at != null) {
+    const h = Math.floor(t.at / 60);
+    const m = t.at % 60;
+    const hr = h % 12 || 12;
+    const suf = h < 12 ? 'am' : 'pm';
+    const timeStr =
+      m === 0 ? `${hr} ${suf}` : `${hr}:${String(m).padStart(2, '0')} ${suf}`;
+    return `${timeStr}${dayWord ? ` ${dayWord}` : ''} · ${winLabel}`;
+  }
+  return `${dayWord ? `${dayWord} ` : ''}${winLabel}`;
+};
+
+/** Render a quest's scheduled time as a short stamp ("8 pm", "2:30 pm").
+ *  Returns null for windowed/someday quests so callers can skip the
+ *  stamp entirely. */
+const fmtScheduled = (q: Quest): string | null => {
+  if (q.scheduledHour == null) return null;
+  const h = q.scheduledHour;
+  const m = q.scheduledMinute ?? 0;
+  const hr = h % 12 || 12;
+  const suf = h < 12 ? 'am' : 'pm';
+  return m === 0
+    ? `${hr} ${suf}`
+    : `${hr}:${String(m).padStart(2, '0')} ${suf}`;
+};
+
+/** Always-visible × button at the top-right of the hero card so the
+ *  user can dismiss a task they don't want to do. First-time users
+ *  can SEE the affordance instead of needing to learn long-press.
+ *  Hair-thin border + slight surface tint so it reads as a button
+ *  on top of the card without competing for attention with the
+ *  ember "Mark it done" CTA. */
+/**
+ * HeroOverflowMenu — ⋯ button at the top-right of the hero card with
+ * a small popover (Edit / Delete). Replaces the previous floating ×
+ * because the hero card now supports inline editing of title +
+ * description, and putting both behind one menu keeps the calm
+ * "one decision" feel of the card (single ember CTA stays the focal
+ * point).
+ *
+ * Layout matches the second screenshot the user shared: rounded
+ * pencil row on top in bone, trash row below in terra/destructive.
+ */
+const HeroOverflowMenu = ({
+  quest,
+  onEdit,
+}: {
+  quest: Quest;
+  onEdit: (q: Quest) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  // Screen-absolute anchor for the popover, captured the moment the
+  // button is tapped. Without this the popover used a hard-coded top
+  // that drifted above the dots on tall devices.
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(
+    null,
+  );
+  const btnRef = useRef<View>(null);
+  const screenW = Dimensions.get('window').width;
+  const confirm = useDeleteConfirm(quest.id, quest.title);
+  const openMenu = () => {
+    btnRef.current?.measureInWindow((x, y, w, h) => {
+      setAnchor({
+        // Sit just below the dots with a 6pt breathing gap.
+        top: y + h + 6,
+        // Right-align to the button's right edge.
+        right: Math.max(8, screenW - (x + w)),
+      });
+      setOpen(true);
+    });
+  };
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        zIndex: 5,
+      }}
+    >
+      <Pressable
+        ref={btnRef}
+        onPress={() => {
+          Haptics.selectionAsync();
+          if (open) setOpen(false);
+          else openMenu();
+        }}
+        hitSlop={10}
+        accessibilityRole="button"
+        accessibilityLabel="More actions"
+        style={{
+          width: 28,
+          height: 28,
+          // Rounded square (not a circle) per the user's reference
+          // — softer corners, darker fill, dots ride the optical
+          // middle.
+          borderRadius: 8,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: open
+            ? 'rgba(176,163,139,0.18)'
+            : 'rgba(255,255,255,0.06)',
+          borderWidth: 1,
+          borderColor: 'rgba(176,163,139,0.22)',
+          flexDirection: 'row',
+          gap: 3,
+        }}
+      >
+        {[0, 1, 2].map((i) => (
+          <View
+            key={i}
+            style={{
+              width: 3,
+              height: 3,
+              borderRadius: 1.5,
+              backgroundColor: '#B0A38B',
+            }}
+          />
+        ))}
+      </Pressable>
+
+      {open && anchor && (
+        <>
+          {/* Tap-outside scrim to dismiss. Mounted absolutely
+              filling the whole viewport so a tap anywhere outside
+              the popover closes it. */}
+          <Modal
+            visible
+            transparent
+            animationType="none"
+            onRequestClose={() => setOpen(false)}
+          >
+            <Pressable
+              onPress={() => setOpen(false)}
+              style={{ flex: 1 }}
+            >
+              <View
+                style={{
+                  position: 'absolute',
+                  // Anchored to the dots button's actual screen position
+                  // (measured on open) so the popover always lands just
+                  // below it on every device.
+                  top: anchor.top,
+                  right: anchor.right,
+                  minWidth: 180,
+                  borderRadius: 14,
+                  backgroundColor: '#1A1512',
+                  borderWidth: 1,
+                  borderColor: 'rgba(176,163,139,0.25)',
+                  paddingVertical: 6,
+                  shadowColor: '#000',
+                  shadowOpacity: 0.45,
+                  shadowRadius: 18,
+                  shadowOffset: { width: 0, height: 8 },
+                  elevation: 12,
+                }}
+              >
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setOpen(false);
+                    onEdit(quest);
+                  }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    paddingHorizontal: 14,
+                    paddingVertical: 12,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: fonts.inter,
+                      fontSize: 14,
+                      color: '#ECE0CB',
+                    }}
+                  >
+                    ✎
+                  </Text>
+                  <Text
+                    style={{
+                      fontFamily: fonts.interSemi,
+                      fontSize: 14,
+                      color: '#ECE0CB',
+                      letterSpacing: -0.1,
+                    }}
+                  >
+                    Edit quest
+                  </Text>
+                </Pressable>
+                <View
+                  style={{
+                    height: 1,
+                    backgroundColor: 'rgba(176,163,139,0.12)',
+                    marginHorizontal: 12,
+                  }}
+                />
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setOpen(false);
+                    confirm();
+                  }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    paddingHorizontal: 14,
+                    paddingVertical: 12,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: fonts.inter,
+                      fontSize: 14,
+                      color: '#E07A4F',
+                    }}
+                  >
+                    🗑
+                  </Text>
+                  <Text
+                    style={{
+                      fontFamily: fonts.interSemi,
+                      fontSize: 14,
+                      color: '#E07A4F',
+                      letterSpacing: -0.1,
+                    }}
+                  >
+                    Delete quest
+                  </Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          </Modal>
+        </>
+      )}
+    </View>
+  );
+};
+
+// (Legacy wrapper retained for the very few callers that still want
+// a standalone × — kept as no-op alias in case future hero variants
+// need just the delete. New code should use HeroOverflowMenu.)
+const HeroDeleteBtn = ({ id, title }: { id: string; title: string }) => {
+  const confirm = useDeleteConfirm(id, title);
+  return (
+    <Pressable
+      onPress={confirm}
+      hitSlop={12}
+      style={{
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(176,163,139,0.28)',
+        zIndex: 5,
+      }}
+    >
+      <Text
+        style={{
+          color: '#B0A38B',
+          fontSize: 14,
+          lineHeight: 16,
+          marginTop: -1,
+        }}
+      >
+        ×
+      </Text>
+    </Pressable>
+  );
+};
+
+/** Legacy floating × button (used by the hero card + history rows).
+ *  In the "Then, when you're ready" list this was replaced by the
+ *  pill-style RestDeletePill below so the row's right-side actions
+ *  read as a consistent row of affordances. */
+const RestDeleteBtn = ({ id, title }: { id: string; title: string }) => {
+  const confirm = useDeleteConfirm(id, title);
+  return (
+    <Pressable
+      onPress={(e) => {
+        // Don't let the outer row's "complete this" press fire too.
+        e.stopPropagation();
+        confirm();
+      }}
+      hitSlop={10}
+      style={{
+        marginLeft: 6,
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.04)',
+        borderWidth: 1,
+        borderColor: 'rgba(176,163,139,0.22)',
+      }}
+    >
+      <Text
+        style={{
+          color: '#6E655A',
+          fontSize: 12,
+          lineHeight: 14,
+          marginTop: -1,
+        }}
+      >
+        ×
+      </Text>
+    </Pressable>
+  );
+};
+
+/** Delete pill — used in the rest row's meta line. Styled to match
+ *  the Edit pill (same border / padding / typography) so the two
+ *  right-side actions read as a single consistent group. */
+const RestDeletePill = ({ id, title }: { id: string; title: string }) => {
+  const confirm = useDeleteConfirm(id, title);
+  return (
+    <Pressable
+      onPress={(e) => {
+        e.stopPropagation();
+        confirm();
+      }}
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityLabel="Delete task"
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        borderWidth: 1,
+        borderColor: 'rgba(176,163,139,0.22)',
+        borderRadius: 100,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        marginLeft: 6,
+      }}
+    >
+      <Text
+        style={{
+          fontFamily: fonts.inter,
+          fontSize: 12,
+          color: '#B0A38B',
+          lineHeight: 14,
+          marginTop: -1,
+        }}
+      >
+        ×
+      </Text>
+      <Text
+        style={{
+          fontFamily: fonts.interSemi,
+          fontSize: 11,
+          color: '#B0A38B',
+          letterSpacing: -0.1,
+        }}
+      >
+        Delete
+      </Text>
+    </Pressable>
+  );
+};
+
+/**
+ * RestNote — note row in the "Then, when you're ready" list.
+ *
+ * Renders the note clamped to 2 lines and shows a `more` / `less`
+ * toggle ONLY when the underlying text actually overflows. Detection
+ * is via onTextLayout: first render is unclamped, the layout reports
+ * how many lines the full text needs; if > 2, we flip an overflow
+ * flag, the next render clamps, and the toggle appears. The user
+ * doesn't perceive the pre-clamp frame because React Native paints
+ * after both render passes settle.
+ */
+// Inline style constants for the rest-note since the makeStyles
+// factory lives inside the screen component closure. Mirrors the
+// values in `restNote` / `restNoteToggle` / `restNoteToggleHit`.
+const REST_NOTE_TEXT = {
+  fontFamily: fonts.fraunces,
+  fontStyle: 'italic' as const,
+  fontSize: 12.5,
+  color: C.mute,
+  marginTop: 3,
+  lineHeight: 18,
+};
+const REST_NOTE_TOGGLE_HIT = {
+  alignSelf: 'flex-start' as const,
+  paddingTop: 2,
+  paddingBottom: 2,
+  marginTop: 2,
+};
+const REST_NOTE_TOGGLE_TEXT = {
+  fontFamily: fonts.interSemi,
+  fontSize: 11.5,
+};
+
+/**
+ * HeroComment — boxed "YOUR COMMENT" section on the hero card.
+ *
+ * Layout per lumi-home-v2 spec:
+ *   ┌─────────────────────────────────────────────┐
+ *   │ 💬  YOUR COMMENT                            │
+ *   │ Front desk said to bring my insurance card  │
+ *   │ AND Dr. Lee's referral from last week —     │
+ *   │ the one about the left foot. They can't…    │
+ *   │ more                                        │
+ *   └─────────────────────────────────────────────┘
+ *
+ * Ember accent border + tint, italic Fraunces body, clamps to 3
+ * lines with a `more` / `less` toggle when the comment overflows.
+ * Overflow is auto-detected via onTextLayout, identical pattern to
+ * the rest-row RestNote.
+ */
+/** SVG speech-bubble glyph for the YOUR COMMENT box. Matches the
+ *  mock's stroke-only style instead of the emoji 💬 (which renders
+ *  differently across iOS/Android and can't take the ember tint). */
+const SpeechBubbleIcon = ({ color }: { color: string }) => (
+  <Svg width={15} height={15} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="M5 5h14a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 16H9l-4 3.5V6.5A1.5 1.5 0 0 1 6.5 5"
+      stroke={color}
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+const HeroComment = ({
+  comment,
+  accentColor,
+}: {
+  comment: string;
+  accentColor: string;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        gap: 9,
+        paddingVertical: 11,
+        paddingHorizontal: 13,
+        borderRadius: 13,
+        backgroundColor: hexA(accentColor, 0.1),
+        borderWidth: 1,
+        borderColor: hexA(accentColor, 0.32),
+        marginBottom: 12,
+      }}
+    >
+      <View style={{ marginTop: 1, flexShrink: 0 }}>
+        <SpeechBubbleIcon color={accentColor} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          style={{
+            fontFamily: fonts.interSemi,
+            fontSize: 9,
+            letterSpacing: 1.2,
+            textTransform: 'uppercase',
+            color: accentColor,
+            marginBottom: 3,
+          }}
+        >
+          YOUR COMMENT
+        </Text>
+        <Text
+          onTextLayout={(e) => {
+            if (!overflowing && e.nativeEvent.lines.length > 3) {
+              setOverflowing(true);
+            }
+          }}
+          numberOfLines={overflowing && !open ? 3 : undefined}
+          style={{
+            fontFamily: fonts.inter,
+            fontSize: 13,
+            color: '#ECE0CB',
+            lineHeight: 19,
+            letterSpacing: -0.1,
+          }}
+        >
+          {comment}
+        </Text>
+        {overflowing && (
+          <Pressable
+            onPress={() => setOpen((o) => !o)}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: open }}
+            style={{
+              alignSelf: 'flex-start',
+              paddingTop: 5,
+              paddingBottom: 2,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.interSemi,
+                fontSize: 11.5,
+                color: accentColor,
+              }}
+            >
+              {open ? 'less' : 'more'}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+};
+
+/**
+ * HeroDescription — plain text under the hero title. Same look as
+ * the inline `styles.heroWhy` (boneDim Inter, 13/19) but clamps to
+ * 3 lines with a `more` / `less` toggle when the text overflows.
+ *
+ * Self-measuring via onTextLayout: first render is unclamped so we
+ * count lines, then we flip an overflow flag and clamp the next
+ * render. Without this, a 4+ line note like "Front desk said to
+ * bring my insurance card AND Dr. Lee's referral from last week —
+ * the one about the left foot. They can't process the X-ray
+ * without both…" would blow out the hero card's vertical rhythm
+ * (the Mark it done CTA gets pushed off the visible area).
+ */
+const HERO_DESC_TEXT = {
+  fontFamily: fonts.inter,
+  fontSize: 13,
+  color: '#8EA0B4', // C.dusk
+  lineHeight: 20,
+  marginBottom: 16,
+  letterSpacing: -0.05,
+};
+const HERO_DESC_TOGGLE = {
+  fontFamily: fonts.interSemi,
+  fontSize: 12,
+};
+const HERO_DESC_TOGGLE_HIT = {
+  alignSelf: 'flex-start' as const,
+  marginTop: -10, // pull toggle closer to the clamped text
+  marginBottom: 14,
+  paddingTop: 2,
+  paddingBottom: 2,
+};
+
+const HeroDescription = ({
+  text,
+  accentColor,
+}: {
+  text: string;
+  accentColor: string;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  return (
+    <>
+      <Text
+        style={HERO_DESC_TEXT}
+        onTextLayout={(e) => {
+          if (!overflowing && e.nativeEvent.lines.length > 3) {
+            setOverflowing(true);
+          }
+        }}
+        numberOfLines={overflowing && !open ? 3 : undefined}
+      >
+        {text}
+      </Text>
+      {overflowing && (
+        <Pressable
+          onPress={() => setOpen((o) => !o)}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
+          style={HERO_DESC_TOGGLE_HIT}
+        >
+          <Text style={[HERO_DESC_TOGGLE, { color: accentColor }]}>
+            {open ? 'less' : 'more'}
+          </Text>
+        </Pressable>
+      )}
+    </>
+  );
+};
+
+const RestNote = ({
+  note,
+  open,
+  onToggle,
+  accentColor,
+}: {
+  note: string;
+  open: boolean;
+  onToggle: () => void;
+  accentColor: string;
+}) => {
+  const [overflowing, setOverflowing] = useState(false);
+  return (
+    <>
+      <Text
+        style={REST_NOTE_TEXT}
+        onTextLayout={(e) => {
+          if (!overflowing && e.nativeEvent.lines.length > 2) {
+            setOverflowing(true);
+          }
+        }}
+        numberOfLines={overflowing && !open ? 2 : undefined}
+      >
+        {note}
+      </Text>
+      {overflowing && (
+        <Pressable
+          onPress={onToggle}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
+          style={REST_NOTE_TOGGLE_HIT}
+        >
+          <Text style={[REST_NOTE_TOGGLE_TEXT, { color: accentColor }]}>
+            {open ? 'less' : 'more'}
+          </Text>
+        </Pressable>
+      )}
+    </>
+  );
+};
+
+/** ISO completedAt → "just now" / "12 min ago" / "1 hr ago". Used in
+ *  the "Done today" history list so the user sees how recently they
+ *  finished each thing. Returns null if we can't read the timestamp. */
+const fmtAgo = (iso: string | null, now: Date): string | null => {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+  const ms = Math.max(0, now.getTime() - then);
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hr ago`;
+  return 'earlier';
+};
+
+/** Minutes-since-midnight → "9 am" / "9:30 pm". Used for the AM/PM
+ *  chip labels on previewed tasks where the user said a bare hour. */
+const fmtMin = (min: number): string => {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const hr = h % 12 || 12;
+  const suf = h < 12 ? 'am' : 'pm';
+  return m === 0
+    ? `${hr} ${suf}`
+    : `${hr}:${String(m).padStart(2, '0')} ${suf}`;
+};
+
+const hexA = (hex: string, a: number): string => {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// Screen
+// ═════════════════════════════════════════════════════════════════════
 export default function Home() {
-  const name = useUserStore((s) => s.name);
-  const shieldAvailable = useUserStore((s) => s.shieldAvailable);
+  const router = useRouter();
+  const accent = useAccent();
+  const styles = useMemo(() => makeStyles(accent), [accent]);
+  const effectiveWindows = useEffectiveWindows();
+  // Companion-mode flags — gate the playful chrome (Luna, XP, cheer).
+  const companion = useCompanionMode();
+  // Ambient mood — reflects sleep window, overdue pile, streak.
+  // The nook cat updates as the user's state changes.
+  const ambientMood = useAmbientLunaMood();
+  // Transient "celebration" override — when the user completes a
+  // quest, the nook cat flips to 'happy' for ~30s then springs back
+  // to ambient. A small, earned moment of feedback that doesn't
+  // require any cheap toaster animation.
+  const [celebrating, setCelebrating] = useState(false);
+  const celebrateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerCelebrate = () => {
+    if (celebrateTimerRef.current) {
+      clearTimeout(celebrateTimerRef.current);
+    }
+    setCelebrating(true);
+    celebrateTimerRef.current = setTimeout(() => {
+      setCelebrating(false);
+      celebrateTimerRef.current = null;
+    }, 30_000);
+  };
+  // Cleanup on unmount so a stale timeout can't try to setState
+  // after the screen's torn down.
+  useEffect(
+    () => () => {
+      if (celebrateTimerRef.current) clearTimeout(celebrateTimerRef.current);
+    },
+    [],
+  );
+  const nookMood = celebrating ? 'happy' : ambientMood;
+
+  // ── Store ────────────────────────────────────────────────────────
+  const xp = useUserStore((s) => s.xp);
+  const streak = useUserStore((s) => s.streak);
   const addXp = useUserStore((s) => s.addXp);
+  const addShard = useUserStore((s) => s.addShard);
   const registerActivity = useUserStore((s) => s.registerActivity);
+  // Smart-capture context (learned rhythms → smart Layer-2 placement).
+  const sharpWindow = useUserStore((s) => s.sharpWindow);
+  const foggyWindow = useUserStore((s) => s.foggyWindow);
+  const struggles = useUserStore((s) => s.struggles);
+  const userName = useUserStore((s) => s.name);
+  // Anchors give the real day-boundaries (wake / sleep) so smart
+  // capture honors the user's actual bedtime, not the nominal 22:00
+  // evening-window end. Captured at 10:15 PM with a 11:45 PM bedtime
+  // and saying "before bed" → land tonight, not tomorrow morning.
+  const anchors = useUserStore((s) => s.anchors);
 
   const quests = useQuestStore((s) => s.quests);
   const toggle = useQuestStore((s) => s.toggle);
-  const addMany = useQuestStore((s) => s.addMany);
+  const addQuest = useQuestStore((s) => s.addQuest);
+  const refreshRecurring = useQuestStore((s) => s.refreshRecurring);
+  const setQuestDate = useQuestStore((s) => s.setDate);
+  const moveQuestWindow = useQuestStore((s) => s.moveWindow);
+  const updateQuestTitle = useQuestStore((s) => s.updateTitle);
+  const setQuestNote = useQuestStore((s) => s.setNote);
+  const setQuestComment = useQuestStore((s) => s.setComment);
+  const recordCorrection = useCorrectionsStore((s) => s.record);
+  const recentCorrections = useCorrectionsStore((s) => s.recent);
   const todayQuests = useMemo(() => selectTodayQuests(quests), [quests]);
 
-  const [dump, setDump] = useState('');
-  const [parsing, setParsing] = useState(false);
+  // ── Suggestions ──────────────────────────────────────────────────
+  const suggestions = useSuggestionsStore((s) => s.suggestions);
+  const dismissSuggestion = useSuggestionsStore((s) => s.dismiss);
+  const consumeSuggestion = useSuggestionsStore((s) => s.consume);
+  const setAllSuggestions = useSuggestionsStore((s) => s.setAll);
+  const suppressed = useSuggestionsStore((s) => s.suppressed);
 
-  const handleToggle = (id: string) => {
-    const q = toggle(id);
-    if (!q) return;
-    if (q.completed) {
-      addXp(q.xpReward);
-      registerActivity();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  // ── Local state ──────────────────────────────────────────────────
+  const [now, setNow] = useState(() => new Date());
+  const [swap, setSwap] = useState(0);
+  const [cheer, setCheer] = useState(0);
+  const [capOpen, setCapOpen] = useState(false);
+  const [capText, setCapText] = useState('');
+  const [moreOpen, setMoreOpen] = useState(false);
+  // Someday → real-date sheet target. When set, the MoveBackToDateSheet
+  // opens for this task.
+  const [movingBack, setMovingBack] = useState<Quest | null>(null);
+  // Which row in "Then, when you're ready" has its note expanded.
+  // Inline "more / less" toggle (per lumi-home-v2 mock) so long notes
+  // are reachable without leaving the list.
+  const [openNoteId, setOpenNoteId] = useState<string | null>(null);
+  // The quest currently being edited via EditQuestSheet. When set,
+  // the sheet opens with the title + description fields pre-filled.
+  const [editingQuest, setEditingQuest] = useState<Quest | null>(null);
+
+  /** Pull a Someday task back onto a real day with a sensible default
+   *  window (morning). User can drag/edit time later. Shared with the
+   *  same flow in Untangle. */
+  const moveQuestBack = (q: Quest, dateISO: string) => {
+    setQuestDate(q.id, dateISO);
+    moveQuestWindow(q.id, 'morning');
+  };
+  const [toast, setToast] = useState<string | null>(null);
+  // Undo state for accidental "Mark it done" taps. Lives a hair longer
+  // than the regular toast so a user has time to read + react.
+  const [undoState, setUndoState] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Voice (Whisper) ──────────────────────────────────────────────
+  const voice = useVoice();
+
+  // ── Preview-then-confirm state ───────────────────────────────────
+  // After capture, instead of auto-committing the parsed tasks, we
+  // show a "Lumi suggests" preview card. The user can:
+  //   - Approve all → commits to the tasks table
+  //   - Tweak one → edit title / date / window inline
+  //   - Cancel → discard, return to capture input
+  // Pull forward (the suggestion's pre-filled with Lumi's best guess),
+  // never force.
+  const [previewTasks, setPreviewTasks] = useState<SmartTask[] | null>(null);
+  // True while llmUnderstand is in flight for the current preview.
+  // Render swaps the placement meta line for a "Lumi is reading…"
+  // indicator on each task so the user doesn't fixate on a
+  // placeholder date/window that's about to change.
+  const [aiPending, setAiPending] = useState(false);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [editingDate, setEditingDate] = useState<'today' | 'tomorrow'>('today');
+  const [editingWindow, setEditingWindow] = useState<WindowKey>('midday');
+  // Length chips — null until the user picks one (or it was already
+  // inferred by the LLM / set by the deterministic default).
+  const [editingDurationMin, setEditingDurationMin] = useState<number | null>(
+    null,
+  );
+  const [floater, setFloater] = useState<{
+    id: string;
+    amount: number;
+    color: string;
+  } | null>(null);
+
+  // Tick the clock every minute so greeting + current window stay fresh.
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Tour + recurring refresh (carried over from v1) ──────────────
+  const tour = useTour();
+  const heroRef = useTourTarget('tour-quest');
+  const captureRef = useTourTarget('tour-oracle');
+  const tourSeen = useUserStore((s) => s.tourSeen);
+  const onboardedAt = useUserStore((s) => s.onboardedAt);
+  useEffect(() => {
+    refreshRecurring();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!onboardedAt || tourSeen) return;
+    const t = setTimeout(() => tour.start(), 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onboardedAt, tourSeen]);
+
+  // ── Recurrence detector → suggestions (math layer, no LLM) ───────
+  useEffect(() => {
+    const suppressedSet = new Set(suppressed);
+    const existingTitles = new Set(
+      quests
+        .filter((q) => q.recur)
+        .map((q) => normalizeForSuppression(q.title)),
+    );
+    const detected = detectRecurrencePatterns(quests, {
+      suppressed: suppressedSet,
+      existingRecurringTitles: existingTitles,
+    });
+    setAllSuggestions(detected);
+  }, [quests, suppressed, setAllSuggestions]);
+
+  // ── Learning digest — drives smart-capture window inference ─────
+  const digest = useLearningDigest();
+
+  // ── Derived ──────────────────────────────────────────────────────
+  const cw = currentWindowFor(effectiveWindows, now);
+  const order = useMemo(
+    () => [cw, ...WIN_ORDER.filter((w) => w !== cw)],
+    [cw],
+  );
+  const candidates = useMemo(() => {
+    const open = todayQuests.filter((q) => !q.completed);
+    return [...open].sort((a, b) => {
+      const wa = order.indexOf(a.window);
+      const wb = order.indexOf(b.window);
+      if (wa !== wb) return wa - wb;
+      return (
+        IMPORTANCE[b.importance].rank - IMPORTANCE[a.importance].rank
+      );
+    });
+  }, [todayQuests, order]);
+  const allDone = candidates.length === 0 && todayQuests.length > 0;
+  const totallyEmpty = todayQuests.length === 0;
+  const hero = candidates.length
+    ? candidates[swap % candidates.length]
+    : null;
+  const rest = hero ? candidates.filter((q) => q.id !== hero.id) : [];
+  const visibleRest = moreOpen ? rest : rest.slice(0, 3);
+
+  const totalToday = todayQuests.filter((q) => q.window !== 'someday').length;
+  // Today's completed quests, freshest first — drives both the progress
+  // dot row at the top AND the "Done today" history section near the
+  // bottom (the user can tap any row to un-complete after the 6-second
+  // undo toast has timed out).
+  const doneTodayList = useMemo(() => {
+    const dayKey = todayKey();
+    return todayQuests
+      .filter((q) => {
+        if (!q.completed || q.window === 'someday' || !q.completedAt) {
+          return false;
+        }
+        // Compare LOCAL Y-M-D both sides. Slicing the ISO string gave
+        // UTC, which silently hid evening-completed tasks (a quest
+        // done at 8 PM PT has completedAt = "tomorrow" in UTC, so
+        // slice(0,10) didn't match today's local key — the user
+        // never saw their own history).
+        const d = new Date(q.completedAt);
+        const ck = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+          2,
+          '0',
+        )}-${String(d.getDate()).padStart(2, '0')}`;
+        return ck === dayKey;
+      })
+      .sort((a, b) => {
+        const ta = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+        const tb = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+        return tb - ta;
+      });
+  }, [todayQuests]);
+  const doneToday = doneTodayList.length;
+  const [moreDoneOpen, setMoreDoneOpen] = useState(false);
+  // Whole "Done today" section collapses so it doesn't clutter Home
+  // when the user isn't undoing. Default CLOSED — keeps Home calm by
+  // default; the count in the header still shows what's there.
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // Today's XP — sum of completed-today quests' xpReward. The store
+  // tracks lifetime XP only; we derive today's separately for the
+  // quiet game-layer line. Compares LOCAL Y-M-D both sides so an
+  // evening completion in PT doesn't roll to tomorrow UTC and zero
+  // out the today XP.
+  const xpToday = useMemo(() => {
+    const todayLocal = todayKey();
+    return todayQuests
+      .filter((q) => {
+        if (!q.completed || !q.completedAt) return false;
+        const d = new Date(q.completedAt);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}` === todayLocal;
+      })
+      .reduce((sum, q) => sum + (q.xpReward ?? 0), 0);
+  }, [todayQuests, now]);
+
+  const heroSuggestion: Suggestion | null = suggestions[0] ?? null;
+
+  // ── Actions ──────────────────────────────────────────────────────
+  const showToast = (text: string) => {
+    setToast(text);
+    setTimeout(() => setToast(null), 2400);
+  };
+
+  const completeQuest = (q: Quest) => {
+    const wasDone = q.completed;
+    if (wasDone) return;
+    const next = toggle(q.id);
+    if (!next) return;
+
+    const gain = q.xpReward;
+    addXp(gain);
+    registerActivity();
+    addShard();
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setSwap(0);
+
+    // Celebratory chrome — only fires in Full mode. In Minimal /
+    // Focused the completion stays a quiet check (calmer surface).
+    // The fan-out above (XP, shard, streak, registerActivity) ALWAYS
+    // fires so data accrues consistently — this only gates VISUAL
+    // feedback (companion-mode-spec §2).
+    if (companion.showCheer) {
+      setCheer((c) => c + 1);
+      triggerCelebrate();
+      const fId = q.id + '-' + Date.now();
+      setFloater({
+        id: fId,
+        amount: gain,
+        color: IMPORTANCE[q.importance].color,
+      });
+      setTimeout(() => {
+        setFloater((cur) => (cur?.id === fId ? null : cur));
+      }, 1200);
+    }
+
+    // Surface an Undo so accidental taps can be reversed within 6s.
+    // The XP guardrail in questStore means an undo doesn't subtract
+    // XP — you keep the small win for trying.
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndoState({ id: q.id, title: q.title });
+    undoTimerRef.current = setTimeout(() => {
+      setUndoState((cur) => (cur?.id === q.id ? null : cur));
+    }, 6000);
+  };
+
+  /** Tap the Undo chip on the post-complete toast. Flips the task
+   *  back to not-done; XP stays banked (see XP guardrail). */
+  const undoComplete = () => {
+    if (!undoState) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    toggle(undoState.id);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndoState(null);
+  };
+
+  /** Un-complete a task from the "Done today" history list. One tap
+   *  (no confirm) — un-completing is non-destructive (the task simply
+   *  comes back to your day). The task ALWAYS stays on today:
+   *    - if the original slot is still future → no change
+   *    - if it's already passed → keep on today, no reschedule —
+   *      the Time tab will show it past + tagged "missed" so the
+   *      user can do it now or move it explicitly. We don't silently
+   *      push to tomorrow because it hides the fact that they missed
+   *      it, which is information they need.
+   *  A toast reports what happened so the user isn't surprised. */
+  const undoFromHistory = (q: Quest) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const todayISO = todayKey();
+
+    let toastLine = `Brought back · ${q.title}`;
+
+    // Was the original slot past now? If so, signal that in the
+    // toast so the user isn't surprised to see it tagged "missed".
+    const wasOnToday = q.date === todayISO;
+    let isMissed = false;
+    if (wasOnToday) {
+      if (q.scheduledHour != null) {
+        const taskMin = q.scheduledHour * 60 + (q.scheduledMinute ?? 0);
+        if (taskMin <= nowMin) isMissed = true;
+      } else if (q.window !== 'someday') {
+        const winEnd =
+          (effectiveWindows[q.window].end ?? 24) * 60;
+        if (nowMin >= winEnd) isMissed = true;
+      }
+    }
+    if (isMissed) {
+      toastLine = `Brought back · still on today (missed earlier)`;
+    }
+
+    toggle(q.id);
+    showToast(toastLine);
+  };
+
+  // ── Capture helpers ──────────────────────────────────────────────
+
+  /** Write one SmartTask to the shared tasks table. Fires a silent
+   *  LLM title-cleanup pass in the background if Anthropic is wired —
+   *  the deterministic title shows instantly, and Claude polishes it
+   *  to a tidy imperative ~1s later. Quietly noop on failure.
+   */
+  const commitTask = (t: SmartTask) => {
+    const hasTime = t.at != null;
+
+    // When the user captures a windowed task on TODAY and the chosen
+    // window is already in progress (e.g. "meditate sometime today"
+    // captured at 12:30 PM, midday = 11–14), anchor it to a stable
+    // clock time NOW + 5 min so the Time tab renders it at one fixed
+    // spot — not dynamically against the live `nowMin`, which made it
+    // shift every minute ("in 5 min", "in 4 min", "in 3 min"…). For
+    // tasks captured before the window opens or after it ends, leave
+    // windowed — Time tab renders at the window start and tags it
+    // "missed" if past.
+    let derivedAt: number | null = null;
+    if (
+      !hasTime &&
+      t.timeMode === 'windowed' &&
+      t.window !== 'someday' &&
+      (!t.date || t.date === todayKey())
+    ) {
+      const winStart = effectiveWindows[t.window].start;
+      const winEnd = effectiveWindows[t.window].end;
+      if (winStart != null && winEnd != null) {
+        const startMin = winStart * 60;
+        const endMin = winEnd * 60;
+        const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+        if (nowMin >= startMin && nowMin < endMin) {
+          derivedAt = Math.min(nowMin + 5, endMin - 5);
+        }
+      }
+    }
+    const effectiveAt = hasTime ? (t.at as number) : derivedAt;
+    const writeAnchor = effectiveAt != null;
+
+    // Length: prefer what the LLM extracted / the user picked. If
+    // still unknown (LLM didn't infer, user didn't override), fall
+    // back to a sane importance-keyed default — never the old
+    // hardcoded 30, which over-booked Trials and under-budgeted
+    // Whims.
+    const defaultDurationForImportance: Record<Importance, number> = {
+      high: 60,
+      medium: 30,
+      low: 15,
+    };
+    const effectiveDuration =
+      t.durationMinutes ?? defaultDurationForImportance[t.importance];
+
+    const quest = addQuest({
+      title: t.title,
+      difficulty: difficultyFromImportance(t.importance),
+      importance: t.importance,
+      window: t.window,
+      // Duration is always written — even on windowed tasks (no
+      // anchored time) — so the Time tab can render the right
+      // height for everything, not just clock-anchored items.
+      // Previously durationMinutes was bundled with the anchor
+      // spread, so a "morning" task with no specific time fell back
+      // to Time's 30-min default regardless of what the user picked.
+      durationMinutes: effectiveDuration,
+      ...(writeAnchor && {
+        scheduledHour: Math.floor(effectiveAt / 60),
+        scheduledMinute: effectiveAt % 60,
+      }),
+      ...(t.date && { date: t.date }),
+      ...(t.recur && { recur: t.recur }),
+      ...(t.note ? { note: t.note } : {}),
+    });
+    // Note: we no longer do a post-commit llmCleanTitle pass. The
+    // upstream preview already shows the LLM-cleaned title (held
+    // back via aiPending until llmUnderstand resolves), so by the
+    // time we get here the title the user approved IS the LLM's
+    // version. Doing a second post-commit swap would just risk the
+    // task title flickering AGAIN after they've already approved it
+    // — exactly the "text changes a couple seconds later" complaint.
+  };
+
+  /**
+   * Single structured-extraction LLM call (per smarter-ai spec §2).
+   * Builds the context block, sends the raw text, then patches the
+   * preview tasks in place using the math layer for placement.
+   * No-op on any failure — deterministic preview stays.
+   */
+  const upgradeWithUnderstand = async (rawText: string): Promise<void> => {
+    const todayISO = todayKey();
+    const dow = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
+      now.getDay()
+    ];
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const fmtAnchor = (m: number) => {
+      const h = Math.floor(m / 60);
+      const mn = m % 60;
+      return `${String(h).padStart(2, '0')}:${String(mn).padStart(2, '0')}`;
+    };
+    const ctx: UnderstandContext = {
+      nowLabel: `${dow}, ${todayISO} ${hh}:${mm}`,
+      todayISO,
+      sharpWindow,
+      foggyWindow,
+      peakRange:
+        digest.curve.peakStart != null && digest.curve.peakEnd != null
+          ? `${fmtAnchor(digest.curve.peakStart)}–${fmtAnchor(digest.curve.peakEnd)}`
+          : null,
+      slumpRange:
+        digest.curve.slumpStart != null && digest.curve.slumpEnd != null
+          ? `${fmtAnchor(digest.curve.slumpStart)}–${fmtAnchor(digest.curve.slumpEnd)}`
+          : null,
+      curveTrusted: quests.filter((q) => q.completed).length >= 14,
+      anchors: {
+        wake: fmtAnchor(anchors.wake),
+        breakfast: fmtAnchor(anchors.breakfast),
+        lunch: fmtAnchor(anchors.lunch),
+        dinner: fmtAnchor(anchors.dinner),
+        sleep: fmtAnchor(anchors.sleep),
+      },
+      struggles: struggles.slice(0, 3),
+      recentCorrections: summarizeCorrections(recentCorrections(6)),
+      userName: userName.trim() || undefined,
+    };
+    const result = await llmUnderstand(rawText, ctx);
+    if (!result) return;
+
+    setPreviewTasks((cur) => {
+      if (!cur) return cur;
+      // Match LLM tasks to deterministic tasks by index. If the LLM
+      // returns a different count, only patch overlapping slots —
+      // we don't want to silently drop or invent rows the user can
+      // already see.
+      const next = [...cur];
+      const n = Math.min(cur.length, result.tasks.length);
+      for (let i = 0; i < n; i += 1) {
+        next[i] = patchWithUnderstood(cur[i], result.tasks[i]);
+      }
+      return next;
+    });
+  };
+
+  /** Merge an UnderstoodTask onto a deterministic SmartTask. The
+   *  LLM's understanding wins for title/importance/energyDemand/note,
+   *  and for date/time when it's MORE specific than what the
+   *  deterministic parser found. Existing explicit user choices
+   *  (timeOptions) are preserved. */
+  const patchWithUnderstood = (
+    t: SmartTask,
+    u: UnderstoodTask,
+  ): SmartTask => {
+    // Convert LLM "when" into our shape.
+    let atFromLLM: number | null = null;
+    if (u.when?.time) {
+      const [h, m] = u.when.time.split(':').map((n) => parseInt(n, 10));
+      if (Number.isFinite(h) && Number.isFinite(m)) atFromLLM = h * 60 + m;
+    }
+    const dateFromLLM = u.when?.date ?? null;
+    const partFromLLM = u.when?.part ?? null;
+    const recurFromLLM = u.when?.recur ?? null;
+
+    // Window:
+    //   1. Explicit clock time wins (derived from `at`).
+    //   2. Else explicit LLM part-of-day wins.
+    //   3. Else if energyDemand disagrees with importance, re-route
+    //      through the energy-aware placer so a high-demand task
+    //      hidden inside a "low importance" wrapper lands in peak
+    //      instead of slump. This is the only way the LLM's
+    //      energyDemand signal actually moves the task.
+    //   4. Else keep the deterministic window.
+    const newAt = atFromLLM ?? t.at;
+    let newDate = dateFromLLM ?? t.date;
+    let newWindow = t.window;
+    if (partFromLLM) {
+      newWindow = partFromLLM;
+    } else if (
+      newAt == null &&
+      !recurFromLLM &&
+      u.energyDemand !== u.importance
+    ) {
+      const ctxForPlacement: CaptureContext = {
+        sharpWindow,
+        foggyWindow,
+        peakStart: digest.curve.peakStart,
+        peakEnd: digest.curve.peakEnd,
+        slumpStart: digest.curve.slumpStart,
+        slumpEnd: digest.curve.slumpEnd,
+        effectiveWindows,
+        now,
+        nowMin: now.getHours() * 60 + now.getMinutes(),
+        wakeMin: anchors.wake,
+        sleepMin: anchors.sleep,
+      };
+      const pick = pickWindowForDemand(
+        u.importance,
+        u.energyDemand,
+        ctxForPlacement,
+      );
+      newWindow = pick.window;
+      // When the placer rolled to tomorrow (e.g. late-night dump,
+      // wind-down zone) honor the date roll so the task doesn't
+      // land on today's already-passed window.
+      if (pick.rolledToTomorrow) {
+        const rolled = new Date(now);
+        rolled.setDate(rolled.getDate() + 1);
+        newDate = `${rolled.getFullYear()}-${String(rolled.getMonth() + 1).padStart(2, '0')}-${String(rolled.getDate()).padStart(2, '0')}`;
+      }
+    }
+
+    // Recur: pass through the LLM's cadence/day/interval. Honor the
+    // LLM's time if present.
+    const recur = recurFromLLM
+      ? {
+          every: recurFromLLM.every,
+          part:
+            partFromLLM ??
+            (newWindow === 'someday' ? 'morning' : (newWindow as 'morning' | 'midday' | 'afternoon' | 'evening')),
+          ...(recurFromLLM.day ? { day: recurFromLLM.day } : {}),
+          ...(recurFromLLM.interval != null
+            ? { interval: recurFromLLM.interval }
+            : {}),
+          ...(newAt != null ? { at: newAt } : {}),
+        }
+      : t.recur;
+
+    return {
+      ...t,
+      title: u.title || t.title,
+      importance: u.importance,
+      energyDemand: u.energyDemand,
+      at: newAt,
+      date: newDate,
+      timeMode: newAt != null ? 'anchored' : t.timeMode,
+      window: newWindow,
+      recur: recur as SmartTask['recur'],
+      needsFollowup: u.hasDeadline && newAt == null && newDate == null,
+      // LLM's inferred duration wins over the deterministic guess
+      // (it understands phrasing like "hour long meeting" where
+      // the regex parser can't). User can still override via the
+      // length chips in the preview.
+      durationMinutes: u.when?.durationMin ?? t.durationMinutes,
+      // Persist the LLM's freeform note ("bring the charger") so
+      // the detail surfaces under the title on Home / Time / lists.
+      ...(u.note ? { note: u.note } : {}),
+    };
+  };
+
+  /** Toast that confirms what landed where (single task). */
+  const placementToast = (t: SmartTask): string => {
+    const winLabel = effectiveWindows[t.window].label.toLowerCase();
+    const titlePreview =
+      t.title.length > 24 ? t.title.slice(0, 22) + '…' : t.title;
+    if (t.timeMode === 'anchored' && t.at != null) {
+      const h = Math.floor(t.at / 60);
+      const m = t.at % 60;
+      const hr = h % 12 || 12;
+      const suf = h < 12 ? 'am' : 'pm';
+      const timeStr =
+        m === 0
+          ? `${hr} ${suf}`
+          : `${hr}:${String(m).padStart(2, '0')} ${suf}`;
+      return `“${titlePreview}” — pinned to ${timeStr}. See it on Time.`;
+    }
+    if (t.recur) return `“${titlePreview}” — set to repeat 🔁`;
+    if (t.window === 'someday') return `“${titlePreview}” — tucked into someday.`;
+    return `“${titlePreview}” — tucked into your ${winLabel}.`;
+  };
+
+  const sendCapture = () => {
+    const text = capText.trim();
+    if (!text) return;
+
+    const ctx: CaptureContext = {
+      sharpWindow,
+      foggyWindow,
+      peakStart: digest.curve.peakStart,
+      peakEnd: digest.curve.peakEnd,
+      slumpStart: digest.curve.slumpStart,
+      slumpEnd: digest.curve.slumpEnd,
+      effectiveWindows,
+      now,
+      nowMin: now.getHours() * 60 + now.getMinutes(),
+      wakeMin: anchors.wake,
+      sleepMin: anchors.sleep,
+    };
+
+    const tasks = parseSmartCapture(text, ctx);
+    if (tasks.length === 0) return;
+
+    // Preview-then-confirm — surface Lumi's best guess instead of
+    // auto-committing. User approves with one tap, or tweaks
+    // title/date/window inline. Cancel discards.
+    setPreviewTasks(tasks);
+    setEditingIdx(null);
+    setCapText('');
+    setCapOpen(false);
+
+    // Background LLM upgrade — ONE structured comprehension call.
+    // While in flight, the previewed tasks show a "Lumi is reading…"
+    // indicator INSTEAD of their (possibly wrong) deterministic
+    // date/window meta — so the user never reads "tomorrow" only
+    // to watch it switch to "Aug 1" two seconds later.
+    if (isAnthropicConfigured && tasks.length > 0) {
+      setAiPending(true);
+      // Hard timeout — if the LLM doesn't respond within 5s, settle
+      // back to the deterministic preview rather than leaving the
+      // Accept button disabled and the title spinning forever.
+      // Whichever resolves first wins; .finally fires either way.
+      const timeout = new Promise<void>((resolve) =>
+        setTimeout(resolve, 5000),
+      );
+      void Promise.race([upgradeWithUnderstand(text), timeout]).finally(() =>
+        setAiPending(false),
+      );
+    }
+    Haptics.selectionAsync();
+  };
+
+  // ── Preview confirmation handlers ────────────────────────────────
+  const offsetDate = (days: number): string => {
+    const d = new Date();
+    d.setDate(d.getDate() + days); // LOCAL, matches todayKey()
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const approvePreview = () => {
+    if (!previewTasks) return;
+    for (const t of previewTasks) commitTask(t);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    showToast(
+      previewTasks.length > 1
+        ? `Saved ${previewTasks.length} tasks — sorted into your day.`
+        : placementToast(previewTasks[0]),
+    );
+    setPreviewTasks(null);
+    setEditingIdx(null);
+  };
+
+  const cancelPreview = () => {
+    setPreviewTasks(null);
+    setEditingIdx(null);
+    Haptics.selectionAsync();
+  };
+
+  /** Per-task accept — commits ONE task and removes it from the
+   *  preview. When the last one's accepted, the card closes. */
+  // When a previewed task is recurring, the user MUST confirm cadence
+  // + interval + time through HabitScheduleSheet before committing —
+  // never silently commit a recur the user hasn't verified. The
+  // schedule sheet pre-fills with what we know (LLM extract or
+  // deterministic guess), so the user is always one tap from accepting
+  // the suggestion, but never blind. Per the spec: "everything that's
+  // suggested to repeat should allow users to set an interval."
+  const [pendingScheduleTask, setPendingScheduleTask] = useState<{
+    task: SmartTask;
+    idx: number;
+  } | null>(null);
+
+  const approveTask = (idx: number) => {
+    if (!previewTasks) return;
+    const t = previewTasks[idx];
+    if (!t) return;
+    if (t.recur) {
+      Haptics.selectionAsync();
+      setPendingScheduleTask({ task: t, idx });
+      return;
+    }
+    commitTask(t);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const remaining = previewTasks.filter((_, i) => i !== idx);
+    if (remaining.length === 0) {
+      setPreviewTasks(null);
+      setEditingIdx(null);
+      showToast(placementToast(t));
+    } else {
+      setPreviewTasks(remaining);
+      // If the user was editing a later task, its index just shifted.
+      setEditingIdx(null);
     }
   };
 
-  const handleDump = async () => {
-    if (!dump.trim()) return;
-    setParsing(true);
-    try {
-      const res = await parseBrainDump(dump);
-      addMany(res.tasks);
-      addXp(XP.brainDump);
-      setDump('');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e) {
-      Alert.alert("Couldn't parse that", "Try a shorter line and resend.");
-    } finally {
-      setParsing(false);
+  /** Called when the user confirms the recurrence in the schedule
+   *  sheet. Patches the pending task with the user's rule + commits. */
+  const commitPendingSchedule = (
+    rule: import('../../constants/recur').RecurRule,
+  ) => {
+    if (!pendingScheduleTask || !previewTasks) return;
+    const { task, idx } = pendingScheduleTask;
+    const patched: SmartTask = {
+      ...task,
+      recur: rule,
+      window: rule.part as WindowKey,
+      ...(rule.at != null
+        ? { at: rule.at, timeMode: 'anchored' as const }
+        : {}),
+    };
+    commitTask(patched);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setPendingScheduleTask(null);
+    const remaining = previewTasks.filter((_, i) => i !== idx);
+    if (remaining.length === 0) {
+      setPreviewTasks(null);
+      setEditingIdx(null);
+      showToast(placementToast(patched));
+    } else {
+      setPreviewTasks(remaining);
+      setEditingIdx(null);
     }
+  };
+
+  /** Tap a "When's it due?" chip on a deadline-type previewed task.
+   *  Locks the date (today / tomorrow / this Saturday) on the task and
+   *  flips needsFollowup off so the row collapses. The user can always
+   *  Tweak to refine further. */
+  const pickFollowupDate = (
+    idx: number,
+    date: string,
+    window?: 'morning' | 'midday' | 'afternoon' | 'evening',
+  ) => {
+    if (!previewTasks) return;
+    Haptics.selectionAsync();
+    const updated = [...previewTasks];
+    updated[idx] = {
+      ...updated[idx],
+      date,
+      window: window ?? updated[idx].window,
+      needsFollowup: false,
+    };
+    setPreviewTasks(updated);
+  };
+
+  /** Pick one of the AM/PM options for an ambiguous bare-hour capture
+   *  ("today at 9" → 9 AM or 9 PM). Locks the chosen time on the
+   *  previewed task and clears the chip picker. */
+  const pickTimeOption = (idx: number, minutes: number) => {
+    if (!previewTasks) return;
+    Haptics.selectionAsync();
+    const updated = [...previewTasks];
+    updated[idx] = {
+      ...updated[idx],
+      at: minutes,
+      timeMode: 'anchored',
+      // Clearing the options collapses the chip row — the user has
+      // made the call.
+      timeOptions: undefined,
+    };
+    setPreviewTasks(updated);
+  };
+
+  /** Set the length on a previewed task — driven by the inline
+   *  "How long?" chips so the user picks before Accept commits. */
+  const pickDuration = (idx: number, minutes: number) => {
+    if (!previewTasks) return;
+    Haptics.selectionAsync();
+    const updated = [...previewTasks];
+    updated[idx] = { ...updated[idx], durationMinutes: minutes };
+    setPreviewTasks(updated);
+  };
+
+  /** Set the part-of-day window on a previewed task — driven by the
+   *  inline chips so a user who didn't specify a time still picks a
+   *  rough slot before Accept commits. Skip the anchored time case
+   *  (the user already gave an exact clock time, no need to ask). */
+  const pickWindow = (idx: number, window: WindowKey) => {
+    if (!previewTasks) return;
+    Haptics.selectionAsync();
+    const updated = [...previewTasks];
+    updated[idx] = {
+      ...updated[idx],
+      window,
+      timeMode: 'windowed',
+      at: null,
+    };
+    setPreviewTasks(updated);
+  };
+
+  /** Per-task dismiss — drops ONE task from the preview without
+   *  saving it. Useful when Lumi misread something the user typed. */
+  const dismissTask = (idx: number) => {
+    if (!previewTasks) return;
+    Haptics.selectionAsync();
+    const remaining = previewTasks.filter((_, i) => i !== idx);
+    if (remaining.length === 0) {
+      setPreviewTasks(null);
+      setEditingIdx(null);
+    } else {
+      setPreviewTasks(remaining);
+      setEditingIdx(null);
+    }
+  };
+
+  const startEditing = (idx: number) => {
+    const t = previewTasks?.[idx];
+    if (!t) return;
+    Haptics.selectionAsync();
+    setEditingIdx(idx);
+    setEditingTitle(t.title);
+    setEditingDate(t.date === offsetDate(1) ? 'tomorrow' : 'today');
+    setEditingWindow(t.window === 'someday' ? 'midday' : t.window);
+    setEditingDurationMin(t.durationMinutes ?? null);
+  };
+
+  const saveEdit = () => {
+    if (editingIdx == null || !previewTasks) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const orig = previewTasks[editingIdx];
+    // When the task already has an explicit clock time, only title +
+    // day are editable — the part-of-day chips are hidden, so we
+    // preserve the anchored time and derive the window from it.
+    const hasAnchoredTime = orig.at != null;
+    const newTitle = editingTitle.trim() || orig.title;
+    const newDate = editingDate === 'tomorrow' ? offsetDate(1) : todayKey();
+    const next: SmartTask = {
+      ...orig,
+      title: newTitle,
+      date: newDate,
+      ...(editingDurationMin != null
+        ? { durationMinutes: editingDurationMin }
+        : {}),
+      ...(hasAnchoredTime
+        ? {} // keep window/at/timeMode untouched
+        : {
+            window: editingWindow,
+            timeMode: 'windowed',
+            at: null,
+          }),
+    };
+    const updated = [...previewTasks];
+    updated[editingIdx] = next;
+    setPreviewTasks(updated);
+    setEditingIdx(null);
+
+    // Persist the delta as a correction so future LLM calls see how
+    // this user actually wants tasks placed. Only record fields the
+    // user actually changed — empty-delta records are skipped by the
+    // store. Per lumi-smarter-ai-spec.md §6.
+    const delta: Correction['delta'] = {};
+    if (newTitle !== orig.title) {
+      delta.title = { from: orig.title, to: newTitle };
+    }
+    if (!hasAnchoredTime && editingWindow !== orig.window) {
+      delta.window = { from: orig.window, to: editingWindow };
+    }
+    if (editingDurationMin != null && editingDurationMin !== orig.durationMinutes) {
+      delta.durationMinutes = {
+        from: orig.durationMinutes,
+        to: editingDurationMin,
+      };
+    }
+    if (newDate !== orig.date) {
+      delta.date = { from: orig.date ?? todayKey(), to: newDate };
+    }
+    recordCorrection({
+      date: todayKey(),
+      raw: orig.raw ?? orig.title,
+      delta,
+    });
+  };
+
+  const cancelEdit = () => {
+    Haptics.selectionAsync();
+    setEditingIdx(null);
+  };
+
+  // ── Voice (Whisper) ──────────────────────────────────────────────
+  // Tap to start, tap again to stop + transcribe. The transcribed text
+  // flows straight through the smart-capture pipeline so the user's
+  // just speaking their tasks into existence.
+  const handleMic = async () => {
+    if (voice.state === 'idle') {
+      if (!capOpen) setCapOpen(true);
+      await voice.start();
+    } else if (voice.state === 'recording') {
+      const text = await voice.stopAndTranscribe();
+      if (text && text.trim()) {
+        // Surface the transcript so the user can see what Lumi heard,
+        // then auto-submit through the smart-capture pipeline.
+        setCapText(text);
+        // Defer one tick so React commits the text before parsing.
+        setTimeout(() => {
+          // Re-read latest text via state by using a fresh closure.
+          const final = text.trim();
+          if (!final) return;
+          // Inline send: same logic as sendCapture but uses the
+          // transcribed value directly (state may not have flushed).
+          const ctx: CaptureContext = {
+            sharpWindow,
+            foggyWindow,
+            peakStart: digest.curve.peakStart,
+            peakEnd: digest.curve.peakEnd,
+            effectiveWindows,
+            now,
+            nowMin: now.getHours() * 60 + now.getMinutes(),
+            wakeMin: anchors.wake,
+            sleepMin: anchors.sleep,
+          };
+          const tasks = parseSmartCapture(final, ctx);
+          if (tasks.length === 0) return;
+          // Voice → preview (same as text path). User taps Looks
+          // good to commit, or Tweak to edit before saving.
+          setPreviewTasks(tasks);
+          setEditingIdx(null);
+          setCapText('');
+          setCapOpen(false);
+          Haptics.selectionAsync();
+        }, 30);
+      }
+    }
+  };
+
+  // Surface voice errors as a calm toast.
+  useEffect(() => {
+    if (voice.error) showToast(voice.error);
+  }, [voice.error]);
+
+  // Suggestion → schedule sheet → commit. The user picks cadence
+  // (daily/weekly/monthly/etc.), an optional day, and an exact time
+  // before we write the recurring quest. No more silent one-tap
+  // accept with whatever Lumi guessed.
+  const [scheduleSuggestion, setScheduleSuggestion] =
+    useState<Suggestion | null>(null);
+
+  const acceptSuggestion = (s: Suggestion) => {
+    Haptics.selectionAsync();
+    setScheduleSuggestion(s);
+  };
+
+  const commitScheduledSuggestion = (rule: import('../../constants/recur').RecurRule) => {
+    if (!scheduleSuggestion) return;
+    const s = scheduleSuggestion;
+    addQuest({
+      title: s.title,
+      difficulty: 'medium',
+      importance: s.importance,
+      window: rule.part as WindowKey,
+      recur: rule,
+    });
+    consumeSuggestion(s.id);
+    setScheduleSuggestion(null);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    showToast('Set to repeat 🔁');
+  };
+
+  const dismissSuggestion_ = (s: Suggestion) => {
+    dismissSuggestion(s.id);
+    Haptics.selectionAsync();
+  };
+
+  // CTA button label — e.g. "Repeat Sundays", "Repeat weekdays".
+  const suggestionCTA = (s: Suggestion): string => {
+    const r = s.guess;
+    if (r.every === 'week' && r.day) {
+      const plural: Record<string, string> = {
+        Sun: 'Sundays',
+        Mon: 'Mondays',
+        Tue: 'Tuesdays',
+        Wed: 'Wednesdays',
+        Thu: 'Thursdays',
+        Fri: 'Fridays',
+        Sat: 'Saturdays',
+      };
+      return `Repeat ${plural[r.day] ?? 'weekly'}`;
+    }
+    if (r.every === 'weekday') return 'Repeat weekdays';
+    if (r.every === 'day') return 'Repeat daily';
+    if (r.every === 'month') return 'Repeat monthly';
+    if (r.every === '2week') return 'Repeat every 2 weeks';
+    return 'Repeat';
   };
 
   return (
-    <Screen>
-      <View style={styles.greeting}>
-        <Text style={styles.time}>{greeting()}</Text>
-        <Text style={styles.h1}>
-          Hey <Text style={styles.italics}>{name || 'friend'}</Text>, ready?
-        </Text>
-      </View>
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      {/* Soft ember radial glow top-right (warm room-at-dusk) */}
+      <SoftGlow
+        color={accent.fg}
+        opacity={0.18}
+        fade={0.6}
+        cx={0.78}
+        cy={0.05}
+        style={styles.ambientGlow}
+      />
 
-      <XPBar />
-
-      {shieldAvailable && (
-        <View style={styles.shield}>
-          <Text style={styles.shieldIcon}>◈</Text>
-          <Text style={styles.shieldText}>
-            <Text style={styles.shieldStrong}>Streak shield active.</Text>{' '}
-            One free miss this week.
-          </Text>
+      {toast && (
+        <View style={styles.toast}>
+          <Text style={styles.toastText}>{toast}</Text>
+        </View>
+      )}
+      {undoState && (
+        <View style={styles.undoToast}>
+          <Text style={styles.undoCheckGlyph}>✓</Text>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.undoToastText} numberOfLines={1}>
+              Marked done · {undoState.title}
+            </Text>
+          </View>
+          <Pressable onPress={undoComplete} hitSlop={10}>
+            <Text style={[styles.undoBtnText, { color: accent.fg }]}>Undo</Text>
+          </Pressable>
         </View>
       )}
 
-      <Label style={{ marginTop: 8 }}>Today's quests</Label>
-      <View style={styles.questList}>
-        {todayQuests.length === 0 ? (
-          <Text style={styles.empty}>
-            No quests yet. Dump some thoughts below and Lumi will turn them into
-            small ones.
-          </Text>
-        ) : (
-          todayQuests.map((q) => (
-            <QuestCard key={q.id} quest={q} onToggle={() => handleToggle(q.id)} />
-          ))
-        )}
-      </View>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Header: date + greeting + Luna nook ── */}
+        <View style={styles.headerRow}>
+          <View style={{ flex: 1, paddingTop: 4 }}>
+            <Text style={styles.dateLine}>{formatDate(now)}</Text>
+            <Text style={styles.greeting}>
+              {greeting(now.getHours() + now.getMinutes() / 60)}.
+            </Text>
+          </View>
+          {/* The Luna nook IS the profile entry on Home — tap to
+              open profile/settings. No separate profile icon up here
+              (it'd duplicate the nook). */}
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync();
+              router.push('/profile');
+            }}
+            style={styles.lunaNook}
+            hitSlop={6}
+          >
+            {/* When the day is cleared, the DAY CLEARED card below
+               already features Luna front-and-center, so the nook
+               here would just duplicate the cat. Swap to the same
+               person glyph the ProfileIcon uses elsewhere so this
+               corner still reads as the profile entry. When the
+               day still has work, keep the GIF cat.
+               In Focused companion mode (no cat anywhere) we ALSO
+               fall back to the person glyph so the user still has
+               a tappable profile-entry corner. */}
+            {allDone || !companion.showLuna ? (
+              <Svg
+                width={36}
+                height={36}
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <Circle
+                  cx={12}
+                  cy={9}
+                  r={3.6}
+                  stroke={C.boneDim}
+                  strokeWidth={1.6}
+                />
+                <Path
+                  d="M5 19c1.6-3.3 4.2-4.9 7-4.9s5.4 1.6 7 4.9"
+                  stroke={C.boneDim}
+                  strokeWidth={1.6}
+                  strokeLinecap="round"
+                />
+              </Svg>
+            ) : (
+              <>
+                <SoftGlow
+                  color={C.glow}
+                  opacity={0.22}
+                  fade={0.7}
+                  cx={0.5}
+                  cy={0.18}
+                  style={styles.lunaNookGlow}
+                />
+                {/* Luna in the nook — reflects the user's ambient
+                   state (sleeping past bedtime, sad if overdue
+                   piles, happy on a long streak, idle by default),
+                   PLUS a 30-second 'happy' celebration window
+                   whenever a quest gets completed.
+                   32×32 native asset rendered at 64×64 = clean 2×
+                   for sharp pixels. */}
+                <Image
+                  source={lunaSource(nookMood)}
+                  style={{ width: 64, height: 64 }}
+                  resizeMode="contain"
+                  accessibilityLabel="Luna"
+                />
+              </>
+            )}
+          </Pressable>
+        </View>
 
-      <Label style={{ marginTop: 20 }}>Brain dump</Label>
-      <View style={styles.dump}>
-        <TextInput
-          value={dump}
-          onChangeText={setDump}
-          placeholder="anything in your head…"
-          placeholderTextColor={colors.text3}
-          style={styles.input}
-          multiline
-        />
-        <Pressable
-          onPress={handleDump}
-          style={styles.mic}
-          disabled={parsing || !dump.trim()}
-        >
-          {parsing ? (
-            <ActivityIndicator size="small" color={colors.plum} />
-          ) : (
-            <Text style={styles.micText}>↑</Text>
+        {/* ── Quiet "today" line — streak · progress · done/total · +xp ──
+            Companion-mode gates:
+              showStreak → streak chip (kept in Minimal, off in Focused)
+              showXp     → "+N xp" tint (kept in Full only) */}
+        <View style={styles.todayLine}>
+          {companion.showStreak && (
+            <View style={styles.streakChip}>
+              <Text style={styles.streakFlame}>🔥</Text>
+              <Text style={styles.streakNum}>{streak}</Text>
+            </View>
           )}
-        </Pressable>
-      </View>
-    </Screen>
+          <View style={styles.progressRow}>
+            {Array.from({ length: Math.max(totalToday, 1) }).map((_, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.progressSeg,
+                  i < doneToday && { backgroundColor: accent.fg },
+                ]}
+              />
+            ))}
+          </View>
+          <Text style={styles.todayCount}>
+            {doneToday}/{totalToday}
+            {companion.showXp && (
+              <>
+                {' · '}
+                <Text style={[styles.xpInline, { color: accent.fg }]}>
+                  +{xpToday}
+                </Text>
+              </>
+            )}
+          </Text>
+        </View>
+
+        {/* ═══ THE ONE THING ═══ */}
+        {allDone ? (
+          <View style={styles.doneCard}>
+            <SoftGlow
+              color={C.glow}
+              opacity={0.22}
+              fade={0.7}
+              cx={0.5}
+              cy={0.42}
+              style={styles.doneGlow}
+            />
+            {/* Luna in the DAY CLEARED card — reads from the same
+               ambient mood hook as the nook. When the user clears
+               the day, the hook returns 'happy' (that's the second
+               priority); past bedtime it returns 'sleep' (which is
+               actually right — the card's body copy already nudges
+               rest). 96×96 = clean 3× scale of the 32×32 source. */}
+            <View style={styles.doneLuna}>
+              <Image
+                source={lunaSource(ambientMood)}
+                style={{ width: 96, height: 96 }}
+                resizeMode="contain"
+                accessibilityLabel="Luna"
+              />
+            </View>
+            <Text style={styles.doneEyebrow}>Day cleared</Text>
+            <Text style={styles.doneTitle}>
+              That&apos;s everything. Luna&apos;s content.
+            </Text>
+            <Text style={styles.doneBody}>
+              You don&apos;t owe today anything more. Rest, or dump a thought
+              below for tomorrow.
+            </Text>
+          </View>
+        ) : totallyEmpty ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyEyebrow}>Open canvas</Text>
+            <Text style={styles.emptyTitle}>Nothing on the day yet.</Text>
+            <Text style={styles.emptyBody}>
+              Tuck a thought below — Lumi will surface the next right thing
+              when there&apos;s something to surface.
+            </Text>
+          </View>
+        ) : hero ? (
+          <View ref={heroRef as never} style={styles.heroWrap}>
+            <View
+              style={[
+                styles.heroCard,
+                {
+                  borderColor: hexA(IMPORTANCE[hero.importance].color, 0.35),
+                },
+              ]}
+            >
+              {/* Header — cleaned up per the v2 spec: just "LUMI
+                 SUGGESTS" + the ⋯ menu. The time pill + window pill
+                 are gone (window moves into the meta row below). */}
+              <View style={styles.heroHeader}>
+                <Text style={[styles.heroEyebrowGlyph, { color: C.dusk }]}>
+                  ✦
+                </Text>
+                <Text style={styles.heroEyebrow}>Lumi suggests</Text>
+                <View style={{ flex: 1 }} />
+              </View>
+              <HeroOverflowMenu quest={hero} onEdit={setEditingQuest} />
+              <Text style={styles.heroTitle}>{hero.title}</Text>
+              {/* YOUR COMMENT pins above the description (only
+                 rendered when present). */}
+              {hero.comment && (
+                <HeroComment
+                  comment={hero.comment}
+                  accentColor={accent.fg}
+                />
+              )}
+              {/* Description — LLM-extracted note, falling back to
+                 the deterministic why-line. Self-measuring: clamps
+                 to 3 lines with `more` / `less` when the text
+                 actually overflows, so long descriptions don't blow
+                 out the hero card height. */}
+              <HeroDescription
+                text={
+                  hero.note ??
+                  whyLine(
+                    hero,
+                    hero.window === cw,
+                    effectiveWindows[hero.window].label,
+                  )
+                }
+                accentColor={accent.fg}
+              />
+              {/* Meta row — sigil + tier · window · +xp. Window
+                 moved here from the header so it's part of the
+                 compact context line, not a competing top-right
+                 element. */}
+              <View style={styles.heroMeta}>
+                <Text
+                  style={[
+                    styles.heroTierLabel,
+                    { color: IMPORTANCE[hero.importance].color },
+                  ]}
+                >
+                  <Text style={styles.heroTierSigil}>
+                    {IMPORTANCE[hero.importance].sigil}
+                  </Text>{' '}
+                  {IMPORTANCE[hero.importance].label}
+                </Text>
+                <View style={styles.metaDot} />
+                <Text
+                  style={[
+                    styles.heroWindowMeta,
+                    { color: WINDOWS[hero.window].color },
+                  ]}
+                >
+                  {WINDOWS[hero.window].glyph}{' '}
+                  {effectiveWindows[hero.window].label}
+                </Text>
+                <View style={styles.metaDot} />
+                <Text style={styles.heroXp}>
+                  <Text style={styles.heroXpNum}>+{hero.xpReward}</Text> xp
+                </Text>
+              </View>
+              <View style={styles.markDoneWrap}>
+                <Pressable
+                  onPress={() => completeQuest(hero)}
+                  style={({ pressed }) => [
+                    styles.markDoneBtn,
+                    { backgroundColor: accent.fg },
+                    pressed && { opacity: 0.86 },
+                  ]}
+                >
+                  <View style={styles.markDoneCheck}>
+                    <Text style={styles.markDoneCheckGlyph}>✓</Text>
+                  </View>
+                  <Text style={styles.markDoneText}>Mark it done</Text>
+                </Pressable>
+                {floater && (
+                  <View style={styles.floaterMount}>
+                    <XpFloater amount={floater.amount} color={floater.color} />
+                  </View>
+                )}
+              </View>
+              {candidates.length > 1 && (
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setSwap((s) => s + 1);
+                  }}
+                  hitSlop={10}
+                >
+                  <Text style={styles.swapText}>
+                    not feeling it? → show me another
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+        ) : null}
+
+        {/* ── Capture — one calm line ── */}
+        {!capOpen ? (
+          <View ref={captureRef as never} style={styles.captureClosed}>
+            <Pressable
+              onPress={() => setCapOpen(true)}
+              style={styles.captureClosedText}
+              hitSlop={4}
+            >
+              <Text style={[styles.captureSpark, { color: accent.fg }]}>
+                ✦
+              </Text>
+              <Text style={styles.capturePlaceholder}>
+                Dump a thought… I&apos;ll sort it later
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleMic}
+              hitSlop={10}
+              style={[
+                styles.captureMicBtn,
+                voice.state === 'recording' && {
+                  backgroundColor: accent.fg,
+                },
+              ]}
+            >
+              {voice.state === 'transcribing' ? (
+                <Text style={styles.captureMic}>…</Text>
+              ) : (
+                <MicIcon
+                  size={16}
+                  color={voice.state === 'recording' ? C.void : C.mute}
+                />
+              )}
+            </Pressable>
+          </View>
+        ) : (
+          <View
+            style={[styles.captureOpen, { borderColor: accent.fg }]}
+          >
+            {/* Multiline input — grows from a one-liner up to a tall
+                ~12-line frame, then scrolls internally past that.
+                We use minHeight + maxHeight (not a tracked explicit
+                height) because RN iOS multiline auto-grows reliably
+                with that style pattern; the earlier
+                onContentSizeChange path silently failed to grow on
+                iOS once it hit the clamp. Submit via the "Tuck it
+                away" button — Return adds a newline, which is what
+                the user wants when brain-dumping. */}
+            <TextInput
+              autoFocus
+              value={capText}
+              onChangeText={setCapText}
+              placeholder="dump anything — calls, errands, half-thoughts. messy is fine, I'll sort it."
+              placeholderTextColor={C.mute}
+              style={styles.captureInput}
+              multiline
+              textAlignVertical="top"
+              scrollEnabled
+              editable={voice.state !== 'transcribing'}
+              // Auto-cancel when the user taps outside an empty input.
+              // onBlur fires when iOS pulls focus to anything else,
+              // so this gives a "tap-anywhere-to-dismiss" feel for
+              // empty drafts without disturbing in-progress dumps.
+              // Voice-recording state pauses this — the user's mid-
+              // recording, focus naturally bounces.
+              onBlur={() => {
+                if (
+                  !capText.trim() &&
+                  voice.state !== 'recording' &&
+                  voice.state !== 'transcribing'
+                ) {
+                  setCapOpen(false);
+                }
+              }}
+            />
+            {capText.trim().length > 80 && (
+              <Text style={styles.captureCount}>
+                {capText.trim().split(/\s+/).length} words
+              </Text>
+            )}
+            <View style={styles.captureActions}>
+              <Pressable
+                onPress={handleMic}
+                hitSlop={6}
+                style={[
+                  styles.captureMicBtn,
+                  voice.state === 'recording' && {
+                    backgroundColor: accent.fg,
+                  },
+                ]}
+              >
+                {voice.state === 'transcribing' ? (
+                  <Text style={styles.captureMic}>…</Text>
+                ) : (
+                  <MicIcon
+                    size={16}
+                    color={voice.state === 'recording' ? C.void : C.mute}
+                  />
+                )}
+              </Pressable>
+              <View style={{ flex: 1 }} />
+              <Pressable
+                onPress={() => {
+                  setCapOpen(false);
+                  setCapText('');
+                  if (voice.state === 'recording') {
+                    voice.cancel();
+                  }
+                }}
+                style={styles.captureCancel}
+              >
+                <Text style={styles.captureCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={sendCapture}
+                disabled={!capText.trim()}
+                style={[
+                  styles.captureSend,
+                  capText.trim()
+                    ? { backgroundColor: accent.dk }
+                    : {
+                        backgroundColor: 'transparent',
+                        borderWidth: 1,
+                        borderColor: C.hair,
+                      },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.captureSendText,
+                    { color: capText.trim() ? C.bone : C.mute },
+                  ]}
+                >
+                  Tuck it away
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* ── Lumi suggests — preview before saving. User can approve
+            with one tap, tweak inline, or cancel. Replaces the old
+            auto-commit + guided-follow-up flow. */}
+        {previewTasks && previewTasks.length > 0 && (
+          <View style={styles.followupCard}>
+            <View style={styles.followupHeader}>
+              <Text style={styles.followupGlyph}>✦</Text>
+              <Text style={styles.followupEyebrow}>
+                {editingIdx != null
+                  ? 'editing'
+                  : previewTasks.length > 1
+                    ? `lumi suggests · ${previewTasks.length} tasks`
+                    : 'lumi suggests'}
+              </Text>
+              <Pressable
+                onPress={cancelPreview}
+                hitSlop={10}
+                style={{ marginLeft: 'auto' }}
+              >
+                <Text style={styles.noticedDismiss}>×</Text>
+              </Pressable>
+            </View>
+
+            {previewTasks.map((t, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.previewRow,
+                  i < previewTasks.length - 1 && styles.previewRowDivider,
+                ]}
+              >
+                {editingIdx === i ? (
+                  <>
+                    <TextInput
+                      value={editingTitle}
+                      onChangeText={setEditingTitle}
+                      placeholder="Title"
+                      placeholderTextColor={C.mute}
+                      style={styles.previewEditInput}
+                      autoFocus
+                    />
+                    <Text style={styles.previewEditLabel}>When</Text>
+                    <View style={styles.chipRow}>
+                      <FollowupChip
+                        label="Today"
+                        onPress={() => setEditingDate('today')}
+                        accentColor={accent.fg}
+                        suggested={editingDate === 'today'}
+                      />
+                      <FollowupChip
+                        label="Tomorrow"
+                        onPress={() => setEditingDate('tomorrow')}
+                        accentColor={accent.fg}
+                        suggested={editingDate === 'tomorrow'}
+                      />
+                    </View>
+                    {/* When the task has an explicit clock time
+                       ("call at 7"), hide the generic part-of-day
+                       chips — switching to "Morning" would erase the
+                       time. The user can still change title + day. */}
+                    {t.at == null && (
+                      <>
+                        <Text style={styles.previewEditLabel}>Part of day</Text>
+                        <View style={styles.chipRow}>
+                          <FollowupChip
+                            label="Morning"
+                            onPress={() => setEditingWindow('morning')}
+                            accentColor={accent.fg}
+                            suggested={editingWindow === 'morning'}
+                          />
+                          <FollowupChip
+                            label="Afternoon"
+                            onPress={() => setEditingWindow('afternoon')}
+                            accentColor={accent.fg}
+                            suggested={editingWindow === 'afternoon'}
+                          />
+                          <FollowupChip
+                            label="Evening"
+                            onPress={() => setEditingWindow('evening')}
+                            accentColor={accent.fg}
+                            suggested={editingWindow === 'evening'}
+                          />
+                        </View>
+                      </>
+                    )}
+                    {/* Length chips — user can set or override the
+                       duration. The LLM fills durationMin from
+                       phrasing like "hour long meeting" → 60; this
+                       lets the user pick anything else without
+                       editing the original input. */}
+                    <Text style={styles.previewEditLabel}>Length</Text>
+                    <View style={styles.chipRow}>
+                      {[15, 30, 60, 90, 120].map((min) => (
+                        <FollowupChip
+                          key={min}
+                          label={
+                            min < 60
+                              ? `${min}m`
+                              : min % 60 === 0
+                                ? `${min / 60}h`
+                                : `${Math.floor(min / 60)}h ${min % 60}m`
+                          }
+                          onPress={() => setEditingDurationMin(min)}
+                          accentColor={accent.fg}
+                          suggested={editingDurationMin === min}
+                        />
+                      ))}
+                    </View>
+                    <View style={styles.previewActions}>
+                      <Pressable onPress={cancelEdit} style={styles.skipBtn}>
+                        <Text style={styles.skipText}>cancel</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={saveEdit}
+                        style={[
+                          styles.previewApproveBtn,
+                          { backgroundColor: accent.fg },
+                        ]}
+                      >
+                        <Text style={styles.previewApproveText}>Save edit</Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    {/* While the LLM is still extracting, show a
+                       placeholder INSTEAD of the deterministic
+                       title — otherwise the user reads e.g.
+                       "Hour long meeting" then watches it morph
+                       into "Meeting" a couple seconds later (the
+                       exact "text changes after a moment" bug). The
+                       title and meta line both swap atomically when
+                       aiPending flips to false. */}
+                    {aiPending ? (
+                      <Text
+                        style={[
+                          styles.previewTitle,
+                          { color: C.mute, fontStyle: 'italic' },
+                        ]}
+                      >
+                        Lumi is sorting this…
+                      </Text>
+                    ) : (
+                      <>
+                        <Text style={styles.previewTitle}>{t.title}</Text>
+                        {t.note && (
+                          <Text style={styles.previewNote} numberOfLines={2}>
+                            {t.note}
+                          </Text>
+                        )}
+                      </>
+                    )}
+                    {t.needsFollowup && !aiPending && (
+                      <View style={styles.timeOptionsWrap}>
+                        <Text style={styles.timeOptionsAsk}>
+                          When&apos;s it due?
+                        </Text>
+                        <View style={styles.chipRow}>
+                          <FollowupChip
+                            label="Today"
+                            onPress={() =>
+                              pickFollowupDate(i, todayKey(), 'evening')
+                            }
+                            accentColor={accent.fg}
+                          />
+                          <FollowupChip
+                            label="Tomorrow"
+                            onPress={() =>
+                              pickFollowupDate(i, offsetDate(1), 'morning')
+                            }
+                            accentColor={accent.fg}
+                          />
+                          <FollowupChip
+                            label="This weekend"
+                            onPress={() => {
+                              // Next Saturday in LOCAL time.
+                              const d = new Date();
+                              const dow = d.getDay();
+                              const daysToSat = (6 - dow + 7) % 7 || 7;
+                              d.setDate(d.getDate() + daysToSat);
+                              const y = d.getFullYear();
+                              const m = String(d.getMonth() + 1).padStart(2, '0');
+                              const day = String(d.getDate()).padStart(2, '0');
+                              pickFollowupDate(
+                                i,
+                                `${y}-${m}-${day}`,
+                                'morning',
+                              );
+                            }}
+                            accentColor={accent.fg}
+                          />
+                        </View>
+                      </View>
+                    )}
+                    {t.timeOptions && t.timeOptions.length === 2 && (
+                      <View style={styles.timeOptionsWrap}>
+                        <Text style={styles.timeOptionsAsk}>
+                          Did you mean…
+                        </Text>
+                        <View style={styles.chipRow}>
+                          {t.timeOptions.map((min) => (
+                            <FollowupChip
+                              key={min}
+                              label={fmtMin(min)}
+                              onPress={() => pickTimeOption(i, min)}
+                              accentColor={accent.fg}
+                              suggested={t.at === min}
+                            />
+                          ))}
+                        </View>
+                      </View>
+                    )}
+                    {aiPending ? (
+                      <View style={styles.previewReadingRow}>
+                        <Text
+                          style={[
+                            styles.previewReadingSpark,
+                            { color: C.dusk },
+                          ]}
+                        >
+                          ✦
+                        </Text>
+                        <Text style={styles.previewReadingText}>
+                          Lumi is reading this…
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.previewMeta}>
+                        {previewMetaLine(t, effectiveWindows)}
+                      </Text>
+                    )}
+                    {/* Quick chips for the non-descriptive user —
+                       length + part-of-day, visible in the DEFAULT
+                       preview so they pick before Accept. Pre-fills
+                       from whatever the LLM extracted ("hour long
+                       meeting" → 60 / "this afternoon" → afternoon),
+                       so most users just confirm. Tweak still opens
+                       the full editor for date + custom time.
+                       Hidden during aiPending so chip selections
+                       don't flicker as the LLM patches mid-stream. */}
+                    {!aiPending && !t.recur && (
+                      <>
+                        <View style={styles.timeOptionsWrap}>
+                          <Text style={styles.timeOptionsAsk}>How long?</Text>
+                          <View style={styles.chipRow}>
+                            {[15, 30, 60].map((min) => (
+                              <FollowupChip
+                                key={min}
+                                label={min < 60 ? `${min}m` : '1h'}
+                                onPress={() => pickDuration(i, min)}
+                                accentColor={accent.fg}
+                                suggested={t.durationMinutes === min}
+                              />
+                            ))}
+                          </View>
+                        </View>
+                        {/* Only ask for part-of-day when the user
+                           didn't already give a specific clock time
+                           — otherwise "Morning" would erase the at
+                           anchor they specified. */}
+                        {t.at == null && t.window !== 'someday' && (
+                          <View style={styles.timeOptionsWrap}>
+                            <Text style={styles.timeOptionsAsk}>When?</Text>
+                            <View style={styles.chipRow}>
+                              {(
+                                [
+                                  ['morning', 'Morning'],
+                                  ['midday', 'Midday'],
+                                  ['afternoon', 'Afternoon'],
+                                  ['evening', 'Evening'],
+                                ] as const
+                              ).map(([key, label]) => (
+                                <FollowupChip
+                                  key={key}
+                                  label={label}
+                                  onPress={() => pickWindow(i, key)}
+                                  accentColor={accent.fg}
+                                  suggested={t.window === key}
+                                />
+                              ))}
+                            </View>
+                          </View>
+                        )}
+                      </>
+                    )}
+                    {/* Per-task actions — independent control over each
+                        suggestion so the user can accept, tweak, or
+                        dismiss one without affecting the others.
+                        Accept + Tweak are disabled while aiPending
+                        so the user can't commit before the LLM has
+                        finished cleaning the title / duration. */}
+                    {editingIdx == null && (
+                      <View style={styles.previewTaskActions}>
+                        <Pressable
+                          onPress={() => approveTask(i)}
+                          disabled={aiPending}
+                          style={[
+                            styles.previewTaskAccept,
+                            { backgroundColor: accent.fg },
+                            aiPending && { opacity: 0.45 },
+                          ]}
+                          hitSlop={4}
+                        >
+                          <Text style={styles.previewTaskAcceptText}>
+                            Accept
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => startEditing(i)}
+                          disabled={aiPending}
+                          style={[
+                            styles.previewTaskTweak,
+                            aiPending && { opacity: 0.45 },
+                          ]}
+                          hitSlop={4}
+                        >
+                          <Text style={styles.previewTaskTweakText}>Tweak</Text>
+                        </Pressable>
+                        {/* Per-task × only shows when there are
+                           multiple tasks — with one task, the
+                           card-level × in the header does the same
+                           thing, so duplicating reads as clutter. */}
+                        {previewTasks.length > 1 && (
+                          <Pressable
+                            onPress={() => dismissTask(i)}
+                            style={styles.previewTaskDismiss}
+                            hitSlop={6}
+                          >
+                            <Text style={styles.previewTaskDismissGlyph}>
+                              ×
+                            </Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    )}
+                  </>
+                )}
+              </View>
+            ))}
+
+            {/* Bottom-of-card bulk action — only when not actively
+                editing one of the tasks. Hidden for a single task
+                (Accept on the row already covers it). */}
+            {editingIdx == null && previewTasks.length > 1 && (
+              <View style={styles.previewActions}>
+                <Pressable onPress={cancelPreview} style={styles.skipBtn}>
+                  <Text style={styles.skipText}>cancel all</Text>
+                </Pressable>
+                <Pressable
+                  onPress={approvePreview}
+                  style={[
+                    styles.previewApproveBtn,
+                    { backgroundColor: accent.fg },
+                  ]}
+                >
+                  <Text style={styles.previewApproveText}>Accept all</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ── One gentle "Lumi noticed" card (dusk) ── */}
+        {heroSuggestion && !allDone && (
+          <View style={styles.noticedCard}>
+            <View style={styles.noticedHeader}>
+              <Text style={styles.noticedGlyph}>🔁</Text>
+              <Text style={styles.noticedEyebrow}>a rhythm Lumi noticed</Text>
+              <Pressable
+                onPress={() => dismissSuggestion_(heroSuggestion)}
+                hitSlop={10}
+              >
+                <Text style={styles.noticedDismiss}>×</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.noticedBody}>
+              {heroSuggestion.span ? (
+                <>
+                  You&apos;ve done{' '}
+                  <Text style={styles.noticedAccent}>
+                    {heroSuggestion.title.toLowerCase()}
+                  </Text>{' '}
+                  {heroSuggestion.span}. Want it to come back on its own?
+                </>
+              ) : (
+                <>
+                  Want{' '}
+                  <Text style={styles.noticedAccent}>
+                    {heroSuggestion.title.toLowerCase()}
+                  </Text>{' '}
+                  to come back on its own?
+                </>
+              )}
+            </Text>
+            <View style={styles.noticedActions}>
+              <Pressable
+                onPress={() => acceptSuggestion(heroSuggestion)}
+                style={styles.noticedAcceptBtn}
+              >
+                <Text style={styles.noticedAcceptText}>
+                  {suggestionCTA(heroSuggestion)}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => dismissSuggestion_(heroSuggestion)}
+                style={styles.noticedNotItBtn}
+              >
+                <Text style={styles.noticedNotItText}>not it</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* ── "Then, when you're ready" — collapsed rest ── */}
+        {rest.length > 0 && (
+          <View style={styles.restSection}>
+            <Text style={styles.restEyebrow}>Then, when you&apos;re ready</Text>
+            {visibleRest.map((q) => {
+              const noteOpen = openNoteId === q.id;
+              return (
+              <View key={q.id} style={styles.restRow}>
+                {/* Checkbox — own tap target. Marks done. */}
+                <Pressable
+                  onPress={() => completeQuest(q)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Mark done: ${q.title}`}
+                  style={styles.restCheckbox}
+                />
+                {/* Middle column — title wraps, note clamps + expand,
+                   meta row underneath. Per lumi-home-v2.jsx: text
+                   gets full row width and never competes with the
+                   trailing icons. */}
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.restTitle} numberOfLines={2}>
+                    {q.title}
+                  </Text>
+                  {q.note && (
+                    <RestNote
+                      note={q.note}
+                      open={noteOpen}
+                      onToggle={() => setOpenNoteId(noteOpen ? null : q.id)}
+                      accentColor={accent.fg}
+                    />
+                  )}
+                  {/* Meta row — time · window/move-back · tier. Moved
+                     under the title so it never squeezes the text. */}
+                  <View style={styles.restMetaRow}>
+                    {fmtScheduled(q) && (
+                      <Text
+                        style={[styles.restTime, { color: accent.fg }]}
+                      >
+                        {fmtScheduled(q)}
+                      </Text>
+                    )}
+                    {q.window === 'someday' ? (
+                      <Pressable
+                        onPress={() => {
+                          Haptics.selectionAsync();
+                          setMovingBack(q);
+                        }}
+                        hitSlop={6}
+                        accessibilityRole="button"
+                        accessibilityLabel="Move back to a real day"
+                        style={styles.restMoveBackBtn}
+                      >
+                        <Text style={styles.restMoveBackGlyph}>↺</Text>
+                      </Pressable>
+                    ) : (
+                      <Text
+                        style={[
+                          styles.restWindow,
+                          { color: WINDOWS[q.window].color },
+                        ]}
+                      >
+                        {WINDOWS[q.window].glyph}{' '}
+                        {effectiveWindows[q.window].label}
+                      </Text>
+                    )}
+                    <Text
+                      style={[
+                        styles.restTier,
+                        { color: IMPORTANCE[q.importance].color },
+                      ]}
+                    >
+                      {IMPORTANCE[q.importance].sigil}
+                    </Text>
+                    {/* Edit pill — opens EditQuestSheet so the user
+                       can update the title and add / edit the
+                       description. Sits at the END of the meta
+                       row so it's always reachable regardless of
+                       how wide the time / window labels are. */}
+                    <View style={{ flex: 1 }} />
+                    <Pressable
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setEditingQuest(q);
+                      }}
+                      hitSlop={6}
+                      accessibilityRole="button"
+                      accessibilityLabel="Edit task"
+                      style={styles.restEditPill}
+                    >
+                      <Text style={styles.restEditGlyph}>✎</Text>
+                      <Text style={styles.restEditText}>Edit</Text>
+                    </Pressable>
+                    {/* Delete pill — matches the Edit pill's style so
+                       the row's right-side actions read as a single
+                       row of affordances instead of one inline pill +
+                       one floating circle in the corner. */}
+                    <RestDeletePill id={q.id} title={q.title} />
+                  </View>
+                </View>
+              </View>
+              );
+            })}
+            {rest.length > 3 && (
+              <Pressable
+                onPress={() => setMoreOpen((o) => !o)}
+                style={styles.moreToggle}
+              >
+                <Text style={styles.moreText}>
+                  {moreOpen ? 'show less' : `+ ${rest.length - 3} more`}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+
+        {/* ── Done today — quiet history with one-tap undo. ───────── */}
+        {doneTodayList.length > 0 && (
+          <View style={styles.historySection}>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setHistoryOpen((o) => !o);
+              }}
+              style={styles.historyEyebrowRow}
+              hitSlop={6}
+            >
+              <Text style={styles.historyEyebrow}>Done today</Text>
+              <Text style={styles.historyCount}>{doneTodayList.length}</Text>
+              <View style={{ flex: 1 }} />
+              <Text style={styles.historyChev}>
+                {historyOpen ? '▾' : '▸'}
+              </Text>
+            </Pressable>
+            {historyOpen &&
+              (moreDoneOpen ? doneTodayList : doneTodayList.slice(0, 3)).map(
+              (q) => {
+                const ago = fmtAgo(q.completedAt, now);
+                return (
+                  <View key={q.id} style={styles.historyRow}>
+                    <View style={styles.historyCheck}>
+                      <Text style={styles.historyCheckGlyph}>✓</Text>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.historyTitle} numberOfLines={1}>
+                        {q.title}
+                      </Text>
+                      <Text style={styles.historyMeta}>
+                        {ago ? ago : 'today'}
+                        {q.window !== 'someday' && q.window
+                          ? ` · ${effectiveWindows[q.window].label}`
+                          : ''}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => undoFromHistory(q)}
+                      hitSlop={6}
+                      style={styles.undoPill}
+                    >
+                      <Text style={styles.undoPillGlyph}>↺</Text>
+                      <Text
+                        style={[styles.undoPillText, { color: accent.fg }]}
+                      >
+                        Undo
+                      </Text>
+                    </Pressable>
+                  </View>
+                );
+              },
+            )}
+            {historyOpen && doneTodayList.length > 3 && (
+              <Pressable
+                onPress={() => setMoreDoneOpen((o) => !o)}
+                style={styles.moreToggle}
+              >
+                <Text style={styles.moreText}>
+                  {moreDoneOpen
+                    ? 'show less'
+                    : `+ ${doneTodayList.length - 3} more`}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+
+        <View style={{ height: 24 }} />
+      </ScrollView>
+
+      {/* "Schedule habit" sheet — opens when the user taps the
+          "Lumi noticed" suggestion. Pre-filled with Lumi's guess as
+          the starting point; the user adjusts cadence/day/time and
+          saves. Cancel closes without committing the suggestion. */}
+      <HabitScheduleSheet
+        visible={scheduleSuggestion != null}
+        onClose={() => setScheduleSuggestion(null)}
+        title={scheduleSuggestion?.title ?? ''}
+        initial={
+          scheduleSuggestion?.guess ?? {
+            every: 'day',
+            part: 'morning',
+            at: 8 * 60,
+          }
+        }
+        onSave={commitScheduledSuggestion}
+      />
+
+      {/* Same sheet, mounted for the preview-flow recurring task.
+          Opens when the user taps Accept on a previewed task whose
+          recur is set; gives them the cadence / interval / time
+          confirmation per lumi-monetization spec and the user's
+          explicit "always ask for an interval" rule. */}
+      <HabitScheduleSheet
+        visible={pendingScheduleTask != null}
+        onClose={() => setPendingScheduleTask(null)}
+        title={pendingScheduleTask?.task.title ?? ''}
+        initial={
+          pendingScheduleTask?.task.recur ?? {
+            every: 'day',
+            part: 'morning',
+            at: 8 * 60,
+          }
+        }
+        onSave={commitPendingSchedule}
+      />
+
+      {/* Someday → any-date sheet (shared with Untangle). Opens
+          from the Move-back pill on Then-when-ready rows whose
+          window === 'someday'. */}
+      <MoveBackToDateSheet
+        visible={movingBack != null}
+        onClose={() => setMovingBack(null)}
+        taskTitle={movingBack?.title ?? ''}
+        onPick={(iso) => movingBack && moveQuestBack(movingBack, iso)}
+      />
+
+      {/* Edit quest sheet — title + description (optional). Opens
+          from the Edit pill in the rest-row meta. Allows adding a
+          note where none existed before. */}
+      <EditQuestSheet
+        visible={editingQuest != null}
+        onClose={() => setEditingQuest(null)}
+        quest={editingQuest}
+        onSave={({ title, note, comment }) => {
+          if (!editingQuest) return;
+          if (title !== editingQuest.title) {
+            updateQuestTitle(editingQuest.id, title);
+          }
+          if (note !== (editingQuest.note ?? '')) {
+            setQuestNote(editingQuest.id, note);
+          }
+          if (comment !== (editingQuest.comment ?? '')) {
+            setQuestComment(editingQuest.id, comment);
+          }
+        }}
+      />
+    </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  greeting: { marginBottom: 20 },
-  time: {
-    fontFamily: fonts.sans,
-    color: colors.text3,
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  h1: {
-    fontFamily: fonts.serif,
-    color: colors.text,
-    fontSize: 28,
-    lineHeight: 34,
-  },
-  italics: {
-    fontFamily: fonts.serifItalic,
-    color: colors.cream,
-  },
-  shield: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    backgroundColor: colors.caramelBg,
-    borderColor: colors.caramelBorder,
-    borderWidth: 1,
-    borderRadius: 11,
-    padding: 11,
-    paddingHorizontal: 14,
-    marginBottom: 16,
-  },
-  shieldIcon: { color: colors.caramel, fontSize: 14 },
-  shieldText: {
-    fontFamily: fonts.sans,
-    color: colors.text2,
-    fontSize: 13,
-    flex: 1,
-  },
-  shieldStrong: {
-    fontFamily: fonts.sansSemi,
-    color: colors.cream,
-  },
-  questList: { gap: 7 },
-  empty: {
-    fontFamily: fonts.sansItalic,
-    color: colors.text3,
-    fontSize: 13,
-    paddingVertical: 18,
-    textAlign: 'center',
-  },
-  dump: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 13,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    minHeight: 44,
-  },
-  input: {
-    flex: 1,
-    fontFamily: fonts.sans,
-    fontSize: 13,
-    color: colors.text,
-    paddingVertical: 8,
-    minHeight: 36,
-  },
-  mic: {
-    width: 32,
-    height: 32,
-    borderRadius: 9,
-    backgroundColor: colors.plumBg,
-    borderColor: colors.plumBorder,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  micText: {
-    color: colors.plum,
-    fontFamily: fonts.sansSemi,
-    fontSize: 16,
-  },
-});
+// ═════════════════════════════════════════════════════════════════════
+// Styles — factory so the screen retints when the user picks a theme.
+// ═════════════════════════════════════════════════════════════════════
+const makeStyles = (accent: Accent) =>
+  StyleSheet.create({
+    safe: { flex: 1, backgroundColor: C.void },
+    // SoftGlow handles the fade — this style is just the position+size.
+    ambientGlow: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      width: 360,
+      height: 360,
+    },
+    scroll: {
+      paddingHorizontal: 22,
+      paddingTop: 26,
+      paddingBottom: 40,
+    },
+
+    // ── Toast ──
+    toast: {
+      position: 'absolute',
+      top: 86,
+      alignSelf: 'center',
+      backgroundColor: C.void2,
+      borderWidth: 1,
+      borderColor: C.hair,
+      borderRadius: 100,
+      paddingHorizontal: 16,
+      paddingVertical: 9,
+      zIndex: 60,
+      shadowColor: '#000',
+      shadowOpacity: 0.5,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 6 },
+    },
+    toastText: {
+      fontFamily: fonts.inter,
+      fontSize: 12.5,
+      color: C.boneDim,
+    },
+    undoToast: {
+      position: 'absolute',
+      bottom: 26,
+      left: 22,
+      right: 22,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: C.void2,
+      borderWidth: 1,
+      borderColor: C.hair,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+      zIndex: 70,
+      shadowColor: '#000',
+      shadowOpacity: 0.5,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+    },
+    undoCheckGlyph: {
+      fontFamily: fonts.interSemi,
+      color: C.lichen,
+      fontSize: 16,
+    },
+    undoToastText: {
+      fontFamily: fonts.inter,
+      fontSize: 13,
+      color: C.bone,
+      letterSpacing: -0.1,
+    },
+    undoBtnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 13.5,
+      letterSpacing: 0.2,
+      textTransform: 'uppercase',
+    },
+
+    // ── Header ──
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      marginBottom: 18,
+    },
+    dateLine: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 2.4,
+      textTransform: 'uppercase',
+      color: C.mute,
+      marginBottom: 7,
+    },
+    greeting: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 29,
+      color: C.bone,
+      letterSpacing: -0.7,
+      lineHeight: 32,
+    },
+    lunaNook: {
+      width: 78,
+      height: 78,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: C.hair,
+      backgroundColor: C.surface,
+      overflow: 'hidden',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    // Container only — SoftGlow paints the radial fade inside.
+    lunaNookGlow: {
+      position: 'absolute',
+      top: -10,
+      left: '50%',
+      marginLeft: -55,
+      width: 110,
+      height: 90,
+    },
+
+    // ── Quiet today line ──
+    todayLine: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginBottom: 22,
+    },
+    streakChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    streakFlame: { fontSize: 13, color: C.honey },
+    streakNum: {
+      fontFamily: fonts.interMed,
+      fontSize: 12.5,
+      color: C.boneDim,
+    },
+    progressRow: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+    },
+    progressSeg: {
+      flex: 1,
+      height: 3,
+      borderRadius: 2,
+      backgroundColor: C.hair,
+    },
+    todayCount: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.mute,
+    },
+    xpInline: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+    },
+
+    // ── Done state ──
+    doneCard: {
+      borderRadius: 24,
+      paddingHorizontal: 24,
+      paddingTop: 34,
+      paddingBottom: 30,
+      alignItems: 'center',
+      backgroundColor: C.void2,
+      borderWidth: 1,
+      borderColor: hexA(C.glow, 0.4),
+      marginBottom: 26,
+      overflow: 'hidden',
+    },
+    // Container the bloom paints inside. Spans the full width of the
+    // card so cx=0.5 lands center; height covers Luna's nook so
+    // cy=0.42 puts the brightest spot just above her head.
+    doneGlow: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 220,
+    },
+    doneLuna: { marginBottom: 6 },
+    doneEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 2.4,
+      textTransform: 'uppercase',
+      color: C.glow,
+      marginBottom: 8,
+    },
+    doneTitle: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 24,
+      color: C.bone,
+      letterSpacing: -0.5,
+      lineHeight: 30,
+      textAlign: 'center',
+      marginBottom: 10,
+    },
+    doneBody: {
+      fontFamily: fonts.inter,
+      fontSize: 13,
+      color: C.boneDim,
+      lineHeight: 20,
+      textAlign: 'center',
+      maxWidth: 270,
+    },
+
+    // ── Empty state ──
+    emptyCard: {
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: C.hair,
+      backgroundColor: C.void2,
+      padding: 22,
+      marginBottom: 26,
+    },
+    emptyEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 2,
+      textTransform: 'uppercase',
+      color: C.mute,
+      marginBottom: 8,
+    },
+    emptyTitle: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 22,
+      color: C.bone,
+      letterSpacing: -0.5,
+      lineHeight: 28,
+      marginBottom: 8,
+    },
+    emptyBody: {
+      fontFamily: fonts.inter,
+      fontSize: 13,
+      color: C.boneDim,
+      lineHeight: 20,
+    },
+
+    // ── Hero card ──
+    heroWrap: { marginBottom: 26 },
+    heroCard: {
+      borderRadius: 24,
+      paddingHorizontal: 20,
+      paddingTop: 18,
+      paddingBottom: 16,
+      backgroundColor: C.void2,
+      borderWidth: 1,
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOpacity: 0.45,
+      shadowRadius: 30,
+      shadowOffset: { width: 0, height: 14 },
+    },
+    heroHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      marginBottom: 14,
+      // Reserve space for the absolute-positioned ⋯ overflow menu
+      // at top-right so the eyebrow doesn't sit under it.
+      paddingRight: 40,
+    },
+    heroEyebrowGlyph: { fontSize: 12 },
+    heroEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 1.8,
+      textTransform: 'uppercase',
+      color: C.dusk,
+    },
+    heroWindow: { marginLeft: 'auto' },
+    heroWindowText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 0.3,
+    },
+    heroTitle: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 28,
+      color: C.bone,
+      letterSpacing: -0.5,
+      lineHeight: 32,
+      marginBottom: 12,
+      paddingRight: 6,
+      includeFontPadding: false,
+    },
+    heroWhy: {
+      fontFamily: fonts.inter,
+      fontSize: 13,
+      color: C.dusk,
+      lineHeight: 19,
+      marginBottom: 18,
+    },
+    heroMeta: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 16,
+    },
+    heroTierLabel: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11.5,
+      letterSpacing: 0.3,
+    },
+    heroTierSigil: { fontSize: 8 },
+    metaDot: {
+      width: 3,
+      height: 3,
+      borderRadius: 2,
+      backgroundColor: C.hair,
+    },
+    // Window label in the meta row — matches the rest of the row's
+    // 11.5pt weight + spacing so it reads as one continuous line.
+    heroWindowMeta: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11.5,
+      letterSpacing: 0.3,
+    },
+    heroXp: {
+      fontFamily: fonts.inter,
+      fontSize: 11.5,
+      color: C.mute,
+    },
+    heroXpNum: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 14,
+      color: C.boneDim,
+    },
+    markDoneWrap: { position: 'relative', marginBottom: 12 },
+    markDoneBtn: {
+      borderRadius: 16,
+      paddingVertical: 18,
+      paddingHorizontal: 20,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 11,
+      shadowColor: accent.fg,
+      shadowOpacity: 0.32,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+    },
+    // Bumped to match the user's reference screenshot: 24×24 check
+    // ring with a 1.7px border + 14pt InterSemi glyph reads as a
+    // confident "done" affordance instead of a small floating dot.
+    markDoneCheck: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      borderWidth: 1.7,
+      borderColor: hexA(C.void, 0.6),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    markDoneCheckGlyph: {
+      fontSize: 14,
+      lineHeight: 16,
+      color: C.void,
+      marginTop: -1,
+      fontFamily: fonts.interSemi,
+    },
+    markDoneText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 16,
+      color: C.void,
+      letterSpacing: 0.1,
+    },
+    floaterMount: {
+      position: 'absolute',
+      right: 18,
+      top: -6,
+    },
+    floaterText: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 22,
+    },
+    swapText: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 12,
+      color: C.mute,
+      textAlign: 'center',
+      marginTop: 4,
+    },
+
+    // ── Capture ──
+    captureClosed: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 15,
+      paddingVertical: 13,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: C.hair,
+      backgroundColor: hexA(C.void2, 0.6),
+      marginBottom: 26,
+    },
+    captureClosedText: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    captureSpark: { fontSize: 13 },
+    capturePlaceholder: {
+      flex: 1,
+      fontFamily: fonts.inter,
+      fontSize: 13.5,
+      color: C.mute,
+    },
+    captureMic: { fontSize: 15 },
+    captureMicBtn: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
+    },
+
+    // ── Guided follow-up ──
+    followupCard: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.32),
+      backgroundColor: hexA(C.dusk, 0.06),
+      padding: 16,
+      marginBottom: 26,
+    },
+    followupHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      marginBottom: 10,
+    },
+    followupGlyph: { fontSize: 11, color: C.dusk },
+    followupEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 1.5,
+      textTransform: 'uppercase',
+      color: C.dusk,
+    },
+    followupQ: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 17,
+      color: C.bone,
+      letterSpacing: -0.3,
+      lineHeight: 24,
+      marginBottom: 14,
+    },
+    chipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 12,
+    },
+    followupChip: {
+      borderWidth: 1,
+      borderColor: C.hair,
+      borderRadius: 100,
+      paddingHorizontal: 13,
+      paddingVertical: 8,
+      backgroundColor: hexA(C.void, 0.4),
+    },
+    followupChipText: {
+      fontFamily: fonts.inter,
+      fontSize: 12.5,
+      color: C.boneDim,
+    },
+    skipBtn: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 4,
+      paddingVertical: 4,
+    },
+    skipText: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.mute,
+      letterSpacing: 0.3,
+    },
+
+    // ── Preview card (Lumi suggests) ──
+    previewRow: {
+      paddingBottom: 12,
+    },
+    previewRowDivider: {
+      borderBottomWidth: 1,
+      borderBottomColor: hexA(C.hair, 0.6),
+      marginBottom: 12,
+    },
+    previewTaskActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 10,
+    },
+    previewTaskAccept: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 9,
+    },
+    previewTaskAcceptText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+      color: C.void,
+      letterSpacing: 0.1,
+    },
+    previewTaskTweak: {
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 9,
+      borderWidth: 1,
+      borderColor: C.hair,
+    },
+    previewTaskTweakText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+      color: C.boneDim,
+    },
+    previewTaskDismiss: {
+      marginLeft: 'auto',
+      width: 28,
+      height: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    previewTaskDismissGlyph: {
+      fontFamily: fonts.inter,
+      fontSize: 18,
+      color: C.mute,
+      lineHeight: 20,
+    },
+    previewTitle: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 19,
+      color: C.bone,
+      letterSpacing: -0.3,
+      lineHeight: 24,
+      marginBottom: 4,
+    },
+    previewMeta: {
+      fontFamily: fonts.inter,
+      fontSize: 12.5,
+      color: C.boneDim,
+      letterSpacing: -0.1,
+    },
+    // "Lumi is reading…" — shown in place of the placement meta line
+    // while the structured LLM call is in flight. Dusk-tinted because
+    // it's Lumi's intelligence thinking, not a user action.
+    previewReadingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    previewReadingSpark: {
+      fontSize: 12,
+    },
+    previewReadingText: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 12.5,
+      color: C.dusk,
+      letterSpacing: -0.1,
+    },
+    timeOptionsWrap: { marginBottom: 8 },
+    timeOptionsAsk: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 12.5,
+      color: C.dusk,
+      marginBottom: 6,
+    },
+    previewEditLabel: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9.5,
+      letterSpacing: 1.5,
+      textTransform: 'uppercase',
+      color: C.mute,
+      marginTop: 10,
+      marginBottom: 8,
+    },
+    previewEditInput: {
+      fontFamily: fonts.inter,
+      fontSize: 15,
+      color: C.bone,
+      borderBottomWidth: 1,
+      borderBottomColor: C.hair,
+      paddingVertical: 6,
+      marginBottom: 6,
+    },
+    previewActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 4,
+    },
+    previewTweakBtn: {
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: C.hair,
+    },
+    previewTweakText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12.5,
+      color: C.boneDim,
+    },
+    previewApproveBtn: {
+      marginLeft: 'auto',
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 10,
+    },
+    previewApproveText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 13,
+      color: C.void,
+      letterSpacing: 0.1,
+    },
+    captureOpen: {
+      borderRadius: 14,
+      borderWidth: 1.5,
+      backgroundColor: C.void2,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      marginBottom: 26,
+    },
+    captureInput: {
+      fontFamily: fonts.inter,
+      fontSize: 14.5,
+      color: C.bone,
+      // Bigger line-height than fontSize so wrapped lines breathe.
+      // Without this, multi-line text reads as a brick of words.
+      lineHeight: 22,
+      paddingTop: 6,
+      paddingBottom: 6,
+      marginBottom: 4,
+      textAlignVertical: 'top',
+      // Auto-grow bounds. min = one comfortable line; max = ~12
+      // lines (12 × 22 lineHeight + 12 padding ≈ 276) so even a
+      // 100+ word dump shows ~80% of itself before internal scroll
+      // kicks in. Past max, RN's iOS multiline scrolls inside the
+      // input on its own — no JS-driven height tracking needed.
+      minHeight: 40,
+      maxHeight: 280,
+    },
+    captureCount: {
+      fontFamily: fonts.inter,
+      fontSize: 11,
+      color: C.mute,
+      textAlign: 'right',
+      marginBottom: 6,
+      marginTop: -2,
+    },
+    captureActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+      gap: 8,
+    },
+    captureCancel: {
+      borderWidth: 1,
+      borderColor: C.hair,
+      borderRadius: 9,
+      paddingHorizontal: 13,
+      paddingVertical: 7,
+    },
+    captureCancelText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+      color: C.mute,
+    },
+    captureSend: {
+      borderRadius: 9,
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+    },
+    captureSendText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+    },
+
+    // ── Lumi noticed ──
+    noticedCard: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.3),
+      backgroundColor: hexA(C.dusk, 0.05),
+      padding: 16,
+      marginBottom: 26,
+    },
+    noticedHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      marginBottom: 10,
+    },
+    noticedGlyph: { fontSize: 11, color: C.dusk },
+    noticedEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 1.5,
+      textTransform: 'uppercase',
+      color: C.dusk,
+    },
+    noticedDismiss: {
+      marginLeft: 'auto',
+      fontSize: 18,
+      color: C.mute,
+      lineHeight: 18,
+      paddingHorizontal: 4,
+    },
+    noticedBody: {
+      fontFamily: fonts.inter,
+      fontSize: 14,
+      color: C.boneDim,
+      lineHeight: 21,
+      marginBottom: 14,
+    },
+    noticedAccent: {
+      color: C.bone,
+      fontFamily: fonts.interMed,
+    },
+    noticedActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    noticedAcceptBtn: {
+      backgroundColor: hexA(C.dusk, 0.16),
+      borderWidth: 1,
+      borderColor: C.dusk,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+    },
+    noticedAcceptText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12.5,
+      color: C.dusk,
+    },
+    noticedNotItBtn: {
+      borderWidth: 1,
+      borderColor: C.hair,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+    },
+    noticedNotItText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12.5,
+      color: C.mute,
+    },
+
+    // ── Rest list ──
+    restSection: {},
+    restEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 2,
+      textTransform: 'uppercase',
+      color: C.mute,
+      marginBottom: 8,
+    },
+    restRow: {
+      flexDirection: 'row',
+      // flex-start so the checkbox + × button sit at the top
+      // of the title row instead of jumping to the middle as the
+      // content grows (long title wraps, note expands, etc.).
+      alignItems: 'flex-start',
+      gap: 13,
+      paddingVertical: 14,
+      paddingHorizontal: 2,
+      borderBottomWidth: 1,
+      borderBottomColor: hexA(C.hair, 0.7),
+    },
+    restCheckbox: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      borderWidth: 1.5,
+      borderColor: C.ash,
+      marginTop: 1,
+    },
+    restTitle: {
+      fontFamily: fonts.inter,
+      fontSize: 14.5,
+      color: C.boneDim,
+      letterSpacing: -0.15,
+      lineHeight: 19,
+    },
+    restNote: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 12.5,
+      color: C.mute,
+      marginTop: 3,
+      lineHeight: 18,
+    },
+    restNoteToggleHit: {
+      alignSelf: 'flex-start',
+      paddingTop: 2,
+      paddingBottom: 2,
+      marginTop: 2,
+    },
+    restNoteToggle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11.5,
+    },
+    previewNote: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 12.5,
+      color: C.boneDim,
+      marginTop: 4,
+      lineHeight: 17,
+    },
+    // ── Meta row under the title (time · window · tier). Moved
+    //    below per lumi-home-v2 so titles never get squeezed. ──
+    restMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 7,
+      flexWrap: 'wrap',
+    },
+    restTime: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11,
+      letterSpacing: -0.2,
+    },
+    restWindow: {
+      fontFamily: fonts.inter,
+      fontSize: 10.5,
+    },
+    // ── Move-back icon button (Someday rows only) — sized to match
+    //    the delete × button so the row stays compact.
+    restMoveBackBtn: {
+      marginRight: 6,
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.04)',
+      borderWidth: 1,
+      borderColor: 'rgba(176,163,139,0.22)',
+    },
+    restMoveBackGlyph: {
+      color: '#B0A38B',
+      fontSize: 13,
+      lineHeight: 15,
+      marginTop: -1,
+    },
+    restTier: {
+      width: 24,
+      textAlign: 'right',
+      fontSize: 8,
+      letterSpacing: -1,
+    },
+    // ── Edit pill (in meta row) ──
+    restEditPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      borderWidth: 1,
+      borderColor: 'rgba(176,163,139,0.22)',
+      borderRadius: 100,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    restEditGlyph: {
+      fontFamily: fonts.inter,
+      fontSize: 10.5,
+      color: C.boneDim,
+      marginTop: -1,
+    },
+    restEditText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11,
+      color: C.boneDim,
+      letterSpacing: -0.1,
+    },
+    moreToggle: {
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
+    moreText: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 12,
+      color: C.mute,
+    },
+
+    // ── "Done today" — quiet history with one-tap undo. ────────────
+    // Lichen accent on the check (the only place "done" lives in the
+    // palette). Title is dim + line-through so the row reads as past.
+    // Undo pill uses the user accent (ember by default) — the user's
+    // action color, since reactivating is THEIR move.
+    historySection: {
+      marginTop: 28,
+      paddingTop: 18,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.lichen, 0.18),
+    },
+    historyEyebrowRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 8,
+      marginBottom: 10,
+      paddingLeft: 2,
+    },
+    historyEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 2,
+      textTransform: 'uppercase',
+      color: C.lichen,
+    },
+    historyCount: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: C.lichen,
+    },
+    historyChev: {
+      fontSize: 13,
+      color: hexA(C.lichen, 0.7),
+      marginLeft: 'auto',
+    },
+    historyRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 11,
+      paddingHorizontal: 2,
+      borderBottomWidth: 1,
+      borderBottomColor: hexA(C.hair, 0.55),
+    },
+    historyCheck: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: hexA(C.lichen, 0.18),
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.5),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    historyCheckGlyph: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11,
+      color: C.lichen,
+      lineHeight: 13,
+      marginTop: -1,
+    },
+    historyTitle: {
+      fontFamily: fonts.inter,
+      fontSize: 14,
+      color: C.boneDim,
+      letterSpacing: -0.1,
+      textDecorationLine: 'line-through',
+      textDecorationColor: hexA(C.ash, 0.7),
+    },
+    historyMeta: {
+      fontFamily: fonts.inter,
+      fontSize: 11,
+      color: C.mute,
+      marginTop: 2,
+      letterSpacing: -0.05,
+    },
+    undoPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 11,
+      paddingVertical: 6,
+      borderRadius: 100,
+      backgroundColor: hexA(accent.fg, 0.12),
+      borderWidth: 1,
+      borderColor: hexA(accent.fg, 0.42),
+    },
+    undoPillGlyph: {
+      fontSize: 13,
+      color: accent.fg,
+      lineHeight: 14,
+      marginTop: -1,
+    },
+    undoPillText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+      letterSpacing: 0.2,
+    },
+  });
+
+// Default ember stylesheet for module-level sub-components (XpFloater
+// references styles.floaterText). Home itself shadows this with a
+// themed stylesheet via useMemo inside the component.
+const styles = makeStyles(accentFor('ember'));

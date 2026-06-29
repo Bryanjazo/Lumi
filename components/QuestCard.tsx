@@ -16,7 +16,8 @@ const diffLabel = (d: Quest['difficulty']) =>
   d.charAt(0).toUpperCase() + d.slice(1);
 
 export const QuestCard = ({ quest, onToggle }: Props) => {
-  const stripe = accent(quest.accent ?? 'plum').fg;
+  const stripeKey = quest.accent ?? 'plum';
+  const stripe = accent(stripeKey).fg;
   return (
     <Pressable
       onPress={() => {
@@ -35,7 +36,9 @@ export const QuestCard = ({ quest, onToggle }: Props) => {
           {quest.title}
         </Text>
         <View style={styles.meta}>
-          <Pill tone={diffTone(quest.difficulty)}>{diffLabel(quest.difficulty)}</Pill>
+          <Pill tone={diffTone(quest.difficulty)}>
+            {diffLabel(quest.difficulty)}
+          </Pill>
           <Text style={styles.xp}>+{quest.xpReward} XP</Text>
         </View>
       </View>
@@ -66,7 +69,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
-  done: { opacity: 0.42 },
+  done: { opacity: 0.35 },
   accentBar: { width: 3, height: 30, borderRadius: 100 },
   info: { flex: 1 },
   title: {

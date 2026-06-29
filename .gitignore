@@ -43,3 +43,10 @@ yarn-error.*
 # env
 .env
 .env.local
+
+# Apple JWT helper (contains key paths)
+make-jwt.js
+
+# Asset backups (icon swaps, GIF swaps)
+*.png.bak
+*.gif.bak

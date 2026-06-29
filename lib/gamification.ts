@@ -4,13 +4,13 @@ export const LEVEL_THRESHOLDS = [
 ];
 
 export const TITLES = [
-  'Just Starting',
+  'First Spark',
   'Finding Footing',
-  'Building Rhythm',
+  'Quiet Climb',
   'Steady Hands',
-  'In the Flow',
-  'Real Momentum',
-  'Practiced',
+  'Soft Momentum',
+  'Building Rhythm',
+  'Focused Wanderer',
   'Tuned In',
   'Lit Up',
   'Untamed',
@@ -68,4 +68,21 @@ export const lunaState = (params: {
   return 'struggling';
 };
 
-export const todayKey = () => new Date().toISOString().slice(0, 10);
+/**
+ * Format a Date as YYYY-MM-DD in the USER'S LOCAL TIMEZONE.
+ *
+ * Why local (not UTC via toISOString): "today" needs to mean the same
+ * calendar day everywhere in the app. With UTC, a user at 11 PM
+ * Pacific (= 7 AM UTC next day) would write tasks with tomorrow's UTC
+ * date — and the Time tab (which derives "today" from local midnight)
+ * would show those tasks on tomorrow. Aligning everything to local
+ * fixes that mismatch.
+ */
+export const localYmd = (d: Date): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+export const todayKey = (): string => localYmd(new Date());
