@@ -4,14 +4,24 @@ import type { Quest } from '../store/questStore';
 // still boots in Expo Go (no native modules) and on web. Every
 // public helper here returns null / void instead of throwing when
 // the SDK isn't available, so the app keeps working uncalendar'd.
-type CalendarMod = typeof import('expo-calendar');
+//
+// IMPORTANT — we import from `expo-calendar/legacy`, not the
+// top-level `expo-calendar`. In SDK 56 the functional API
+// (requestCalendarPermissionsAsync / getCalendarsAsync /
+// createEventAsync / etc.) is DEPRECATED on the root import and
+// throws at runtime with a "method is deprecated. Import the
+// legacy API from 'expo-calendar/legacy' or migrate to the new
+// object-oriented API" error. The legacy subpath keeps the exact
+// same function shapes alive — we'll migrate to the OO API in a
+// later pass if/when the legacy path actually goes away.
+type CalendarMod = typeof import('expo-calendar/legacy');
 
 let _cal: CalendarMod | null = null;
 const loadCalendar = (): CalendarMod | null => {
   if (_cal) return _cal;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _cal = require('expo-calendar') as CalendarMod;
+    _cal = require('expo-calendar/legacy') as CalendarMod;
   } catch {
     // Native module not bundled (Expo Go / web).
   }

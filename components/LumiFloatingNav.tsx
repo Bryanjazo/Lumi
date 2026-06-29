@@ -216,12 +216,13 @@ export default function LumiFloatingNav({
           tint="dark"
           style={[
             { position: 'absolute' as const, top: 0, bottom: 0, left: 0, right: 0 },
-            {
-              borderRadius: dock ? DOCK_RADIUS : PILL_RADIUS,
-              borderTopRightRadius: DOCK_RADIUS,
-              borderTopLeftRadius: DOCK_RADIUS,
-              overflow: 'hidden',
-            },
+            dock
+              ? {
+                  borderTopLeftRadius: DOCK_RADIUS,
+                  borderTopRightRadius: DOCK_RADIUS,
+                  overflow: 'hidden',
+                }
+              : { borderRadius: PILL_RADIUS, overflow: 'hidden' },
           ]}
         />
         <View
@@ -229,24 +230,18 @@ export default function LumiFloatingNav({
           style={[
             { position: 'absolute' as const, top: 0, bottom: 0, left: 0, right: 0 },
             {
-              borderRadius: dock ? 0 : PILL_RADIUS,
-              borderTopLeftRadius: DOCK_RADIUS,
-              borderTopRightRadius: DOCK_RADIUS,
               backgroundColor: dock
                 ? hexA('#140f0c', 0.72)
                 : hexA('#160f0c', 0.6),
               borderWidth: 1,
-              borderColor: hexA(C.bone, 0.1),
+              borderColor: hexA(C.bone, 0.07),
             },
-          ]}
-        />
-        {/* Bright top edge-light — 1px horizontal gradient hairline,
-           insets from the corners so it doesn't hit the rounded edge. */}
-        <View
-          pointerEvents="none"
-          style={[
-            styles.edgeLight,
-            { left: dock ? 40 : 24, right: dock ? 40 : 24 },
+            dock
+              ? {
+                  borderTopLeftRadius: DOCK_RADIUS,
+                  borderTopRightRadius: DOCK_RADIUS,
+                }
+              : { borderRadius: PILL_RADIUS },
           ]}
         />
 
@@ -393,15 +388,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
-  },
-  edgeLight: {
-    position: 'absolute',
-    top: 0,
-    height: 1,
-    // The actual gradient is approximated with a translucent bone
-    // band; on iOS this reads as the edge-light since the surface
-    // below is dark blurred glass.
-    backgroundColor: 'rgba(236,224,203,0.35)',
   },
   track: {
     position: 'relative',
