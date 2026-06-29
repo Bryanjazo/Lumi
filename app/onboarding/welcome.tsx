@@ -51,6 +51,11 @@ import {
 import { useEffectiveWindows } from '../../constants/windows';
 import { SoftGlow } from '../../components/SoftGlow';
 import { MicIcon } from '../../components/MicIcon';
+import {
+  isCalendarSdkAvailable,
+  requestCalendarAccess,
+  getDefaultCalendarId,
+} from '../../lib/calendar';
 
 // ═════════════════════════════════════════════════════════════════════
 // Palette (kept local — onboarding doesn't theme; matches the spec).
@@ -424,12 +429,13 @@ const reflectionCards = (ans: Answers): ReflectionCard[] => {
 // per lumi-monetization-model-spec-2.md: the offer is now a separate
 // optional two-button screen at /onboarding/trial-choice, shown after
 // onboarding finalizes. Free-first model means no forced trial gate.
-// 7 steps: intro, struggles, rhythm, brain-dump, anchors, reflection,
-// companion-mode. The companion-mode pick is the last decision before
-// landing in the app — by then the user has felt the warm interview
-// tone and can decide if they want the cozy companion layer or the
-// pure organizer. Per companion-mode-spec.md §3.
-const TOTAL_STEPS = 7;
+// 9 steps: intro, struggles, rhythm, brain-dump, anchors, reflection,
+// companion-mode, calendar-connect, widget-intro. The companion-mode
+// pick comes after the warm interview; the two "finishing touch"
+// screens at the end are skippable opt-ins for power features
+// (calendar sync, iOS home-screen widget) so the user isn't forced
+// past them but is also shown the door.
+const TOTAL_STEPS = 9;
 
 export default function Onboarding() {
   const router = useRouter();
@@ -465,6 +471,16 @@ export default function Onboarding() {
   // overwhelm the first-time decision.
   const [companionPick, setCompanionPick] = useState<'full' | 'focused'>(
     'full',
+  );
+  // Calendar-connect step (7) — single state machine for the button.
+  // 'connected' freezes the row to its success state so the user
+  // can move on without re-tapping; 'error' shows the iOS error so
+  // we can debug if perms misbehave.
+  const [calendarStatus, setCalendarStatus] = useState<
+    'idle' | 'connecting' | 'connected' | 'skipped' | 'error'
+  >('idle');
+  const [calendarErrorMsg, setCalendarErrorMsg] = useState<string | null>(
+    null,
   );
 
   // Slide transition between steps (and between anchor sub-steps).
@@ -619,7 +635,61 @@ export default function Onboarding() {
   };
   const stopNudge = () => cleanupNudge();
 
-  // ── Final commit — happens on step 6 → "Start my 7 days free" ───
+  // ── Calendar connect handler for step 7 ─────────────────────────
+  // Same shape as profile.tsx::connectCalendar but inline so we don't
+  // have to route the user through Profile during onboarding. Sets
+  // calendarEnabled + calendarId + autoSyncTasksWithTimes in one
+  // pass so the very first task with a time mirrors to their
+  // calendar without another decision.
+  const handleConnectCalendarStep = async () => {
+    Haptics.selectionAsync();
+    setCalendarErrorMsg(null);
+    if (!isCalendarSdkAvailable()) {
+      setCalendarErrorMsg(
+        'Calendar module not in this build — connect later from Profile.',
+      );
+      setCalendarStatus('error');
+      return;
+    }
+    setCalendarStatus('connecting');
+    try {
+      const result = await requestCalendarAccess();
+      if (!result.ok) {
+        if (result.reason === 'denied') {
+          setCalendarErrorMsg(
+            'Calendar access denied. You can enable it later in Profile → Calendar.',
+          );
+        } else if (result.reason === 'no-sdk') {
+          setCalendarErrorMsg(
+            'Calendar module not available in this build.',
+          );
+        } else {
+          setCalendarErrorMsg(`iOS rejected calendar access: ${result.message}`);
+        }
+        setCalendarStatus('error');
+        return;
+      }
+      const defaultId = await getDefaultCalendarId();
+      const u = useUserStore.getState();
+      u.setCalendarEnabled(true);
+      if (defaultId) u.setCalendarId(defaultId);
+      u.setAutoSyncTasksWithTimes(true);
+      setCalendarStatus('connected');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.warn('[onboarding] connect calendar threw', message);
+      setCalendarErrorMsg(message);
+      setCalendarStatus('error');
+    }
+  };
+  const skipCalendarStep = () => {
+    Haptics.selectionAsync();
+    setCalendarStatus('skipped');
+    next();
+  };
+
+  // ── Final commit — happens on step 8 (widget intro) → "I'm ready" ───
   const finalize = () => {
     const rhythmDef = RHYTHMS.find((r) => r.key === rhythm);
     const sharp = rhythmDef?.sharp ?? null;
@@ -1227,7 +1297,176 @@ export default function Onboarding() {
               </Text>
 
               <View style={{ marginTop: 18 }}>
-                <ContinueBtn onPress={finalize} label="Continue" />
+                <ContinueBtn onPress={next} label="Continue" />
+              </View>
+            </ScrollView>
+          )}
+
+          {/* Step 7 — Calendar connect.
+              Optional. Auto-enables sync to the OS default calendar
+              when granted; user can change which calendar later from
+              Profile. Skip is a first-class action — never punishes
+              the user for opting out. */}
+          {step === 7 && (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={[styles.stepWrap, { paddingTop: 6 }]}
+              showsVerticalScrollIndicator={false}
+            >
+              <Says sub="Tasks with a time can show up in whatever calendar you already use — Apple, Google, Outlook. Off until you say yes.">
+                Want Lumi on your calendar?
+              </Says>
+
+              <View style={{ gap: 12, marginTop: 18 }}>
+                <View
+                  style={[
+                    styles.companionCard,
+                    calendarStatus === 'connected' && {
+                      borderColor: C.glow,
+                      backgroundColor: hexA(C.glow, 0.08),
+                    },
+                  ]}
+                >
+                  <View style={styles.companionCardHeader}>
+                    <Text style={styles.companionCardGlyph}>◷</Text>
+                    <Text
+                      style={[
+                        styles.companionCardTitle,
+                        calendarStatus === 'connected' && { color: C.glow },
+                      ]}
+                    >
+                      {calendarStatus === 'connected'
+                        ? 'Calendar connected'
+                        : 'Connect my calendar'}
+                    </Text>
+                  </View>
+                  <Text style={styles.companionCardBody}>
+                    {calendarStatus === 'connected'
+                      ? 'Tasks with a time will appear alongside the rest of your day.'
+                      : 'Lumi will ask iOS for permission and pick your default calendar.'}
+                  </Text>
+                  {calendarStatus !== 'connected' && (
+                    <Pressable
+                      onPress={handleConnectCalendarStep}
+                      disabled={calendarStatus === 'connecting'}
+                      style={[
+                        styles.companionTagRow,
+                        {
+                          marginTop: 14,
+                          backgroundColor: C.ember,
+                          borderRadius: 10,
+                          paddingVertical: 12,
+                          paddingHorizontal: 18,
+                          alignSelf: 'flex-start',
+                          opacity: calendarStatus === 'connecting' ? 0.6 : 1,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={{
+                          color: C.void,
+                          fontFamily: fonts.interSemi,
+                          fontSize: 13,
+                        }}
+                      >
+                        {calendarStatus === 'connecting'
+                          ? 'Asking iOS…'
+                          : 'Connect'}
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+                {calendarErrorMsg && (
+                  <Text
+                    style={[
+                      styles.companionFootHint,
+                      { color: '#C97A6E', textAlign: 'left' },
+                    ]}
+                  >
+                    {calendarErrorMsg}
+                  </Text>
+                )}
+              </View>
+
+              <View
+                style={{
+                  marginTop: 22,
+                  flexDirection: 'row',
+                  gap: 12,
+                  alignItems: 'center',
+                }}
+              >
+                <Pressable
+                  onPress={skipCalendarStep}
+                  style={{ paddingVertical: 12, paddingHorizontal: 14 }}
+                >
+                  <Text
+                    style={{
+                      color: C.mute,
+                      fontFamily: fonts.inter,
+                      fontSize: 13,
+                    }}
+                  >
+                    Skip for now
+                  </Text>
+                </Pressable>
+                {(calendarStatus === 'connected' ||
+                  calendarStatus === 'error') && (
+                  <View style={{ flex: 1 }}>
+                    <ContinueBtn onPress={next} label="Continue" />
+                  </View>
+                )}
+              </View>
+            </ScrollView>
+          )}
+
+          {/* Step 8 — Widget intro.
+              Informational only. Shows a mock of the widget + the
+              three-step recipe to add it. "I'm ready" finalizes
+              onboarding regardless of whether the user actually adds
+              it (the widget is opt-in, not a gate). */}
+          {step === 8 && (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={[styles.stepWrap, { paddingTop: 6 }]}
+              showsVerticalScrollIndicator={false}
+            >
+              <Says sub="Glanceable on your home screen — my mood, plus how many tasks you've done today.">
+                Add me to your home screen
+              </Says>
+
+              <View style={styles.widgetMockWrap}>
+                <View style={styles.widgetMock}>
+                  <Image
+                    source={lunaSource('idle')}
+                    style={styles.widgetMockCat}
+                  />
+                  <Text style={styles.widgetMockLabel}>Lumi · 3 done</Text>
+                </View>
+              </View>
+
+              <View style={{ gap: 12, marginTop: 22 }}>
+                {[
+                  { n: 1, t: 'Long-press any blank spot on your home screen.' },
+                  { n: 2, t: 'Tap the + in the top corner, search "Lumi".' },
+                  { n: 3, t: 'Pick the small size and add it. You’re set.' },
+                ].map((s) => (
+                  <View key={s.n} style={styles.widgetStepRow}>
+                    <View style={styles.widgetStepBubble}>
+                      <Text style={styles.widgetStepNum}>{s.n}</Text>
+                    </View>
+                    <Text style={styles.widgetStepText}>{s.t}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <Text style={styles.companionFootHint}>
+                Optional — you can always add me later from your home
+                screen.
+              </Text>
+
+              <View style={{ marginTop: 18 }}>
+                <ContinueBtn onPress={finalize} label="I’m ready" />
               </View>
             </ScrollView>
           )}
@@ -1428,6 +1667,69 @@ const styles = StyleSheet.create({
     color: C.mute,
     textAlign: 'center',
     marginTop: 22,
+  },
+
+  // ── Widget intro (step 8) ──
+  widgetMockWrap: {
+    alignItems: 'center',
+    paddingVertical: 22,
+  },
+  widgetMock: {
+    width: 158,
+    height: 158,
+    borderRadius: 24,
+    backgroundColor: '#141210',
+    borderWidth: 1,
+    borderColor: hexA('#FFFFFF', 0.06),
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    // Soft outer glow so it reads as "floating on a home screen"
+    shadowColor: '#000',
+    shadowOpacity: 0.55,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  widgetMockCat: {
+    width: 90,
+    height: 90,
+    resizeMode: 'contain',
+    marginBottom: 6,
+  },
+  widgetMockLabel: {
+    fontFamily: fonts.interSemi,
+    fontSize: 12,
+    color: '#ECE0CB',
+    letterSpacing: 0.2,
+  },
+  widgetStepRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingHorizontal: 4,
+  },
+  widgetStepBubble: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: hexA(C.ember, 0.14),
+    borderWidth: 1,
+    borderColor: hexA(C.ember, 0.4),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  widgetStepNum: {
+    fontFamily: fonts.interSemi,
+    fontSize: 12,
+    color: C.ember,
+  },
+  widgetStepText: {
+    flex: 1,
+    fontFamily: fonts.inter,
+    fontSize: 14,
+    color: C.bone,
+    lineHeight: 22,
+    paddingTop: 3,
   },
   centerWrap: {
     alignItems: 'center',

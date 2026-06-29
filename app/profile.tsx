@@ -857,11 +857,22 @@ export default function AccountScreen() {
     setCalendarBusy(true);
     setCalendarError(null);
     try {
-      const granted = await requestCalendarAccess();
-      if (!granted) {
-        setCalendarError(
-          'Calendar access denied. Open Settings → Lumi → Calendars to enable it.',
-        );
+      const result = await requestCalendarAccess();
+      if (!result.ok) {
+        if (result.reason === 'no-sdk') {
+          setCalendarError(
+            'Calendar module not bundled in this build. Rebuild the app.',
+          );
+        } else if (result.reason === 'denied') {
+          setCalendarError(
+            'Calendar access denied. Open Settings → Lumi → Calendars to enable it.',
+          );
+        } else {
+          // reason === 'error' — surface the actual native message so we
+          // can see what iOS is rejecting (and so the user can screenshot
+          // a real error if they need to send it).
+          setCalendarError(`iOS rejected calendar access: ${result.message}`);
+        }
         return;
       }
       const writable = await listWritableCalendars();
@@ -874,8 +885,10 @@ export default function AccountScreen() {
         if (def) setCalendarId(def);
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch {
-      setCalendarError("Couldn't reach your calendar. Try again in a moment.");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.warn('[calendar] connectCalendar threw', message);
+      setCalendarError(message);
     } finally {
       setCalendarBusy(false);
     }

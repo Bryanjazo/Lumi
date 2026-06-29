@@ -23,16 +23,35 @@ export const isCalendarSdkAvailable = (): boolean => loadCalendar() !== null;
 // ── Permissions ─────────────────────────────────────────────────────
 
 /**
- * Request OS calendar access. Returns true if the user granted (or
- * had previously granted). Idempotent — safe to call before every
+ * Permission result with enough detail for the caller to render
+ * the right copy. Splits "denied" from "SDK missing" so the UI can
+ * point the user at iOS Settings vs. tell them they need a dev
+ * build vs. surface an unexpected throw.
+ */
+export type CalendarAccessResult =
+  | { ok: true }
+  | { ok: false; reason: 'no-sdk' }
+  | { ok: false; reason: 'denied' }
+  | { ok: false; reason: 'error'; message: string };
+
+/**
+ * Request OS calendar access. Returns a tagged result so the caller
+ * can render the right error. Idempotent — safe to call before every
  * write to handle the case where the user revoked perms in Settings
  * since they last connected.
  */
-export const requestCalendarAccess = async (): Promise<boolean> => {
+export const requestCalendarAccess = async (): Promise<CalendarAccessResult> => {
   const Cal = loadCalendar();
-  if (!Cal) return false;
-  const { status } = await Cal.requestCalendarPermissionsAsync();
-  return status === 'granted';
+  if (!Cal) return { ok: false, reason: 'no-sdk' };
+  try {
+    const { status } = await Cal.requestCalendarPermissionsAsync();
+    if (status === 'granted') return { ok: true };
+    return { ok: false, reason: 'denied' };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.warn('[calendar] requestCalendarPermissionsAsync threw', message);
+    return { ok: false, reason: 'error', message };
+  }
 };
 
 // ── Calendar discovery ───────────────────────────────────────────────
@@ -54,18 +73,27 @@ export interface WritableCalendar {
 export const listWritableCalendars = async (): Promise<WritableCalendar[]> => {
   const Cal = loadCalendar();
   if (!Cal) return [];
-  const cals = await Cal.getCalendarsAsync(Cal.EntityTypes.EVENT);
-  return cals
-    .filter((c) => c.allowsModifications)
-    .map((c) => ({
-      id: c.id,
-      title: c.title,
-      color: c.color,
-      source: c.source?.name ?? '',
-      isPrimary: Boolean(
-        (c as unknown as { isPrimary?: boolean }).isPrimary ?? false,
-      ),
-    }));
+  try {
+    const cals = await Cal.getCalendarsAsync(Cal.EntityTypes.EVENT);
+    return cals
+      .filter((c) => c.allowsModifications)
+      .map((c) => ({
+        id: c.id,
+        title: c.title,
+        color: c.color,
+        source: c.source?.name ?? '',
+        isPrimary: Boolean(
+          (c as unknown as { isPrimary?: boolean }).isPrimary ?? false,
+        ),
+      }));
+  } catch (e) {
+    // Log the real failure so the caller can show it. Returning []
+    // lets the caller decide whether to treat "no writable calendars"
+    // as fatal or as a "ask the user to add one in iOS Calendar" case.
+    const message = e instanceof Error ? e.message : String(e);
+    console.warn('[calendar] getCalendarsAsync threw', message);
+    throw new Error(`Calendar read failed: ${message}`);
+  }
 };
 
 /** Best-effort default writable calendar id, or null. */
