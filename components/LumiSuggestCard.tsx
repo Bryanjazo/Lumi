@@ -20,7 +20,6 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { fonts } from '../constants/fonts';
-import type { Suggestion } from '../store/suggestionsStore';
 import type { WindowKey } from '../constants/windows';
 
 const C = {
@@ -100,33 +99,54 @@ export interface SuggestAcceptOptions {
   exactMinute: number | null;
 }
 
+// Generic input shape — both recurrence Suggestions (from the
+// suggestionsStore) and SmartTasks (from the brain-dump preview flow
+// on Home) can adapt to this. Each surface decides what onAccept and
+// onDismiss actually do; the card just collects the user's choices.
+export interface SuggestInput {
+  /** Stable id used for React keys and the parent's bookkeeping. */
+  id: string;
+  /** Headline shown in italic at the top of the card. */
+  title: string;
+  /** Optional sub-line under the title (e.g., "the LLM is still sorting"). */
+  subtitle?: string;
+  /** Default part-of-day; defaults to 'evening' if omitted. */
+  defaultWindow?: WindowKey;
+  /** Default minute-of-day for the pinned-time toggle; null = float. */
+  defaultExactMinute?: number | null;
+  /** Default duration in minutes; defaults to 30. */
+  defaultDurationMin?: number;
+}
+
 interface Props {
-  suggestion: Suggestion;
+  input: SuggestInput;
   /** Total number of pending suggestions — drives the "1 of N" badge. */
   total: number;
   /** 0-based index of this suggestion in the queue. */
   index: number;
-  onAccept: (sug: Suggestion, opts: SuggestAcceptOptions) => void;
-  onDismiss: (sug: Suggestion) => void;
+  onAccept: (input: SuggestInput, opts: SuggestAcceptOptions) => void;
+  onDismiss: (input: SuggestInput) => void;
   /** Skip without accepting/dismissing — moves to the next suggestion. */
-  onSkip?: (sug: Suggestion) => void;
+  onSkip?: (input: SuggestInput) => void;
 }
 
 export const LumiSuggestCard = ({
-  suggestion,
+  input,
   total,
   index,
   onAccept,
   onDismiss,
   onSkip,
 }: Props) => {
-  // Seed state from the suggestion's guess so the user lands on
-  // Lumi's best estimate; everything is overridable.
-  const initialWindow: WindowKey =
-    (suggestion.guess?.part as WindowKey) ?? 'evening';
-  const initialExact = suggestion.guess?.at ?? null;
+  // Seed state from the input's defaults so the user lands on Lumi's
+  // best estimate; everything is overridable. Keyed on input.id so
+  // a new card resets its local state when the parent advances to
+  // the next suggestion in a bulk queue.
+  const initialWindow: WindowKey = input.defaultWindow ?? 'evening';
+  const initialExact = input.defaultExactMinute ?? null;
+  const initialDuration = input.defaultDurationMin ?? 30;
   const [win, setWin] = useState<WindowKey>(initialWindow);
-  const [dur, setDur] = useState<number>(30);
+  const [dur, setDur] = useState<number>(initialDuration);
   const [exact, setExact] = useState<boolean>(initialExact != null);
   const [time, setTime] = useState<number>(
     initialExact ?? defaultMinuteForWindow(initialWindow),
@@ -167,7 +187,7 @@ export const LumiSuggestCard = ({
 
   const handleAccept = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    onAccept(suggestion, {
+    onAccept(input, {
       window: effWin,
       durationMin: dur,
       exactMinute: exact ? time : null,
@@ -193,7 +213,7 @@ export const LumiSuggestCard = ({
         <View style={{ flex: 1 }} />
         {total > 1 && onSkip && (
           <Pressable
-            onPress={() => onSkip(suggestion)}
+            onPress={() => onSkip(input)}
             hitSlop={10}
             style={styles.skipBtn}
           >
@@ -201,7 +221,7 @@ export const LumiSuggestCard = ({
           </Pressable>
         )}
         <Pressable
-          onPress={() => onDismiss(suggestion)}
+          onPress={() => onDismiss(input)}
           hitSlop={10}
           style={styles.dismissBtn}
         >
@@ -210,12 +230,12 @@ export const LumiSuggestCard = ({
       </View>
 
       {/* Title + live summary */}
-      <Text style={styles.title}>{suggestion.title}</Text>
+      <Text style={styles.title}>{input.title}</Text>
       <View style={styles.summaryRow}>
         <View
           style={[styles.summaryDot, { backgroundColor: effWinObj.color }]}
         />
-        <Text style={styles.summaryText}>{summary}</Text>
+        <Text style={styles.summaryText}>{input.subtitle ?? summary}</Text>
       </View>
 
       {/* Duration */}
@@ -404,7 +424,7 @@ export const LumiSuggestCard = ({
           <Text style={styles.acceptText}>Accept</Text>
         </Pressable>
         <Pressable
-          onPress={() => onDismiss(suggestion)}
+          onPress={() => onDismiss(input)}
           style={styles.tweakBtn}
         >
           <Text style={styles.tweakText}>Not it</Text>
