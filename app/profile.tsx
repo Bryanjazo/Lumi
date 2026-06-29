@@ -31,7 +31,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import Svg, { Circle, Rect } from 'react-native-svg';
+import Svg, { Circle, Rect, Path } from 'react-native-svg';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import { fonts } from '../constants/fonts';
 import { skins } from '../constants/skins';
@@ -386,6 +387,207 @@ const STRUGGLE_LABELS: Record<StruggleKey, string> = {
   overwhelm: 'Feeling overwhelmed',
   forget: 'Forgetting',
 };
+
+// ─────────────────────────────────────────────────────────────────────
+// ModePreview — tiny 64×84 mock of what Home looks like in each mode,
+// rendered inside the Companion-mode picker so users can SEE the
+// difference, not just read about it. Ported from
+// lumi-playful-setting.jsx (the design composer mockup).
+//   - Full   → cozy room: blue→warm gradient, window, Luna at floor,
+//              little fire emoji for streak
+//   - Minimal → ember-tint task card mock with a tiny Luna in corner
+//   - Focused → dusk-tint plain task-list with checkboxes, no Luna
+// ─────────────────────────────────────────────────────────────────────
+const ModePreview = ({
+  mode,
+}: {
+  mode: 'full' | 'minimal' | 'focused';
+}) => {
+  if (mode === 'full') {
+    return (
+      <View style={previewStyles.frame}>
+        <LinearGradient
+          colors={['#2a3550', '#5a3d2a', '#1a1410']}
+          locations={[0, 0.6, 1]}
+          style={previewStyles.fill}
+        />
+        {/* Window */}
+        <View style={previewStyles.window}>
+          <LinearGradient
+            colors={['#8a96b0', '#e8c886']}
+            style={previewStyles.fill}
+          />
+        </View>
+        {/* Luna on the floor */}
+        <Image
+          source={lunaSource('idle')}
+          style={previewStyles.fullLuna}
+        />
+        {/* Streak ember */}
+        <Text style={previewStyles.streakGlyph}>🔥</Text>
+      </View>
+    );
+  }
+  if (mode === 'minimal') {
+    return (
+      <View style={previewStyles.frame}>
+        <LinearGradient
+          colors={[hexAStatic('#E07A4F', 0.12), '#120E0C']}
+          locations={[0, 0.6]}
+          style={previewStyles.fill}
+          start={{ x: 0.7, y: 0.1 }}
+          end={{ x: 0.3, y: 1 }}
+        />
+        <View style={previewStyles.innerPad}>
+          <View style={previewStyles.minHeadBar} />
+          <View style={previewStyles.minCard}>
+            <View style={previewStyles.minCardBar1} />
+            <View style={previewStyles.minCardBar2} />
+          </View>
+        </View>
+        <Image
+          source={lunaSource('idle')}
+          style={previewStyles.minLuna}
+        />
+      </View>
+    );
+  }
+  return (
+    <View style={previewStyles.frame}>
+      <LinearGradient
+        colors={[hexAStatic('#8EA0B4', 0.1), '#120E0C']}
+        locations={[0, 0.62]}
+        style={previewStyles.fill}
+        start={{ x: 0.7, y: 0.1 }}
+        end={{ x: 0.3, y: 1 }}
+      />
+      <View style={previewStyles.innerPad}>
+        <View style={previewStyles.focusHeadBar} />
+        {[0, 1, 2].map((i) => (
+          <View key={i} style={previewStyles.focusRow}>
+            <View style={previewStyles.focusCheckbox} />
+            <View style={previewStyles.focusRowBar} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+};
+
+// Static hex→rgba (ModePreview lives above AccountScreen and can't
+// reach the closure-level hexA — same logic inlined here).
+const hexAStatic = (hex: string, a: number): string => {
+  const h = hex.replace('#', '');
+  return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+};
+
+const previewStyles = StyleSheet.create({
+  frame: {
+    width: 64,
+    height: 84,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#2A2420',
+    overflow: 'hidden',
+    position: 'relative',
+    flexShrink: 0,
+  },
+  fill: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  window: {
+    position: 'absolute',
+    top: 8,
+    left: 21,
+    width: 22,
+    height: 24,
+    borderRadius: 3,
+    borderWidth: 2,
+    borderColor: '#2A2018',
+    overflow: 'hidden',
+  },
+  fullLuna: {
+    position: 'absolute',
+    bottom: 0,
+    left: 16,
+    width: 32,
+    height: 32,
+  },
+  streakGlyph: {
+    position: 'absolute',
+    top: 3,
+    left: 5,
+    fontSize: 8,
+    lineHeight: 9,
+  },
+  innerPad: { padding: 7 },
+  minHeadBar: {
+    width: '60%',
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#2A2420',
+    marginBottom: 5,
+  },
+  minCard: {
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(224,122,79,0.4)',
+    backgroundColor: 'rgba(224,122,79,0.08)',
+    height: 30,
+    padding: 4,
+  },
+  minCardBar1: {
+    width: '70%',
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(236,224,203,0.5)',
+    marginBottom: 4,
+  },
+  minCardBar2: {
+    width: '100%',
+    height: 8,
+    borderRadius: 3,
+    backgroundColor: '#E07A4F',
+  },
+  minLuna: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 22,
+    height: 22,
+    opacity: 0.8,
+  },
+  focusHeadBar: {
+    width: '50%',
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#2A2420',
+    marginBottom: 6,
+  },
+  focusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 5,
+  },
+  focusCheckbox: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1.4,
+    borderColor: '#5A5650',
+  },
+  focusRowBar: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(236,224,203,0.28)',
+  },
+});
 
 // ─────────────────────────────────────────────────────────────────────
 // PulseDot — small steady-pulse status indicator used in the calendar
@@ -1332,11 +1534,36 @@ export default function AccountScreen() {
                   {companionOpen && (
                     <View style={[styles.companionModeRow, { marginTop: 12 }]}>
                       <Text style={styles.personalHint}>
-                        Your level, streak, and progress keep accruing
-                        in every mode — flipping back later is
-                        non-destructive.
+                        Dial the companion up or down anytime. Your
+                        level, streak, and progress keep accruing in
+                        every mode — switching back later changes
+                        nothing.
                       </Text>
-                      {modeOptions.map((opt) => {
+                      {(
+                        [
+                          {
+                            k: 'full' as const,
+                            title: 'Full',
+                            tag: 'cozy companion',
+                            desc: `${petName} + the room + XP — a companion that organizes you.`,
+                            feats: { Luna: true, Room: true, Streak: true, XP: true },
+                          },
+                          {
+                            k: 'minimal' as const,
+                            title: 'Minimal',
+                            tag: 'warm & clean',
+                            desc: `A small, quiet ${petName}. Streak kept; XP & unlocks tucked away.`,
+                            feats: { Luna: true, Room: false, Streak: true, XP: false },
+                          },
+                          {
+                            k: 'focused' as const,
+                            title: 'Focused',
+                            tag: 'pure calm',
+                            desc: 'No cat, no game — a clean AI organizer, nothing else.',
+                            feats: { Luna: false, Room: false, Streak: false, XP: false },
+                          },
+                        ] as const
+                      ).map((opt) => {
                         const on = companionMode === opt.k;
                         return (
                           <Pressable
@@ -1346,39 +1573,132 @@ export default function AccountScreen() {
                               setCompanionMode(opt.k);
                             }}
                             style={[
-                              styles.companionModeCard,
-                              on && {
-                                backgroundColor: hexA(accent.fg, 0.1),
-                                borderColor: accent.fg,
-                              },
+                              styles.playfulCard,
+                              on && styles.playfulCardOn,
                             ]}
                           >
-                            <View style={styles.companionModeHeader}>
-                              <Text
-                                style={[
-                                  styles.companionModeTitle,
-                                  on && { color: accent.fg },
-                                ]}
-                              >
-                                {opt.title}
-                              </Text>
-                              {on && (
+                            <ModePreview mode={opt.k} />
+                            <View style={{ flex: 1, minWidth: 0 }}>
+                              <View style={styles.playfulHeader}>
                                 <Text
                                   style={[
-                                    styles.companionModeCheck,
-                                    { color: accent.fg },
+                                    styles.playfulTitle,
+                                    on && { color: accent.fg },
                                   ]}
                                 >
-                                  ✓
+                                  {opt.title}
                                 </Text>
-                              )}
+                                <View
+                                  style={[
+                                    styles.playfulRadio,
+                                    on
+                                      ? {
+                                          borderColor: accent.fg,
+                                          backgroundColor: accent.fg,
+                                        }
+                                      : { borderColor: '#5A5650' },
+                                  ]}
+                                >
+                                  {on && (
+                                    <Text style={styles.playfulRadioCheck}>
+                                      ✓
+                                    </Text>
+                                  )}
+                                </View>
+                              </View>
+                              <Text
+                                style={[
+                                  styles.playfulTag,
+                                  on && { color: hexA(accent.fg, 0.85) },
+                                ]}
+                              >
+                                {opt.tag.toUpperCase()}
+                              </Text>
+                              <Text style={styles.playfulDesc}>
+                                {opt.desc}
+                              </Text>
+                              <View style={styles.playfulPillsRow}>
+                                {(['Luna', 'Room', 'Streak', 'XP'] as const).map(
+                                  (f) => {
+                                    const lit = opt.feats[f];
+                                    return (
+                                      <View
+                                        key={f}
+                                        style={[
+                                          styles.playfulPill,
+                                          lit
+                                            ? on
+                                              ? {
+                                                  backgroundColor: hexA(
+                                                    accent.fg,
+                                                    0.14,
+                                                  ),
+                                                  borderColor: hexA(
+                                                    accent.fg,
+                                                    0.4,
+                                                  ),
+                                                }
+                                              : {
+                                                  backgroundColor: '#1F1813',
+                                                  borderColor: '#2A2420',
+                                                }
+                                            : {
+                                                backgroundColor: 'transparent',
+                                                borderColor: hexA('#2A2420', 0.5),
+                                              },
+                                        ]}
+                                      >
+                                        <Text
+                                          style={[
+                                            styles.playfulPillText,
+                                            lit
+                                              ? on
+                                                ? { color: '#E0A488' }
+                                                : { color: '#B0A38B' }
+                                              : {
+                                                  color: '#5A5650',
+                                                  textDecorationLine:
+                                                    'line-through',
+                                                },
+                                          ]}
+                                        >
+                                          {f}
+                                        </Text>
+                                      </View>
+                                    );
+                                  },
+                                )}
+                              </View>
                             </View>
-                            <Text style={styles.companionModeSub}>
-                              {opt.sub}
-                            </Text>
                           </Pressable>
                         );
                       })}
+
+                      {/* Reassurance footer */}
+                      <View style={styles.playfulReassure}>
+                        <Svg width={16} height={16} viewBox="0 0 24 24">
+                          <Path
+                            d="M3.5 9a9 9 0 1 1-1 5"
+                            stroke="#869072"
+                            strokeWidth={1.8}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            fill="none"
+                          />
+                          <Path
+                            d="M3 4v5h5"
+                            stroke="#869072"
+                            strokeWidth={1.8}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            fill="none"
+                          />
+                        </Svg>
+                        <Text style={styles.playfulReassureText}>
+                          Switching is always reversible — nothing you’ve
+                          earned is ever lost.
+                        </Text>
+                      </View>
                     </View>
                   )}
                 </>
@@ -2431,6 +2751,104 @@ const makeStyles = (accent: Accent) =>
     },
     companionModeRow: {
       gap: 8,
+    },
+
+    // ── Playful-setting cards (companion mode picker) ─────────────
+    // Per lumi-playful-setting.jsx — each card shows a mini Home
+    // preview on the left + title/tag/desc/feature-pills on the right.
+    playfulCard: {
+      flexDirection: 'row',
+      gap: 14,
+      padding: 14,
+      borderRadius: 18,
+      backgroundColor: C.void2,
+      borderWidth: 1.5,
+      borderColor: C.hair,
+    },
+    playfulCardOn: {
+      borderColor: C.ember,
+      backgroundColor: hexA(C.ember, 0.08),
+      // Soft ember glow when selected
+      shadowColor: C.ember,
+      shadowOpacity: 0.18,
+      shadowRadius: 22,
+      shadowOffset: { width: 0, height: 10 },
+    },
+    playfulHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 2,
+    },
+    playfulTitle: {
+      flex: 1,
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 20,
+      color: C.bone,
+      letterSpacing: -0.3,
+    },
+    playfulRadio: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      borderWidth: 1.5,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    playfulRadioCheck: {
+      color: C.void,
+      fontSize: 12,
+      fontFamily: fonts.interSemi,
+    },
+    playfulTag: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9.5,
+      letterSpacing: 1,
+      color: C.mute,
+      fontWeight: '700',
+      marginBottom: 7,
+    },
+    playfulDesc: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.boneDim,
+      lineHeight: 17,
+      marginBottom: 10,
+    },
+    playfulPillsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    playfulPill: {
+      paddingVertical: 3,
+      paddingHorizontal: 8,
+      borderRadius: 100,
+      borderWidth: 1,
+    },
+    playfulPillText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      fontWeight: '600',
+      letterSpacing: -0.1,
+    },
+    playfulReassure: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      padding: 13,
+      borderRadius: 13,
+      backgroundColor: hexA('#869072', 0.06),
+      borderWidth: 1,
+      borderColor: hexA('#869072', 0.22),
+      marginTop: 8,
+    },
+    playfulReassureText: {
+      flex: 1,
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.boneDim,
+      lineHeight: 17,
     },
 
     // ── Calendar (enhanced) ─────────────────────────────────────
