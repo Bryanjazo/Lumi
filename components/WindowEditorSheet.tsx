@@ -25,6 +25,7 @@ import {
   type WindowOverrides,
 } from '../store/userStore';
 import { useAccent } from '../lib/theme';
+import { DayRibbon } from './DayRibbon';
 
 const C = {
   void: '#120E0C',
@@ -33,6 +34,24 @@ const C = {
   boneDim: '#B0A38B',
   mute: '#6E655A',
   hair: '#2A2420',
+  honey: '#C9A06A',
+  lichen: '#869072',
+  ember: '#E07A4F',
+  dusk: '#8EA0B4',
+} as const;
+
+const hexA = (hex: string, a: number): string => {
+  const h = hex.replace('#', '');
+  return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+};
+
+// Color per window — matches DayRibbon's palette so the ribbon and
+// the result table use the same hue for each band.
+const WINDOW_COLOR = {
+  morning: C.honey,
+  midday: C.lichen,
+  afternoon: C.ember,
+  evening: C.dusk,
 } as const;
 
 interface WindowEditorSheetProps {
@@ -51,8 +70,10 @@ export const WindowEditorSheet = ({
 }: WindowEditorSheetProps) => {
   const accent = useAccent();
   const overrides = useUserStore((s) => s.windowOverrides);
-  const wakeHour = useUserStore((s) => Math.floor(s.anchors.wake / 60));
-  const sleepHour = useUserStore((s) => Math.floor(s.anchors.sleep / 60));
+  const wakeMin = useUserStore((s) => s.anchors.wake);
+  const sleepMin = useUserStore((s) => s.anchors.sleep);
+  const wakeHour = Math.floor(wakeMin / 60);
+  const sleepHour = Math.floor(sleepMin / 60);
   const setWindowOverrides = useUserStore((s) => s.setWindowOverrides);
 
   const [draft, setDraft] = useState<WindowOverrides>(overrides);
@@ -137,14 +158,27 @@ export const WindowEditorSheet = ({
             keyboardShouldPersistTaps="handled"
           >
             <Text style={styles.hint}>
-              When each part of your day begins. Morning is anchored to your
-              wake time ({formatHour(wakeHour)}), evening ends at bed (
-              {formatHour(sleepHour)}). Tap the steppers to shift the middle
-              boundaries.
+              Morning is anchored to wake ({formatHour(wakeHour)});
+              evening ends at bed ({formatHour(sleepHour)}). Shift the
+              middle boundaries — watch the ribbon reflow.
             </Text>
+
+            {/* Live compact ribbon — reflows as the user moves any
+               boundary stepper below. Draft values drive it so the
+               preview is committed only when "Save" is tapped. */}
+            <DayRibbon
+              wakeMin={wakeMin}
+              sleepMin={sleepMin}
+              middayHour={draft.midday}
+              afternoonHour={draft.afternoon}
+              eveningHour={draft.evening}
+              compact
+            />
+            <View style={{ height: 16 }} />
 
             <BoundaryStepper
               label="Midday begins"
+              dotColor={WINDOW_COLOR.midday}
               value={draft.midday}
               min={middayMin}
               max={middayMax}
@@ -153,6 +187,7 @@ export const WindowEditorSheet = ({
             />
             <BoundaryStepper
               label="Afternoon begins"
+              dotColor={WINDOW_COLOR.afternoon}
               value={draft.afternoon}
               min={afternoonMin}
               max={afternoonMax}
@@ -161,6 +196,7 @@ export const WindowEditorSheet = ({
             />
             <BoundaryStepper
               label="Evening begins"
+              dotColor={WINDOW_COLOR.evening}
               value={draft.evening}
               min={eveningMin}
               max={eveningMax}
@@ -171,18 +207,22 @@ export const WindowEditorSheet = ({
             <View style={styles.summary}>
               <SummaryRow
                 label="Morning"
+                color={WINDOW_COLOR.morning}
                 range={`${formatHour(wakeHour)} – ${formatHour(draft.midday)}`}
               />
               <SummaryRow
                 label="Midday"
+                color={WINDOW_COLOR.midday}
                 range={`${formatHour(draft.midday)} – ${formatHour(draft.afternoon)}`}
               />
               <SummaryRow
                 label="Afternoon"
+                color={WINDOW_COLOR.afternoon}
                 range={`${formatHour(draft.afternoon)} – ${formatHour(draft.evening)}`}
               />
               <SummaryRow
                 label="Evening"
+                color={WINDOW_COLOR.evening}
                 range={`${formatHour(draft.evening)} – ${formatHour(sleepHour)}`}
               />
             </View>
@@ -199,6 +239,7 @@ export const WindowEditorSheet = ({
 
 const BoundaryStepper = ({
   label,
+  dotColor,
   value,
   min,
   max,
@@ -206,6 +247,7 @@ const BoundaryStepper = ({
   accent,
 }: {
   label: string;
+  dotColor: string;
   value: number;
   min: number;
   max: number;
@@ -224,7 +266,12 @@ const BoundaryStepper = ({
   };
   return (
     <View style={styles.stepperRow}>
-      <Text style={styles.stepperLabel}>{label}</Text>
+      <View style={styles.stepperLabelRow}>
+        <View
+          style={[styles.stepperDot, { backgroundColor: dotColor }]}
+        />
+        <Text style={styles.stepperLabel}>{label}</Text>
+      </View>
       <View style={styles.stepperControls}>
         <Pressable
           onPress={dec}
@@ -248,9 +295,22 @@ const BoundaryStepper = ({
   );
 };
 
-const SummaryRow = ({ label, range }: { label: string; range: string }) => (
-  <View style={styles.summaryRow}>
-    <Text style={styles.summaryLabel}>{label}</Text>
+const SummaryRow = ({
+  label,
+  color,
+  range,
+}: {
+  label: string;
+  color: string;
+  range: string;
+}) => (
+  <View
+    style={[styles.summaryRow, { backgroundColor: hexA(color, 0.05) }]}
+  >
+    <View style={styles.summaryLabelRow}>
+      <View style={[styles.summaryDot, { backgroundColor: color }]} />
+      <Text style={styles.summaryLabel}>{label}</Text>
+    </View>
     <Text style={styles.summaryRange}>{range}</Text>
   </View>
 );
@@ -309,11 +369,22 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: C.hair,
   },
+  stepperLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  stepperDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
   stepperLabel: {
     fontFamily: fonts.inter,
-    fontSize: 13,
-    color: C.boneDim,
-    marginBottom: 8,
+    fontSize: 13.5,
+    color: C.bone,
+    fontWeight: '500',
   },
   stepperControls: {
     flexDirection: 'row',
@@ -354,21 +425,33 @@ const styles = StyleSheet.create({
   },
   summaryRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 11,
     borderBottomWidth: 1,
-    borderBottomColor: C.hair,
+    borderBottomColor: hexA(C.hair, 0.55),
+  },
+  summaryLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  summaryDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
   summaryLabel: {
     fontFamily: fonts.inter,
-    fontSize: 12.5,
-    color: C.boneDim,
+    fontSize: 13.5,
+    color: C.bone,
   },
   summaryRange: {
-    fontFamily: fonts.inter,
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
     fontSize: 12.5,
-    color: C.bone,
+    color: C.boneDim,
   },
   resetBtn: {
     marginTop: 16,

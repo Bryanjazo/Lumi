@@ -33,6 +33,7 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Svg, { Circle, Rect, Path } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
+import { DayRibbon } from '../components/DayRibbon';
 
 import { fonts } from '../constants/fonts';
 import { skins } from '../constants/skins';
@@ -713,6 +714,10 @@ export default function AccountScreen() {
   const struggles = useUserStore((s) => s.struggles);
   const anchors = useUserStore((s) => s.anchors);
   const setAnchor = useUserStore((s) => s.setAnchor);
+  // Selected so the DayRibbon (rendered in the anchors expanded body)
+  // reflects the user's current part-of-day boundaries alongside their
+  // anchors. Both surface drive the same visual.
+  const windowOverrides = useUserStore((s) => s.windowOverrides);
 
   // Real history → digests
   const quests = useQuestStore((s) => s.quests);
@@ -1432,6 +1437,24 @@ export default function AccountScreen() {
             </Pressable>
             {anchorsOpen && (
               <View style={styles.anchorsList}>
+                {/* Live "shape of your day" ribbon — colored part-of-
+                   day bands with anchor markers on top. Reflows the
+                   instant the user nudges any anchor, so the
+                   abstract numbers become a tangible day. */}
+                <View style={styles.dayRibbonWrap}>
+                  <DayRibbon
+                    wakeMin={anchors.wake}
+                    sleepMin={anchors.sleep}
+                    middayHour={windowOverrides.midday}
+                    afternoonHour={windowOverrides.afternoon}
+                    eveningHour={windowOverrides.evening}
+                    anchors={ANCHOR_DEFS.map((a) => ({
+                      key: a.key,
+                      minutes: anchors[a.key],
+                    }))}
+                  />
+                </View>
+
                 {ANCHOR_DEFS.map((a) => {
                   const v = anchors[a.key];
                   return (
@@ -3097,6 +3120,11 @@ const makeStyles = (accent: Accent) =>
       paddingVertical: 8,
       borderBottomWidth: 1,
       borderBottomColor: hexA(C.hair, 0.7),
+    },
+    dayRibbonWrap: {
+      paddingHorizontal: 4,
+      paddingTop: 8,
+      paddingBottom: 14,
     },
     anchorRow: {
       flexDirection: 'row',
