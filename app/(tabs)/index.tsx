@@ -96,6 +96,10 @@ import {
   type UnderstoodTask,
 } from '../../lib/anthropic';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
+import {
+  LumiSuggestCard,
+  type SuggestAcceptOptions,
+} from '../../components/LumiSuggestCard';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -2073,6 +2077,44 @@ export default function Home() {
     setScheduleSuggestion(s);
   };
 
+  // Direct-accept path from LumiSuggestCard — the user has already
+  // picked window / duration / optional exact time inside the card,
+  // so we skip the HabitScheduleSheet hop and create the quest here.
+  // Recurrence is preserved from the suggestion's `guess` rule so
+  // "Lumi suggests it weekly" still becomes a recurring task; the
+  // user's overrides for window + time win over the guess defaults.
+  const acceptSuggestionDirect = (
+    s: Suggestion,
+    opts: SuggestAcceptOptions,
+  ) => {
+    const recurAt =
+      opts.exactMinute != null ? opts.exactMinute : (s.guess.at ?? undefined);
+    // The card only exposes the four part-of-day windows (no
+    // 'someday'), so this cast is safe — the constraint is enforced
+    // by the WINDOWS array in LumiSuggestCard.
+    const recurPart = opts.window as import('../../constants/recur').RecurPart;
+    const rule = {
+      ...s.guess,
+      part: recurPart,
+      ...(recurAt != null ? { at: recurAt } : {}),
+    };
+    addQuest({
+      title: s.title,
+      difficulty: 'medium',
+      importance: s.importance,
+      window: opts.window,
+      durationMinutes: opts.durationMin,
+      ...(opts.exactMinute != null && {
+        scheduledHour: Math.floor(opts.exactMinute / 60),
+        scheduledMinute: opts.exactMinute % 60,
+      }),
+      recur: rule,
+    });
+    consumeSuggestion(s.id);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    showToast('Added to your day 💛');
+  };
+
   const commitScheduledSuggestion = (rule: import('../../constants/recur').RecurRule) => {
     if (!scheduleSuggestion) return;
     const s = scheduleSuggestion;
@@ -2922,54 +2964,21 @@ export default function Home() {
           </View>
         )}
 
-        {/* ── One gentle "Lumi noticed" card (dusk) ── */}
+        {/* ── Lumi suggests — richer scheduling card per
+            lumi-suggest-card.jsx mockup. Each suggestion gets its
+            own controls (duration / window / optional exact time)
+            before the user accepts. Bulk-aware: when multiple
+            suggestions are pending, the "1 of N" badge shows up
+            and each accept/dismiss reveals the next. */}
         {heroSuggestion && !allDone && (
-          <View style={styles.noticedCard}>
-            <View style={styles.noticedHeader}>
-              <Text style={styles.noticedGlyph}>🔁</Text>
-              <Text style={styles.noticedEyebrow}>a rhythm Lumi noticed</Text>
-              <Pressable
-                onPress={() => dismissSuggestion_(heroSuggestion)}
-                hitSlop={10}
-              >
-                <Text style={styles.noticedDismiss}>×</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.noticedBody}>
-              {heroSuggestion.span ? (
-                <>
-                  You&apos;ve done{' '}
-                  <Text style={styles.noticedAccent}>
-                    {heroSuggestion.title.toLowerCase()}
-                  </Text>{' '}
-                  {heroSuggestion.span}. Want it to come back on its own?
-                </>
-              ) : (
-                <>
-                  Want{' '}
-                  <Text style={styles.noticedAccent}>
-                    {heroSuggestion.title.toLowerCase()}
-                  </Text>{' '}
-                  to come back on its own?
-                </>
-              )}
-            </Text>
-            <View style={styles.noticedActions}>
-              <Pressable
-                onPress={() => acceptSuggestion(heroSuggestion)}
-                style={styles.noticedAcceptBtn}
-              >
-                <Text style={styles.noticedAcceptText}>
-                  {suggestionCTA(heroSuggestion)}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => dismissSuggestion_(heroSuggestion)}
-                style={styles.noticedNotItBtn}
-              >
-                <Text style={styles.noticedNotItText}>not it</Text>
-              </Pressable>
-            </View>
+          <View style={{ marginBottom: 16 }}>
+            <LumiSuggestCard
+              suggestion={heroSuggestion}
+              total={suggestions.length}
+              index={0}
+              onAccept={acceptSuggestionDirect}
+              onDismiss={dismissSuggestion_}
+            />
           </View>
         )}
 

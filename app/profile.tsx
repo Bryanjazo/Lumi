@@ -1686,8 +1686,12 @@ export default function AccountScreen() {
                    that iOS renders in its locked red/orange palette
                    regardless of the text color we set. */}
                 <Svg width={16} height={16} viewBox="0 0 24 24">
+                  {/* Heroicons-style flame — solid teardrop with a
+                     small inner pinch. Symmetric, recognizable, and
+                     respects the fill color (unlike the ♨ emoji or
+                     the earlier asymmetric path that read as a curl). */}
                   <Path
-                    d="M12 2.5c-1 1.5-2.5 4-2.5 6.5 0 1.5.5 2.5 1 3.2-.7-.4-1.6-.6-2.4-.4-1.4.4-2.6 1.9-2.6 4 0 3.3 3.1 6 6.5 6s6.5-2.5 6.5-6c0-2.5-1.5-4.6-3-6 .3-.6.5-1.4.5-2.3 0-2.6-2.4-4-4-5z"
+                    d="M11.083 5.104c.35-.85 1.485-.85 1.834 0 1.422 3.448 4.385 5.054 4.683 8.135.342 3.535-2.231 6.762-5.6 6.762s-5.942-3.227-5.6-6.762c.298-3.08 3.26-4.687 4.683-8.135Z"
                     fill={C.bloom}
                   />
                 </Svg>
