@@ -159,7 +159,24 @@ interface QuestState {
 
 const accents: Quest['accent'][] = ['plum', 'terra', 'moss', 'caramel', 'mist'];
 
-const newId = () => `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+// Quest ids must be real UUIDs because the cloud schema has
+// quests.id typed `uuid` — sending the old `q_<ts>_<rand>` format
+// caused pushQuests to fail with "invalid input syntax for type
+// uuid". RFC 4122 v4 generator using Math.random — not crypto-
+// secure, but client-side ids don't need to be (collision risk is
+// astronomically low for a single user's task list).
+const newId = (): string =>
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+
+// UUID v4 regex — used by the sync layer to skip legacy `q_*` ids
+// that were minted before the switch above. They stay local-only
+// instead of throwing on every push.
+export const UUID_V4_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ── Calendar side-effects ───────────────────────────────────────────
 // Fire-and-forget mirroring of quest writes into the user's connected

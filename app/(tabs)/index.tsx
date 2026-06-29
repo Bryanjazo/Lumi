@@ -96,6 +96,10 @@ import {
   type UnderstoodTask,
 } from '../../lib/anthropic';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
+import {
+  LumiSuggestCard,
+  type SuggestAcceptOptions,
+} from '../../components/LumiSuggestCard';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -2073,6 +2077,94 @@ export default function Home() {
     setScheduleSuggestion(s);
   };
 
+  // Direct-accept from LumiSuggestCard for the recurrence-suggestion
+  // surface (the "heroSuggestion" card). Maps the SuggestInput back
+  // to the original Suggestion via id, then creates a recurring
+  // quest with the user's overrides for window/duration/exact-time.
+  const acceptSuggestionFromCard = (
+    sugInput: import('../../components/LumiSuggestCard').SuggestInput,
+    opts: SuggestAcceptOptions,
+  ) => {
+    const s = suggestions.find((x) => x.id === sugInput.id);
+    if (!s) return;
+    const recurAt =
+      opts.exactMinute != null ? opts.exactMinute : (s.guess.at ?? undefined);
+    // The card only exposes the four part-of-day windows (no
+    // 'someday'), so this cast is safe — the constraint is enforced
+    // by the WINDOWS array in LumiSuggestCard.
+    const recurPart = opts.window as import('../../constants/recur').RecurPart;
+    const rule = {
+      ...s.guess,
+      part: recurPart,
+      ...(recurAt != null ? { at: recurAt } : {}),
+    };
+    addQuest({
+      title: s.title,
+      difficulty: 'medium',
+      importance: s.importance,
+      window: opts.window,
+      durationMinutes: opts.durationMin,
+      ...(opts.exactMinute != null && {
+        scheduledHour: Math.floor(opts.exactMinute / 60),
+        scheduledMinute: opts.exactMinute % 60,
+      }),
+      recur: rule,
+    });
+    consumeSuggestion(s.id);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    showToast('Added to your day 💛');
+  };
+
+  const dismissSuggestionFromCard = (
+    sugInput: import('../../components/LumiSuggestCard').SuggestInput,
+  ) => {
+    dismissSuggestion(sugInput.id);
+    Haptics.selectionAsync();
+  };
+
+  // Same accept/dismiss shape, but for the brain-dump previewTask
+  // surface. Each preview task already has its own window/at/recur
+  // from the LLM; the user's choices in the card take precedence.
+  const acceptPreviewTaskFromCard = (
+    sugInput: import('../../components/LumiSuggestCard').SuggestInput,
+    opts: SuggestAcceptOptions,
+  ) => {
+    if (!previewTasks) return;
+    // SuggestInput id for preview tasks is "preview_<index>"
+    const idx = Number(sugInput.id.replace('preview_', ''));
+    const t = previewTasks[idx];
+    if (!t) return;
+    addQuest({
+      title: t.title,
+      difficulty: 'medium',
+      importance: t.importance,
+      window: opts.window,
+      durationMinutes: opts.durationMin,
+      ...(opts.exactMinute != null && {
+        scheduledHour: Math.floor(opts.exactMinute / 60),
+        scheduledMinute: opts.exactMinute % 60,
+      }),
+      ...(t.date && { date: t.date }),
+      ...(t.recur && { recur: t.recur }),
+    });
+    // Remove this task from the queue; if it was the last, close
+    // the preview card entirely.
+    const remaining = previewTasks.filter((_, i) => i !== idx);
+    setPreviewTasks(remaining.length > 0 ? remaining : null);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    showToast(remaining.length > 0 ? 'Added 💛' : 'All added 💛');
+  };
+
+  const dismissPreviewTaskFromCard = (
+    sugInput: import('../../components/LumiSuggestCard').SuggestInput,
+  ) => {
+    if (!previewTasks) return;
+    const idx = Number(sugInput.id.replace('preview_', ''));
+    const remaining = previewTasks.filter((_, i) => i !== idx);
+    setPreviewTasks(remaining.length > 0 ? remaining : null);
+    Haptics.selectionAsync();
+  };
+
   const commitScheduledSuggestion = (rule: import('../../constants/recur').RecurRule) => {
     if (!scheduleSuggestion) return;
     const s = scheduleSuggestion;
@@ -2560,351 +2652,31 @@ export default function Home() {
           </View>
         )}
 
-        {/* ── Lumi suggests — preview before saving. User can approve
-            with one tap, tweak inline, or cancel. Replaces the old
-            auto-commit + guided-follow-up flow. */}
-        {previewTasks && previewTasks.length > 0 && (
-          <View style={styles.followupCard}>
-            <View style={styles.followupHeader}>
-              <Text style={styles.followupGlyph}>✦</Text>
-              <Text style={styles.followupEyebrow}>
-                {editingIdx != null
-                  ? 'editing'
-                  : previewTasks.length > 1
-                    ? `lumi suggests · ${previewTasks.length} tasks`
-                    : 'lumi suggests'}
-              </Text>
-              <Pressable
-                onPress={cancelPreview}
-                hitSlop={10}
-                style={{ marginLeft: 'auto' }}
-              >
-                <Text style={styles.noticedDismiss}>×</Text>
-              </Pressable>
-            </View>
-
-            {previewTasks.map((t, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.previewRow,
-                  i < previewTasks.length - 1 && styles.previewRowDivider,
-                ]}
-              >
-                {editingIdx === i ? (
-                  <>
-                    <TextInput
-                      value={editingTitle}
-                      onChangeText={setEditingTitle}
-                      placeholder="Title"
-                      placeholderTextColor={C.mute}
-                      style={styles.previewEditInput}
-                      autoFocus
-                    />
-                    <Text style={styles.previewEditLabel}>When</Text>
-                    <View style={styles.chipRow}>
-                      <FollowupChip
-                        label="Today"
-                        onPress={() => setEditingDate('today')}
-                        accentColor={accent.fg}
-                        suggested={editingDate === 'today'}
-                      />
-                      <FollowupChip
-                        label="Tomorrow"
-                        onPress={() => setEditingDate('tomorrow')}
-                        accentColor={accent.fg}
-                        suggested={editingDate === 'tomorrow'}
-                      />
-                    </View>
-                    {/* When the task has an explicit clock time
-                       ("call at 7"), hide the generic part-of-day
-                       chips — switching to "Morning" would erase the
-                       time. The user can still change title + day. */}
-                    {t.at == null && (
-                      <>
-                        <Text style={styles.previewEditLabel}>Part of day</Text>
-                        <View style={styles.chipRow}>
-                          <FollowupChip
-                            label="Morning"
-                            onPress={() => setEditingWindow('morning')}
-                            accentColor={accent.fg}
-                            suggested={editingWindow === 'morning'}
-                          />
-                          <FollowupChip
-                            label="Afternoon"
-                            onPress={() => setEditingWindow('afternoon')}
-                            accentColor={accent.fg}
-                            suggested={editingWindow === 'afternoon'}
-                          />
-                          <FollowupChip
-                            label="Evening"
-                            onPress={() => setEditingWindow('evening')}
-                            accentColor={accent.fg}
-                            suggested={editingWindow === 'evening'}
-                          />
-                        </View>
-                      </>
-                    )}
-                    {/* Length chips — user can set or override the
-                       duration. The LLM fills durationMin from
-                       phrasing like "hour long meeting" → 60; this
-                       lets the user pick anything else without
-                       editing the original input. */}
-                    <Text style={styles.previewEditLabel}>Length</Text>
-                    <View style={styles.chipRow}>
-                      {[15, 30, 60, 90, 120].map((min) => (
-                        <FollowupChip
-                          key={min}
-                          label={
-                            min < 60
-                              ? `${min}m`
-                              : min % 60 === 0
-                                ? `${min / 60}h`
-                                : `${Math.floor(min / 60)}h ${min % 60}m`
-                          }
-                          onPress={() => setEditingDurationMin(min)}
-                          accentColor={accent.fg}
-                          suggested={editingDurationMin === min}
-                        />
-                      ))}
-                    </View>
-                    <View style={styles.previewActions}>
-                      <Pressable onPress={cancelEdit} style={styles.skipBtn}>
-                        <Text style={styles.skipText}>cancel</Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={saveEdit}
-                        style={[
-                          styles.previewApproveBtn,
-                          { backgroundColor: accent.fg },
-                        ]}
-                      >
-                        <Text style={styles.previewApproveText}>Save edit</Text>
-                      </Pressable>
-                    </View>
-                  </>
-                ) : (
-                  <>
-                    {/* While the LLM is still extracting, show a
-                       placeholder INSTEAD of the deterministic
-                       title — otherwise the user reads e.g.
-                       "Hour long meeting" then watches it morph
-                       into "Meeting" a couple seconds later (the
-                       exact "text changes after a moment" bug). The
-                       title and meta line both swap atomically when
-                       aiPending flips to false. */}
-                    {aiPending ? (
-                      <Text
-                        style={[
-                          styles.previewTitle,
-                          { color: C.mute, fontStyle: 'italic' },
-                        ]}
-                      >
-                        Lumi is sorting this…
-                      </Text>
-                    ) : (
-                      <>
-                        <Text style={styles.previewTitle}>{t.title}</Text>
-                        {t.note && (
-                          <Text style={styles.previewNote} numberOfLines={2}>
-                            {t.note}
-                          </Text>
-                        )}
-                      </>
-                    )}
-                    {t.needsFollowup && !aiPending && (
-                      <View style={styles.timeOptionsWrap}>
-                        <Text style={styles.timeOptionsAsk}>
-                          When&apos;s it due?
-                        </Text>
-                        <View style={styles.chipRow}>
-                          <FollowupChip
-                            label="Today"
-                            onPress={() =>
-                              pickFollowupDate(i, todayKey(), 'evening')
-                            }
-                            accentColor={accent.fg}
-                          />
-                          <FollowupChip
-                            label="Tomorrow"
-                            onPress={() =>
-                              pickFollowupDate(i, offsetDate(1), 'morning')
-                            }
-                            accentColor={accent.fg}
-                          />
-                          <FollowupChip
-                            label="This weekend"
-                            onPress={() => {
-                              // Next Saturday in LOCAL time.
-                              const d = new Date();
-                              const dow = d.getDay();
-                              const daysToSat = (6 - dow + 7) % 7 || 7;
-                              d.setDate(d.getDate() + daysToSat);
-                              const y = d.getFullYear();
-                              const m = String(d.getMonth() + 1).padStart(2, '0');
-                              const day = String(d.getDate()).padStart(2, '0');
-                              pickFollowupDate(
-                                i,
-                                `${y}-${m}-${day}`,
-                                'morning',
-                              );
-                            }}
-                            accentColor={accent.fg}
-                          />
-                        </View>
-                      </View>
-                    )}
-                    {t.timeOptions && t.timeOptions.length === 2 && (
-                      <View style={styles.timeOptionsWrap}>
-                        <Text style={styles.timeOptionsAsk}>
-                          Did you mean…
-                        </Text>
-                        <View style={styles.chipRow}>
-                          {t.timeOptions.map((min) => (
-                            <FollowupChip
-                              key={min}
-                              label={fmtMin(min)}
-                              onPress={() => pickTimeOption(i, min)}
-                              accentColor={accent.fg}
-                              suggested={t.at === min}
-                            />
-                          ))}
-                        </View>
-                      </View>
-                    )}
-                    {aiPending ? (
-                      <View style={styles.previewReadingRow}>
-                        <Text
-                          style={[
-                            styles.previewReadingSpark,
-                            { color: C.dusk },
-                          ]}
-                        >
-                          ✦
-                        </Text>
-                        <Text style={styles.previewReadingText}>
-                          Lumi is reading this…
-                        </Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.previewMeta}>
-                        {previewMetaLine(t, effectiveWindows)}
-                      </Text>
-                    )}
-                    {/* Quick chips for the non-descriptive user —
-                       length + part-of-day, visible in the DEFAULT
-                       preview so they pick before Accept. Pre-fills
-                       from whatever the LLM extracted ("hour long
-                       meeting" → 60 / "this afternoon" → afternoon),
-                       so most users just confirm. Tweak still opens
-                       the full editor for date + custom time.
-                       Hidden during aiPending so chip selections
-                       don't flicker as the LLM patches mid-stream. */}
-                    {!aiPending && !t.recur && (
-                      <>
-                        <View style={styles.timeOptionsWrap}>
-                          <Text style={styles.timeOptionsAsk}>How long?</Text>
-                          <View style={styles.chipRow}>
-                            {[15, 30, 60].map((min) => (
-                              <FollowupChip
-                                key={min}
-                                label={min < 60 ? `${min}m` : '1h'}
-                                onPress={() => pickDuration(i, min)}
-                                accentColor={accent.fg}
-                                suggested={t.durationMinutes === min}
-                              />
-                            ))}
-                          </View>
-                        </View>
-                        {/* Only ask for part-of-day when the user
-                           didn't already give a specific clock time
-                           — otherwise "Morning" would erase the at
-                           anchor they specified. */}
-                        {t.at == null && t.window !== 'someday' && (
-                          <View style={styles.timeOptionsWrap}>
-                            <Text style={styles.timeOptionsAsk}>When?</Text>
-                            <View style={styles.chipRow}>
-                              {(
-                                [
-                                  ['morning', 'Morning'],
-                                  ['midday', 'Midday'],
-                                  ['afternoon', 'Afternoon'],
-                                  ['evening', 'Evening'],
-                                ] as const
-                              ).map(([key, label]) => (
-                                <FollowupChip
-                                  key={key}
-                                  label={label}
-                                  onPress={() => pickWindow(i, key)}
-                                  accentColor={accent.fg}
-                                  suggested={t.window === key}
-                                />
-                              ))}
-                            </View>
-                          </View>
-                        )}
-                      </>
-                    )}
-                    {/* Per-task actions — independent control over each
-                        suggestion so the user can accept, tweak, or
-                        dismiss one without affecting the others.
-                        Accept + Tweak are disabled while aiPending
-                        so the user can't commit before the LLM has
-                        finished cleaning the title / duration. */}
-                    {editingIdx == null && (
-                      <View style={styles.previewTaskActions}>
-                        <Pressable
-                          onPress={() => approveTask(i)}
-                          disabled={aiPending}
-                          style={[
-                            styles.previewTaskAccept,
-                            { backgroundColor: accent.fg },
-                            aiPending && { opacity: 0.45 },
-                          ]}
-                          hitSlop={4}
-                        >
-                          <Text style={styles.previewTaskAcceptText}>
-                            Accept
-                          </Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => startEditing(i)}
-                          disabled={aiPending}
-                          style={[
-                            styles.previewTaskTweak,
-                            aiPending && { opacity: 0.45 },
-                          ]}
-                          hitSlop={4}
-                        >
-                          <Text style={styles.previewTaskTweakText}>Tweak</Text>
-                        </Pressable>
-                        {/* Per-task × only shows when there are
-                           multiple tasks — with one task, the
-                           card-level × in the header does the same
-                           thing, so duplicating reads as clutter. */}
-                        {previewTasks.length > 1 && (
-                          <Pressable
-                            onPress={() => dismissTask(i)}
-                            style={styles.previewTaskDismiss}
-                            hitSlop={6}
-                          >
-                            <Text style={styles.previewTaskDismissGlyph}>
-                              ×
-                            </Text>
-                          </Pressable>
-                        )}
-                      </View>
-                    )}
-                  </>
-                )}
-              </View>
-            ))}
-
-            {/* Bottom-of-card bulk action — only when not actively
-                editing one of the tasks. Hidden for a single task
-                (Accept on the row already covers it). */}
-            {editingIdx == null && previewTasks.length > 1 && (
-              <View style={styles.previewActions}>
+        {/* ── Lumi suggests — preview after brain-dump. Sequential
+            LumiSuggestCard rendering: shows the first task with a
+            "1 of N" badge, user accepts/dismisses → next task slides
+            in. Bulk "Accept all remaining" button below for users
+            who don't want to step through one-by-one. */}
+        {previewTasks && previewTasks[0] && (
+          <View style={{ marginBottom: 16 }}>
+            <LumiSuggestCard
+              input={{
+                id: 'preview_0',
+                title: aiPending ? 'Lumi is sorting…' : previewTasks[0].title,
+                subtitle: aiPending ? 'reading what you said' : undefined,
+                defaultWindow:
+                  previewTasks[0].window === 'someday'
+                    ? 'evening'
+                    : previewTasks[0].window,
+                defaultExactMinute: previewTasks[0].at ?? null,
+              }}
+              total={previewTasks.length}
+              index={0}
+              onAccept={acceptPreviewTaskFromCard}
+              onDismiss={dismissPreviewTaskFromCard}
+            />
+            {previewTasks.length > 1 && (
+              <View style={styles.bulkActionsRow}>
                 <Pressable onPress={cancelPreview} style={styles.skipBtn}>
                   <Text style={styles.skipText}>cancel all</Text>
                 </Pressable>
@@ -2915,61 +2687,37 @@ export default function Home() {
                     { backgroundColor: accent.fg },
                   ]}
                 >
-                  <Text style={styles.previewApproveText}>Accept all</Text>
+                  <Text style={styles.previewApproveText}>
+                    Accept all {previewTasks.length}
+                  </Text>
                 </Pressable>
               </View>
             )}
           </View>
         )}
 
-        {/* ── One gentle "Lumi noticed" card (dusk) ── */}
+
+        {/* ── Lumi suggests — richer scheduling card per
+            lumi-suggest-card.jsx mockup. Each suggestion gets its
+            own controls (duration / window / optional exact time)
+            before the user accepts. Bulk-aware: when multiple
+            suggestions are pending, the "1 of N" badge shows up
+            and each accept/dismiss reveals the next. */}
         {heroSuggestion && !allDone && (
-          <View style={styles.noticedCard}>
-            <View style={styles.noticedHeader}>
-              <Text style={styles.noticedGlyph}>🔁</Text>
-              <Text style={styles.noticedEyebrow}>a rhythm Lumi noticed</Text>
-              <Pressable
-                onPress={() => dismissSuggestion_(heroSuggestion)}
-                hitSlop={10}
-              >
-                <Text style={styles.noticedDismiss}>×</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.noticedBody}>
-              {heroSuggestion.span ? (
-                <>
-                  You&apos;ve done{' '}
-                  <Text style={styles.noticedAccent}>
-                    {heroSuggestion.title.toLowerCase()}
-                  </Text>{' '}
-                  {heroSuggestion.span}. Want it to come back on its own?
-                </>
-              ) : (
-                <>
-                  Want{' '}
-                  <Text style={styles.noticedAccent}>
-                    {heroSuggestion.title.toLowerCase()}
-                  </Text>{' '}
-                  to come back on its own?
-                </>
-              )}
-            </Text>
-            <View style={styles.noticedActions}>
-              <Pressable
-                onPress={() => acceptSuggestion(heroSuggestion)}
-                style={styles.noticedAcceptBtn}
-              >
-                <Text style={styles.noticedAcceptText}>
-                  {suggestionCTA(heroSuggestion)}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => dismissSuggestion_(heroSuggestion)}
-                style={styles.noticedNotItBtn}
-              >
-                <Text style={styles.noticedNotItText}>not it</Text>
-              </Pressable>
-            </View>
+          <View style={{ marginBottom: 16 }}>
+            <LumiSuggestCard
+              input={{
+                id: heroSuggestion.id,
+                title: heroSuggestion.title,
+                defaultWindow:
+                  (heroSuggestion.guess?.part as WindowKey) ?? 'evening',
+                defaultExactMinute: heroSuggestion.guess?.at ?? null,
+              }}
+              total={suggestions.length}
+              index={0}
+              onAccept={acceptSuggestionFromCard}
+              onDismiss={dismissSuggestionFromCard}
+            />
           </View>
         )}
 
@@ -3849,6 +3597,17 @@ const makeStyles = (accent: Accent) =>
       alignItems: 'center',
       gap: 8,
       marginTop: 4,
+    },
+    // Bulk-action footer for the new LumiSuggestCard preview flow.
+    // Sits below a single card and lets users skip the one-by-one
+    // pacing when they have several brain-dump tasks.
+    bulkActionsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 10,
+      marginTop: 10,
+      paddingHorizontal: 4,
     },
     previewTweakBtn: {
       paddingHorizontal: 14,

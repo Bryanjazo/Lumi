@@ -489,23 +489,19 @@ export const useUserStore = create<UserState>()(
       setWindowOverrides: (overrides) => set({ windowOverrides: overrides }),
       setAnchor: (key, minutes) =>
         set((s) => {
-          // Cascading clamp — enforces the daily ordering invariant
-          // (wake < breakfast < lunch < dinner < sleep with a 15-min
-          // gap each). Two passes:
-          //   1) Clamp the changed value to its own bounds against
-          //      its CURRENT neighbors.
-          //   2) Walk forward and bump any subsequent anchor that
-          //      would now sit too close to its predecessor — so
-          //      pushing wake from 7→11am drags breakfast/lunch/etc
-          //      forward instead of leaving them in the past.
-          // ALSO walk backward (rare: lowering sleep below dinner)
-          // so the chain stays monotonic in both directions.
+          // Anchors cascade naturally: nudging Wake forward through
+          // Breakfast should DRAG Breakfast forward, not block at the
+          // neighbor boundary. Earlier passes clamped to anchorBounds
+          // (= prev+GAP … next−GAP) first, which made + on Wake a
+          // no-op once Breakfast was only 15 min away. Now we only
+          // clamp to the hard 0..HARD_MAX range and let the forward
+          // / backward cascades below handle the chain.
           const next: DailyAnchors = { ...s.anchors };
-          const { min: ownMin, max: ownMax } = anchorBounds(key, next);
-          next[key] = Math.max(ownMin, Math.min(ownMax, minutes));
+          next[key] = Math.max(0, Math.min(ANCHOR_HARD_MAX, minutes));
 
           const idx = ANCHOR_ORDER.indexOf(key);
-          // Forward cascade
+          // Forward cascade — pushing the changed anchor up bumps
+          // every later anchor that would now be too close.
           for (let i = idx + 1; i < ANCHOR_ORDER.length; i++) {
             const cur = ANCHOR_ORDER[i];
             const prev = ANCHOR_ORDER[i - 1];
@@ -513,7 +509,8 @@ export const useUserStore = create<UserState>()(
               next[cur] = Math.min(ANCHOR_HARD_MAX, next[prev] + ANCHOR_GAP);
             }
           }
-          // Backward cascade
+          // Backward cascade — pulling the changed anchor down drags
+          // every earlier anchor back if they'd now sit too close.
           for (let i = idx - 1; i >= 0; i--) {
             const cur = ANCHOR_ORDER[i];
             const after = ANCHOR_ORDER[i + 1];
