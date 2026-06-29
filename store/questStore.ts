@@ -60,13 +60,20 @@ export interface Quest {
    */
   comment?: string;
   /**
-   * Event id returned by expo-calendar when this quest was mirrored
-   * to the user's connected calendar. Stored on the quest so updates
-   * (anchor changes, title edits, delete) can hit the matching event
-   * without a per-write lookup. Undefined when the quest hasn't been
-   * pushed to a calendar (either no time, or calendar not connected).
+   * Map of calendarId → eventId for every calendar this quest has
+   * been mirrored to. When the user selects multiple calendars in
+   * Profile → Calendar, the same task lands as an event in each one;
+   * we store one event id per calendar so updates / deletes can
+   * target each in place. Undefined when the quest hasn't been
+   * pushed to any calendar (no time, or calendar not connected, or
+   * no calendars picked).
+   *
+   * Legacy v1-v3 used `calendarEventId?: string` (single). v4
+   * migration drops the legacy field; the next mirror re-populates
+   * the new map (no orphan events on the old calendar — the
+   * disconnect flow promises events stay where they are).
    */
-  calendarEventId?: string;
+  calendarEventIds?: Record<string, string>;
 }
 
 interface QuestState {
@@ -126,11 +133,14 @@ interface QuestState {
   setComment: (id: string, comment: string) => void;
   remove: (id: string) => void;
   /**
-   * Persist the calendar event id returned by expo-calendar after a
-   * successful upsert. Internal — called by lib/calendar.ts after
-   * createEventAsync. Pass null to clear (deletion / disconnect).
+   * Persist the calendar event id map returned by lib/calendar.ts
+   * after a successful upsert across all selected calendars. Pass
+   * an empty map / null to clear (deletion / disconnect).
    */
-  setCalendarEventId: (id: string, eventId: string | null) => void;
+  setCalendarEventIds: (
+    id: string,
+    eventIds: Record<string, string> | null,
+  ) => void;
   /** Stop a quest from repeating (clears the recur rule). */
   stopRecurring: (id: string) => void;
   /**
@@ -153,31 +163,39 @@ const newId = () => `q_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 // ── Calendar side-effects ───────────────────────────────────────────
 // Fire-and-forget mirroring of quest writes into the user's connected
-// calendar. Never throws — calendar perms revoked / SDK missing must
+// calendars. Never throws — calendar perms revoked / SDK missing must
 // not break a task save. Quests without a time are no-ops by design;
-// only anchored items become real events.
-const shouldMirror = (): { on: boolean; calendarId: string | null } => {
+// only anchored items become real events. With multi-calendar support
+// (1013), a single quest fans out to every calendar in calendarIds
+// and we store one event id per calendar so updates / deletes can hit
+// each in place.
+const shouldMirror = (): { on: boolean; calendarIds: string[] } => {
   const u = useUserStore.getState();
   const on =
-    u.calendarEnabled && u.autoSyncTasksWithTimes && !!u.calendarId;
-  return { on, calendarId: u.calendarId };
+    u.calendarEnabled &&
+    u.autoSyncTasksWithTimes &&
+    u.calendarIds.length > 0;
+  return { on, calendarIds: u.calendarIds };
 };
 
 const mirrorUpsert = (quest: Quest): void => {
-  const { on, calendarId } = shouldMirror();
-  if (!on || !calendarId) return;
+  const { on, calendarIds } = shouldMirror();
+  if (!on || calendarIds.length === 0) return;
   if (quest.scheduledHour == null) return;
   void (async () => {
-    const eventId = await upsertEventForQuest(quest, calendarId);
-    if (eventId && eventId !== quest.calendarEventId) {
-      // Persist the new event id so subsequent updates target it.
-      useQuestStore.getState().setCalendarEventId(quest.id, eventId);
-    }
+    const eventIds = await upsertEventForQuest(quest, calendarIds);
+    // Always write back — even if the map is empty (e.g., user
+    // removed all calendars between fire and resolve) so the quest
+    // doesn't keep stale references.
+    useQuestStore.getState().setCalendarEventIds(quest.id, eventIds);
   })();
 };
 
-const mirrorDelete = (quest: Pick<Quest, 'calendarEventId'>): void => {
-  if (!quest.calendarEventId) return;
+const mirrorDelete = (
+  quest: Pick<Quest, 'calendarEventIds'>,
+): void => {
+  if (!quest.calendarEventIds) return;
+  if (Object.keys(quest.calendarEventIds).length === 0) return;
   void deleteEventForQuest(quest);
 };
 
@@ -285,11 +303,11 @@ export const useQuestStore = create<QuestState>()(
               : q,
           ),
         }));
-        // Un-anchoring drops the calendar event too — the quest is
-        // no longer scheduled, so the mirror shouldn't be either.
-        if (prev?.calendarEventId) {
+        // Un-anchoring drops all calendar mirrors — the quest is
+        // no longer scheduled, so the events shouldn't be either.
+        if (prev?.calendarEventIds && Object.keys(prev.calendarEventIds).length > 0) {
           mirrorDelete(prev);
-          get().setCalendarEventId(id, null);
+          get().setCalendarEventIds(id, null);
         }
       },
       anchor: (id, hour, minute) => {
@@ -329,9 +347,9 @@ export const useQuestStore = create<QuestState>()(
           ),
         }));
         // setDate un-anchors → no longer a real event. Drop the mirror.
-        if (prev?.calendarEventId) {
+        if (prev?.calendarEventIds && Object.keys(prev.calendarEventIds).length > 0) {
           mirrorDelete(prev);
-          get().setCalendarEventId(id, null);
+          get().setCalendarEventIds(id, null);
         }
       },
       updateTitle: (id, title) => {
@@ -343,7 +361,9 @@ export const useQuestStore = create<QuestState>()(
           ),
         }));
         const next = get().quests.find((q) => q.id === id);
-        if (next?.calendarEventId) mirrorUpsert(next);
+        if (next?.calendarEventIds && Object.keys(next.calendarEventIds).length > 0) {
+          mirrorUpsert(next);
+        }
       },
       setNote: (id, note) => {
         const trimmed = note.trim();
@@ -396,16 +416,16 @@ export const useQuestStore = create<QuestState>()(
         set((s) => ({ quests: s.quests.filter((q) => q.id !== id) }));
         if (prev) mirrorDelete(prev);
       },
-      setCalendarEventId: (id, eventId) =>
+      setCalendarEventIds: (id, eventIds) =>
         set((s) => ({
           quests: s.quests.map((q) =>
             q.id === id
-              ? eventId == null
+              ? eventIds == null || Object.keys(eventIds).length === 0
                 ? (() => {
-                    const { calendarEventId: _drop, ...rest } = q;
+                    const { calendarEventIds: _drop, ...rest } = q;
                     return rest;
                   })()
-                : { ...q, calendarEventId: eventId }
+                : { ...q, calendarEventIds: eventIds }
               : q,
           ),
         })),
@@ -475,7 +495,7 @@ export const useQuestStore = create<QuestState>()(
     {
       name: 'lumi.quests',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 3,
+      version: 4,
       migrate: (persisted: unknown, version) => {
         if (!persisted || typeof persisted !== 'object')
           return persisted as never;
@@ -498,6 +518,23 @@ export const useQuestStore = create<QuestState>()(
                   )
                 : 'midday'),
           }));
+        }
+        if (version < 4 && Array.isArray(state.quests)) {
+          // Multi-calendar: legacy `calendarEventId?: string` becomes
+          // `calendarEventIds?: Record<calendarId, eventId>`. We don't
+          // know which calendar the legacy event lived on (v3 only
+          // tracked a single user-store calendarId), so we drop the
+          // legacy field — the next quest mutation re-mirrors into
+          // whatever's now in calendarIds. The old event stays put on
+          // the user's calendar (disconnect doesn't delete history).
+          state.quests = state.quests.map((q) => {
+            const withLegacy = q as Quest & { calendarEventId?: string };
+            if (withLegacy.calendarEventId) {
+              const { calendarEventId: _drop, ...rest } = withLegacy;
+              return rest as Quest;
+            }
+            return q;
+          });
         }
         return state as never;
       },

@@ -177,11 +177,17 @@ interface UserState {
    */
   calendarEnabled: boolean;
   /**
-   * Calendar id to write events to. Resolved when the user picks
-   * from the writable list (defaults to getDefaultCalendarAsync when
-   * they first connect). Null until they pick.
+   * Calendar ids to mirror events to. Multi-select — when the user
+   * picks more than one, every timed task gets written to ALL of
+   * them. Resolved when the user picks from the writable list
+   * (defaults to [getDefaultCalendarAsync().id] when they first
+   * connect). Empty array until they pick.
+   *
+   * v14 used a single `calendarId: string | null`; v15 migrated to
+   * the array shape. The first element is implicitly the "primary"
+   * for any feature that needs a single target.
    */
-  calendarId: string | null;
+  calendarIds: string[];
   /**
    * Global "auto-add timed tasks to my calendar" toggle. When on,
    * addQuest/anchor/setDate/remove for any task with a time fires
@@ -269,10 +275,12 @@ interface UserState {
   setCaptureLang: (lang: string) => void;
   setTheme: (theme: ThemeKey) => void;
   setCompanionMode: (mode: CompanionMode) => void;
-  /** Connect / disconnect calendar writes. Disconnect clears calendarId. */
+  /** Connect / disconnect calendar writes. Disconnect clears calendarIds. */
   setCalendarEnabled: (on: boolean) => void;
-  /** Pick which calendar Lumi writes events into. */
-  setCalendarId: (id: string | null) => void;
+  /** Replace the full set of calendars Lumi writes to. */
+  setCalendarIds: (ids: string[]) => void;
+  /** Add or remove a single calendar id from the set. */
+  toggleCalendarId: (id: string) => void;
   /** Global toggle for "auto-write timed tasks to my calendar". */
   setAutoSyncTasksWithTimes: (on: boolean) => void;
   setAvatar: (avatar: string) => void;
@@ -359,7 +367,7 @@ export const useUserStore = create<UserState>()(
       // bury the charm. Per companion-mode-spec §1.
       companionMode: 'full',
       calendarEnabled: false,
-      calendarId: null,
+      calendarIds: [],
       autoSyncTasksWithTimes: false,
       avatar: 'default',
       subscriptionStatus: 'free',
@@ -466,15 +474,21 @@ export const useUserStore = create<UserState>()(
         set((s) =>
           on
             ? { calendarEnabled: true }
-            : // Disconnect also clears the picked calendar and the
+            : // Disconnect also clears the picked calendars and the
               // auto-sync toggle — re-connecting starts clean.
               {
                 calendarEnabled: false,
-                calendarId: null,
+                calendarIds: [],
                 autoSyncTasksWithTimes: false,
               },
         ),
-      setCalendarId: (id) => set({ calendarId: id }),
+      setCalendarIds: (ids) => set({ calendarIds: ids }),
+      toggleCalendarId: (id) =>
+        set((s) => ({
+          calendarIds: s.calendarIds.includes(id)
+            ? s.calendarIds.filter((x) => x !== id)
+            : [...s.calendarIds, id],
+        })),
       setAutoSyncTasksWithTimes: (on) => set({ autoSyncTasksWithTimes: on }),
       setTheme: (theme) => set({ theme }),
       setAvatar: (avatar) => set({ avatar }),
@@ -540,7 +554,7 @@ export const useUserStore = create<UserState>()(
           theme: 'ember',
           companionMode: 'full',
           calendarEnabled: false,
-          calendarId: null,
+          calendarIds: [],
           autoSyncTasksWithTimes: false,
           avatar: 'default',
           subscriptionStatus: 'free',
@@ -553,7 +567,7 @@ export const useUserStore = create<UserState>()(
     {
       name: 'lumi.user',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 14,
+      version: 15,
       /**
        * v1 → v2: re-trigger the canonical onboarding for anyone who
        * went through the OLD terracotta-era flow. We can tell them
@@ -699,12 +713,29 @@ export const useUserStore = create<UserState>()(
         if (version < 14) {
           // Calendar integration added. Default everything off — we
           // do not write to anyone's calendar without an explicit
-          // opt-in, even for existing users.
+          // opt-in, even for existing users. v14 originally stored
+          // a single calendarId; v15 promotes it to an array.
           if (state.calendarEnabled === undefined) state.calendarEnabled = false;
-          if (state.calendarId === undefined) state.calendarId = null;
+          if (state.calendarIds === undefined) state.calendarIds = [];
           if (state.autoSyncTasksWithTimes === undefined) {
             state.autoSyncTasksWithTimes = false;
           }
+        }
+        if (version < 15) {
+          // Multi-calendar — the v14 single `calendarId: string | null`
+          // becomes `calendarIds: string[]`. Users who had a calendar
+          // picked under v14 land with that one calendar in the array;
+          // never-connected users land with an empty array. The legacy
+          // field is dropped from persisted state so future reads can't
+          // accidentally trust it.
+          const persistedWithLegacy = state as Partial<UserState> & {
+            calendarId?: string | null;
+          };
+          const legacy = persistedWithLegacy.calendarId;
+          if (!Array.isArray(state.calendarIds)) {
+            state.calendarIds = legacy ? [legacy] : [];
+          }
+          delete persistedWithLegacy.calendarId;
         }
         return state as never;
       },

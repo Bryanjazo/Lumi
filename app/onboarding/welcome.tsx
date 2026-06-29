@@ -673,7 +673,7 @@ export default function Onboarding() {
       const defaultId = await getDefaultCalendarId();
       const u = useUserStore.getState();
       u.setCalendarEnabled(true);
-      if (defaultId) u.setCalendarId(defaultId);
+      if (defaultId) u.setCalendarIds([defaultId]);
       u.setAutoSyncTasksWithTimes(true);
       setCalendarStatus('connected');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
