@@ -205,8 +205,13 @@ const Room = ({
     let pauseTimer: ReturnType<typeof setTimeout> | null = null;
 
     const setFacing = (dir: 'right' | 'left') => {
+      // luna-walk.gif's natural orientation has the cat facing
+      // LEFT (left-bottom corner of the frame is its forward
+      // direction). So when we walk RIGHT we need scaleX = -1
+      // (mirror) and when we walk LEFT we use the default 1.
+      // Without this inversion the cat appears to moonwalk.
       Animated.timing(flipX, {
-        toValue: dir === 'right' ? 1 : -1,
+        toValue: dir === 'right' ? -1 : 1,
         duration: 220,
         useNativeDriver: true,
       }).start();
@@ -621,18 +626,9 @@ const Room = ({
         fill={hexA(v > 0.4 ? accent.fg : '#4A3D36', 0.5)}
       />
 
-      {/* Luna shadow only — the rest of the sprite is replaced by
-         the GIF overlay below. The shadow stays inside the SVG so
-         it sits between the rug and the cat naturally. */}
-      <G>
-        <Ellipse
-          cx={lunaX}
-          cy={lunaY + 12}
-          rx={8}
-          ry={2}
-          fill="rgba(0,0,0,0.22)"
-        />
-      </G>
+      {/* (Cat shadow moved OUT of the static SVG so it can ride
+         along inside the Animated.View wrapper below — keeps the
+         shadow planted under the cat as it walks across the rug.) */}
     </Svg>
     {/* Pixel cat overlay. The outer Animated.View owns the
        transform (translateX + scaleX, both Animated values so the
@@ -640,6 +636,11 @@ const Room = ({
        just fills it. Keeping the transform on a separate node
        avoids the silent-no-op iOS hit where a literal scaleX
        mixed with an Animated translateX failed to apply. */}
+    {/* The wrapping Animated.View carries BOTH the cat image AND
+       its shadow so the shadow translates with the cat as it
+       walks the rug. The shadow View is positioned at the cat's
+       feet — using View (not SVG) so it doesn't require touching
+       the SVG node tree on every Animated frame. */}
     <Animated.View
       style={{
         position: 'absolute',
@@ -651,6 +652,23 @@ const Room = ({
       }}
       pointerEvents="none"
     >
+      {/* Soft elliptical shadow at the cat's feet. Stays put
+         under the cat as the wrapper translates; scaleX flip on
+         the parent doesn't visually change a centered ellipse. */}
+      <View
+        style={{
+          position: 'absolute',
+          // Cat sits centered on lunaX, with FEET on lunaY+12
+          // (which was the old shadow line in SVG coords). Inside
+          // this wrapper the feet land at the bottom of the box.
+          bottom: 4,
+          left: GIF_SIZE / 2 - 9,
+          width: 18,
+          height: 4,
+          borderRadius: 2,
+          backgroundColor: 'rgba(0,0,0,0.22)',
+        }}
+      />
       {/* GIF swaps between walk sprite (while in motion) and the
          current emotion sprite (at each rest stop) so the cat
          visibly walks → sits + emotes → walks back. Sleep mood
