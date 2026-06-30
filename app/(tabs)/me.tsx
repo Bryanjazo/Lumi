@@ -174,6 +174,13 @@ const Room = ({
   const walkX = useRef(new Animated.Value(0)).current;
   const flipX = useRef(new Animated.Value(1)).current;
   const [isWalking, setIsWalking] = useState(false);
+  // Defensive fallback — if luna-walk.gif failed to bundle (e.g.,
+  // user is on an EAS build from before the asset was added but JS
+  // hot-reloaded the latest code), the require resolves to a broken
+  // asset id and the Image renders nothing. Flag the failure on
+  // first onError and fall back to the emotion sprite for the rest
+  // of the session so the cat is visible instead of invisible.
+  const [walkAssetFailed, setWalkAssetFailed] = useState(false);
   useEffect(() => {
     // Cat doesn't walk during the sleep window — would be jarring.
     if (lunaMood === 'sleep') {
@@ -647,9 +654,17 @@ const Room = ({
       {/* GIF swaps between walk sprite (while in motion) and the
          current emotion sprite (at each rest stop) so the cat
          visibly walks → sits + emotes → walks back. Sleep mood
-         disables the walk loop entirely (see useEffect above). */}
+         disables the walk loop entirely (see useEffect above).
+         If luna-walk.gif isn't bundled (old EAS build + new JS),
+         onError flips walkAssetFailed and we render the emotion
+         sprite during the walk too — cat is visible, just sliding. */}
       <Image
-        source={lunaSource(isWalking ? 'walk' : lunaMood)}
+        source={lunaSource(
+          isWalking && !walkAssetFailed ? 'walk' : lunaMood,
+        )}
+        onError={() => {
+          if (isWalking) setWalkAssetFailed(true);
+        }}
         style={{ width: '100%', height: '100%' }}
         resizeMode="contain"
         accessibilityLabel="Luna"
