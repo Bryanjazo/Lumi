@@ -172,7 +172,6 @@ const Room = ({
   //   - Wrapped in Animated.View around the Image so the transform
   //     composes cleanly with the Image's layout left/top.
   const walkX = useRef(new Animated.Value(0)).current;
-  const flipX = useRef(new Animated.Value(1)).current;
   const [isWalking, setIsWalking] = useState(false);
   // Defensive fallback — if luna-walk.gif failed to bundle (e.g.,
   // user is on an EAS build from before the asset was added but JS
@@ -204,25 +203,11 @@ const Room = ({
     let stopped = false;
     let pauseTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const setFacing = (dir: 'right' | 'left') => {
-      // luna-walk.gif's natural orientation has the cat facing
-      // LEFT (left-bottom corner of the frame is its forward
-      // direction). So when we walk RIGHT we need scaleX = -1
-      // (mirror) and when we walk LEFT we use the default 1.
-      // Without this inversion the cat appears to moonwalk.
-      Animated.timing(flipX, {
-        toValue: dir === 'right' ? -1 : 1,
-        duration: 220,
-        useNativeDriver: true,
-      }).start();
-    };
-
-    const walkLeg = (
-      to: number,
-      dir: 'right' | 'left',
-      next: () => void,
-    ) => {
-      setFacing(dir);
+    // No flip animation per user feedback — the sit-and-emote
+    // pause covers the visual handoff between directions, so we
+    // don't need to mirror the sprite mid-walk. The cat just
+    // translates left and right; the pause is the breath in between.
+    const walkLeg = (to: number, next: () => void) => {
       setIsWalking(true);
       Animated.timing(walkX, {
         toValue: to,
@@ -231,9 +216,8 @@ const Room = ({
         easing: Easing.inOut(Easing.sin),
       }).start(({ finished }) => {
         if (!finished || stopped) return;
-        // Arrived at one end — sit and show the current emotion
-        // for restMs, then start the next leg in the OPPOSITE
-        // direction.
+        // Arrived — sit and show the current emotion for restMs,
+        // then start the next leg in the OPPOSITE direction.
         setIsWalking(false);
         pauseTimer = setTimeout(() => {
           if (!stopped) next();
@@ -243,16 +227,13 @@ const Room = ({
 
     const loop = () => {
       if (stopped) return;
-      walkLeg(RANGE, 'right', () =>
-        walkLeg(-RANGE, 'left', () => loop()),
-      );
+      walkLeg(RANGE, () => walkLeg(-RANGE, () => loop()));
     };
     loop();
 
     return () => {
       stopped = true;
       walkX.stopAnimation();
-      flipX.stopAnimation();
       if (pauseTimer) clearTimeout(pauseTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -648,7 +629,7 @@ const Room = ({
         top: gifTop,
         width: GIF_SIZE,
         height: GIF_SIZE,
-        transform: [{ translateX: walkX }, { scaleX: flipX }],
+        transform: [{ translateX: walkX }],
       }}
       pointerEvents="none"
     >

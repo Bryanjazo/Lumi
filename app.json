@@ -12,7 +12,7 @@
       "bundleIdentifier": "app.lumi.ios",
       "appleTeamId": "LX2URYLQQ7",
       "usesAppleSignIn": true,
-      "buildNumber": "44",
+      "buildNumber": "45",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Lumi uses your microphone so you can speak your check-ins instead of typing.",
         "NSSpeechRecognitionUsageDescription": "Lumi transcribes your voice to text on this device so Luna can respond.",
