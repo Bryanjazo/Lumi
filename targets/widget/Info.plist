@@ -2,6 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Required for ActivityKit Live Activities — without this, the
+	     LumiTaskLiveActivity inside this widget extension won't be
+	     allowed to render in the Dynamic Island or on the Lock Screen. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<!-- Live Activities can render via push notification updates as
+	     well as ActivityKit. We only use local ActivityKit but enable
+	     frequent updates so the timer feels responsive. -->
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>

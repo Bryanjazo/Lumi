@@ -100,6 +100,10 @@ import {
   LumiSuggestCard,
   type SuggestAcceptOptions,
 } from '../../components/LumiSuggestCard';
+import {
+  useFocusSession,
+  isLiveActivityAvailable,
+} from '../../lib/focusSession';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -1095,6 +1099,17 @@ export default function Home() {
   // Ambient mood — reflects sleep window, overdue pile, streak.
   // The nook cat updates as the user's state changes.
   const ambientMood = useAmbientLunaMood();
+
+  // Focus session — drives the per-task Dynamic Island Live Activity.
+  // currentFocus is non-null while the user is in a session; starting
+  // one calls into ActivityKit via the lumi-live-activity native
+  // module and the system pill shows up on iPhone 14 Pro+.
+  const currentFocus = useFocusSession((s) => s.current);
+  const startFocus = useFocusSession((s) => s.start);
+  const endFocus = useFocusSession((s) => s.end);
+  const focusAvailable = isLiveActivityAvailable();
+  // Pet name for the Live Activity label.
+  const focusPetName = useUserStore((s) => s.petName);
   // Transient "celebration" override — when the user completes a
   // quest, the nook cat flips to 'happy' for ~30s then springs back
   // to ambient. A small, earned moment of feedback that doesn't
@@ -1364,6 +1379,15 @@ export default function Home() {
     addXp(gain);
     registerActivity();
     addShard();
+
+    // If a focus session is running ON THIS quest, end it cleanly
+    // so the Dynamic Island pill clears immediately (otherwise it
+    // lingers until its full duration ticks out, which feels broken
+    // after the user already marked the task done).
+    const fs = useFocusSession.getState();
+    if (fs.current?.questId === q.id) {
+      void fs.end({ reason: 'completed' });
+    }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setSwap(0);
@@ -2495,6 +2519,50 @@ export default function Home() {
                   </View>
                 )}
               </View>
+              {/* Start / Stop focus — only when ActivityKit is
+                 available (iOS 16.1+, allowed in Settings). When a
+                 session is already running for THIS quest, the
+                 button flips to "End focus"; for another quest,
+                 hidden so users can't accidentally hijack. */}
+              {focusAvailable && (() => {
+                const ownThisSession = currentFocus?.questId === hero.id;
+                if (currentFocus && !ownThisSession) return null;
+                const durMin =
+                  hero.durationMinutes ?? (hero.scheduledHour != null ? 45 : 25);
+                return (
+                  <Pressable
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      if (ownThisSession) {
+                        void endFocus({ reason: 'cancelled' });
+                      } else {
+                        void startFocus({
+                          questId: hero.id,
+                          taskTitle: hero.title,
+                          petName: focusPetName,
+                          durationSec: durMin * 60,
+                          mood: ambientMood,
+                        });
+                      }
+                    }}
+                    style={[
+                      styles.focusBtn,
+                      ownThisSession && styles.focusBtnActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.focusBtnText,
+                        ownThisSession && { color: C.ember },
+                      ]}
+                    >
+                      {ownThisSession
+                        ? '◼ End focus'
+                        : `▶ Start ${durMin}-min focus`}
+                    </Text>
+                  </Pressable>
+                );
+              })()}
               {candidates.length > 1 && (
                 <Pressable
                   onPress={() => {
@@ -3362,6 +3430,28 @@ const makeStyles = (accent: Accent) =>
       fontFamily: fonts.interSemi,
       fontSize: 16,
       color: C.void,
+      letterSpacing: 0.1,
+    },
+    // Start / End focus pill below the Mark-it-done CTA. Outline
+    // style so it reads as a secondary action; flips ember-tinted
+    // when a session is running on this quest.
+    focusBtn: {
+      marginTop: 10,
+      paddingVertical: 11,
+      borderRadius: 13,
+      borderWidth: 1,
+      borderColor: hexA(C.boneDim, 0.25),
+      backgroundColor: 'transparent',
+      alignItems: 'center',
+    },
+    focusBtnActive: {
+      borderColor: hexA(C.ember, 0.5),
+      backgroundColor: hexA(C.ember, 0.08),
+    },
+    focusBtnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 13.5,
+      color: C.boneDim,
       letterSpacing: 0.1,
     },
     floaterMount: {

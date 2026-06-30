@@ -8,15 +8,21 @@ module.exports = {
   // earlier 'lumi-mood' caused: "Could not find target 'lumimood'
   // in project.pbxproj". Keep them aligned.
   name: 'lumimood',
-  // Bundle id suffix — final id becomes <main>.lumimood. Apple
-  // bundle IDs allow dashes but matching the target name keeps
-  // EAS credentials / provisioning profiles unambiguous.
-  bundleIdentifier: '.lumimood',
+  // Bundle id suffix — final id is app.lumi.ios.lumi-mood.
+  // KEEP THE DASH: EAS already provisioned credentials + a
+  // distribution profile against the dashed bundle. Switching to
+  // ".lumimood" would orphan those and force a re-provision.
+  // The internal Xcode target name is still 'lumimood' (the
+  // plugin sanitizes non-word chars from `name`), so EAS Build's
+  // target lookup keeps working.
+  bundleIdentifier: '.lumi-mood',
   // Min deployment target. Lumi targets iOS 15+ (matches main app)
   // and WidgetKit's containerBackground API is iOS 17+, so we set 17
   // and degrade gracefully below if needed.
   deploymentTarget: '17.0',
-  frameworks: ['SwiftUI', 'WidgetKit'],
+  // ActivityKit needed for the per-task Live Activity that lives in
+  // this same extension (LumiTaskLiveActivity).
+  frameworks: ['SwiftUI', 'WidgetKit', 'ActivityKit'],
   // Share an App Group with the main app so the widget can read the
   // mood + completedToday count the JS side writes through
   // ExtensionStorage.
