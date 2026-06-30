@@ -172,6 +172,13 @@ const Room = ({
   //   - Wrapped in Animated.View around the Image so the transform
   //     composes cleanly with the Image's layout left/top.
   const walkX = useRef(new Animated.Value(0)).current;
+  // Static scaleX (not animated). flipX is an Animated.Value only
+  // so the whole transform stays on the native driver; we call
+  // setValue() to instantly mirror the walking sprite per
+  // direction. The swap happens DURING the sit-pause (between
+  // legs), at the same instant the sprite changes from 'walk' →
+  // emotion → 'walk', so the user never sees a flip animation.
+  const flipX = useRef(new Animated.Value(1)).current;
   const [isWalking, setIsWalking] = useState(false);
   // Defensive fallback — if luna-walk.gif failed to bundle (e.g.,
   // user is on an EAS build from before the asset was added but JS
@@ -203,11 +210,14 @@ const Room = ({
     let stopped = false;
     let pauseTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // No flip animation per user feedback — the sit-and-emote
-    // pause covers the visual handoff between directions, so we
-    // don't need to mirror the sprite mid-walk. The cat just
-    // translates left and right; the pause is the breath in between.
-    const walkLeg = (to: number, next: () => void) => {
+    // No flip ANIMATION — instead we set scaleX instantly at the
+    // start of each leg. The walking GIF naturally faces left, so:
+    //   walking right (positive translateX) → scaleX = -1 (mirror)
+    //   walking left  (negative translateX) → scaleX = 1  (default)
+    // While sitting + emoting, scaleX resets to 1 so the rest
+    // sprites (luna-idle/happy/sad) never get mirrored.
+    const walkLeg = (to: number, dir: 'right' | 'left', next: () => void) => {
+      flipX.setValue(dir === 'right' ? -1 : 1);
       setIsWalking(true);
       Animated.timing(walkX, {
         toValue: to,
@@ -216,8 +226,10 @@ const Room = ({
         easing: Easing.inOut(Easing.sin),
       }).start(({ finished }) => {
         if (!finished || stopped) return;
-        // Arrived — sit and show the current emotion for restMs,
-        // then start the next leg in the OPPOSITE direction.
+        // Arrived — sit and show the current emotion. Reset flip
+        // so the sitting sprite renders in its natural orientation
+        // (mirrored idle cats look uncanny).
+        flipX.setValue(1);
         setIsWalking(false);
         pauseTimer = setTimeout(() => {
           if (!stopped) next();
@@ -227,13 +239,16 @@ const Room = ({
 
     const loop = () => {
       if (stopped) return;
-      walkLeg(RANGE, () => walkLeg(-RANGE, () => loop()));
+      walkLeg(RANGE, 'right', () =>
+        walkLeg(-RANGE, 'left', () => loop()),
+      );
     };
     loop();
 
     return () => {
       stopped = true;
       walkX.stopAnimation();
+      flipX.stopAnimation();
       if (pauseTimer) clearTimeout(pauseTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -629,7 +644,7 @@ const Room = ({
         top: gifTop,
         width: GIF_SIZE,
         height: GIF_SIZE,
-        transform: [{ translateX: walkX }],
+        transform: [{ translateX: walkX }, { scaleX: flipX }],
       }}
       pointerEvents="none"
     >
