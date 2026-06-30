@@ -154,15 +154,24 @@ const Room = ({
   const W = width ?? 344;
   const H = height ?? 288;
 
-  // ── Walking animation — slides the cat left/right across the rug
-  // and flips its facing at each end so it looks like it's pacing
-  // the room. Distinct from the GIF's internal bob; this is the
-  // BIG horizontal motion the user sees from across the screen.
+  // ── Walking animation — paces the cat left↔right across the rug
+  // with the sprite flipped to face the direction of travel.
+  // Distinct from the GIF's internal bob; this is the BIG
+  // horizontal motion you see from across the screen.
+  //
+  // Implementation notes:
+  //   - Animated.Value `walkX` drives translateX
+  //   - Animated.Value `flipX` drives scaleX (-1 for left, +1 for
+  //     right). Both being Animated values keeps the entire
+  //     transform on the native driver — earlier version mixed
+  //     a JS literal with an Animated value which silently broke
+  //     the animation on iOS.
+  //   - Wrapped in Animated.View around the Image so the transform
+  //     composes cleanly with the Image's layout `left`/`top`.
   const walkX = useRef(new Animated.Value(0)).current;
-  const [facing, setFacing] = useState<'right' | 'left'>('right');
+  const flipX = useRef(new Animated.Value(1)).current; // 1 = right, -1 = left
   useEffect(() => {
-    // Cat doesn't walk during the sleep window — that'd be jarring.
-    // Just stays still in the center while sleeping.
+    // Cat doesn't walk during the sleep window — would be jarring.
     if (lunaMood === 'sleep') {
       walkX.stopAnimation();
       Animated.timing(walkX, {
@@ -172,20 +181,24 @@ const Room = ({
       }).start();
       return;
     }
-    // Walking range — keep the cat well inside the rug edges.
-    // Rug spans ~rx=86 around center; cat sprite is 64px wide so
-    // a 44px each-side range leaves a comfortable margin.
-    const RANGE = 44;
-    // Slower when sad (the cat is dragging); zippier when happy.
+    // Larger range so the motion reads from across the room.
+    // Rug spans rx=86 around center; cat is 64px wide; 70px each
+    // side leaves a small breath of margin and is unmistakable.
+    const RANGE = 70;
+    // Slower when sad (dragging); zippier when happy.
     const stepMs =
-      lunaMood === 'sad' ? 9000 : lunaMood === 'happy' ? 5000 : 7000;
+      lunaMood === 'sad' ? 7000 : lunaMood === 'happy' ? 3500 : 5000;
     let stopped = false;
 
-    const leg = (
-      to: number,
-      dir: 'right' | 'left',
-      next: () => void,
-    ) => {
+    const setFacing = (dir: 'right' | 'left') => {
+      Animated.timing(flipX, {
+        toValue: dir === 'right' ? 1 : -1,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+    };
+
+    const leg = (to: number, dir: 'right' | 'left', next: () => void) => {
       setFacing(dir);
       Animated.timing(walkX, {
         toValue: to,
@@ -199,13 +212,20 @@ const Room = ({
 
     const loop = () => {
       if (stopped) return;
-      leg(RANGE, 'right', () => leg(-RANGE, 'left', () => loop()));
+      // Full sweep right→left→right so the very first observable
+      // motion crosses the rug, not just nudges from center.
+      leg(RANGE, 'right', () =>
+        leg(-RANGE, 'left', () =>
+          leg(RANGE, 'right', () => loop()),
+        ),
+      );
     };
     loop();
 
     return () => {
       stopped = true;
       walkX.stopAnimation();
+      flipX.stopAnimation();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lunaMood]);
@@ -591,29 +611,30 @@ const Room = ({
         />
       </G>
     </Svg>
-    {/* Animated pixel cat — overlaid at the same spot the SVG
-       sprite used to draw. 64×64 = clean 2× of the 32×32 source
-       so the pixel art stays sharp. Mood comes from the shared
-       ambient hook (sleep window, overdue pile, all-done state,
-       streak) so the room and the rest of the app agree.
-       walkX translates the cat horizontally; facing flips scaleX
-       so the cat looks like it's pacing left↔right across the rug. */}
-    <Animated.Image
-      source={lunaSource(lunaMood)}
+    {/* Pixel cat overlay. The outer Animated.View owns the
+       transform (translateX + scaleX, both Animated values so the
+       native driver runs the whole thing) and the inner Image
+       just fills it. Keeping the transform on a separate node
+       avoids the silent-no-op iOS hit where a literal scaleX
+       mixed with an Animated translateX failed to apply. */}
+    <Animated.View
       style={{
         position: 'absolute',
         left: gifLeft,
         top: gifTop,
         width: GIF_SIZE,
         height: GIF_SIZE,
-        transform: [
-          { translateX: walkX },
-          { scaleX: facing === 'right' ? 1 : -1 },
-        ],
+        transform: [{ translateX: walkX }, { scaleX: flipX }],
       }}
-      resizeMode="contain"
-      accessibilityLabel="Luna"
-    />
+      pointerEvents="none"
+    >
+      <Image
+        source={lunaSource(lunaMood)}
+        style={{ width: '100%', height: '100%' }}
+        resizeMode="contain"
+        accessibilityLabel="Luna"
+      />
+    </Animated.View>
     </View>
   );
 };
