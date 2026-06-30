@@ -227,6 +227,40 @@ For EACH distinct task in the input, return an object with these fields:
 
   - title:         a short, clean imperative — max 6 words, no period. Strip filler ("um", "I should", "remember to", "don't forget to", "maybe"). Strip time/date words. Strip first-person framing — "I forgot to call mom" → "Call mom", "I need to email Jenny" → "Email Jenny". Keep proper nouns, numbers, the action verb + object. Banned words: just, should, try.
 
+                    CRITICAL — split "about X" / "for X" / "regarding X" / "re: X"
+                    out of the title and into the NOTE. The title is the
+                    ACTION + WHO/WHERE; the topic belongs in the note. The
+                    title gets shorter AND the note carries the why. This
+                    applies even when the title is already under 6 words.
+                      "Call mom about doctor appointment"
+                          → title: "Call mom"
+                            note:  "About doctor appointment"
+                      "Email Sarah about the Q3 report"
+                          → title: "Email Sarah"
+                            note:  "About the Q3 report"
+                      "Text dad re: this weekend"
+                          → title: "Text dad"
+                            note:  "Re: this weekend"
+                      "Meeting with David for pricing review"
+                          → title: "Meeting with David"
+                            note:  "For pricing review"
+                      "Pick up the prescription for grandma"
+                          → title: "Pick up prescription"
+                            note:  "For grandma"
+                    SAME RULE for em-dash / comma context appended to an action:
+                      "Get the vase — the ceramic one she liked"
+                          → title: "Get the vase"
+                            note:  "The ceramic one she liked"
+                      "Email Sarah, she's waiting"
+                          → title: "Email Sarah"
+                            note:  "She's waiting"
+                    EXCEPTION — keep the topic in the title when the action
+                    is meaningless without it ("doctor appointment", "tax
+                    return", "rent payment" are atomic noun phrases that
+                    READ as the task itself).
+                      "Schedule a doctor appointment"  → title: "Schedule doctor appointment" (no note — "schedule" alone is too vague)
+                      "Pay rent"                       → title: "Pay rent" (no note — "pay" alone is too vague)
+
   - importance:    "high" | "medium" | "low" — by COGNITIVE/EMOTIONAL LOAD, not keywords.
                     high   = demanding focus, high-stakes, aversive — "the hard thing"
                              examples: "Tax audit", "Performance review", "Hard

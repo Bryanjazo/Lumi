@@ -2732,6 +2732,10 @@ export default function Home() {
                 id: 'preview_0',
                 title: aiPending ? 'Lumi is sorting…' : previewTasks[0].title,
                 subtitle: aiPending ? 'reading what you said' : undefined,
+                // LLM-extracted context line ("about doctor appointment",
+                // "she needs it before Friday"). Falls back to undefined
+                // while aiPending so it doesn't flash a stale note.
+                note: aiPending ? undefined : previewTasks[0].note ?? undefined,
                 defaultWindow:
                   previewTasks[0].window === 'someday'
                     ? 'evening'
@@ -2777,6 +2781,12 @@ export default function Home() {
               input={{
                 id: heroSuggestion.id,
                 title: heroSuggestion.title,
+                // For recurrence suggestions the "note" is the span
+                // copy ("4 Sundays in a row") — the evidence that
+                // made Lumi spot the pattern in the first place.
+                note: heroSuggestion.span
+                  ? `You've done this ${heroSuggestion.span.toLowerCase()}`
+                  : undefined,
                 defaultWindow:
                   (heroSuggestion.guess?.part as WindowKey) ?? 'evening',
                 defaultExactMinute: heroSuggestion.guess?.at ?? null,
