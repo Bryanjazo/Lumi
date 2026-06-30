@@ -3,7 +3,7 @@
     "name": "Lumi",
     "slug": "lumi",
     "scheme": "lumi",
-    "version": "1.1.24",
+    "version": "1.1.25",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "app.lumi.ios",
       "usesAppleSignIn": true,
-      "buildNumber": "36",
+      "buildNumber": "37",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Lumi uses your microphone so you can speak your check-ins instead of typing.",
         "NSSpeechRecognitionUsageDescription": "Lumi transcribes your voice to text on this device so Luna can respond.",

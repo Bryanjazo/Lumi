@@ -2,9 +2,16 @@
 module.exports = {
   type: 'widget',
   // Display name shown in the iOS widget gallery.
-  name: 'lumi-mood',
-  // Bundle id suffix — final id becomes <main>.lumi-mood
-  bundleIdentifier: '.lumi-mood',
+  // No dash — @bacons/apple-targets writes this verbatim as the
+  // Xcode target name in project.pbxproj. EAS Build's widget step
+  // looks for target 'lumimood' (the sanitized form), and the
+  // earlier 'lumi-mood' caused: "Could not find target 'lumimood'
+  // in project.pbxproj". Keep them aligned.
+  name: 'lumimood',
+  // Bundle id suffix — final id becomes <main>.lumimood. Apple
+  // bundle IDs allow dashes but matching the target name keeps
+  // EAS credentials / provisioning profiles unambiguous.
+  bundleIdentifier: '.lumimood',
   // Min deployment target. Lumi targets iOS 15+ (matches main app)
   // and WidgetKit's containerBackground API is iOS 17+, so we set 17
   // and degrade gracefully below if needed.
