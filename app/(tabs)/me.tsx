@@ -154,22 +154,26 @@ const Room = ({
   const W = width ?? 344;
   const H = height ?? 288;
 
-  // ── Walking animation — paces the cat left↔right across the rug
-  // with the sprite flipped to face the direction of travel.
-  // Distinct from the GIF's internal bob; this is the BIG
-  // horizontal motion you see from across the screen.
+  // ── Walking animation — paces the cat left↔right across the rug,
+  // showing the walk GIF while in motion and dropping back to the
+  // current emotion (idle/happy/sad) at each rest stop. Sequence:
+  //   walk right → pause showing emotion → walk left → pause →
+  //   walk right → … (loop)
   //
   // Implementation notes:
-  //   - Animated.Value `walkX` drives translateX
-  //   - Animated.Value `flipX` drives scaleX (-1 for left, +1 for
-  //     right). Both being Animated values keeps the entire
-  //     transform on the native driver — earlier version mixed
-  //     a JS literal with an Animated value which silently broke
-  //     the animation on iOS.
+  //   - walkX (Animated.Value) → translateX
+  //   - flipX (Animated.Value) → scaleX, ±1 by direction. Both
+  //     Animated so the whole transform runs on the native driver —
+  //     mixing a JS literal silently no-op'd the animation on iOS.
+  //   - isWalking (useState) → swaps the rendered GIF between
+  //     'walk' (animated walking sprite) and the current emotion
+  //     (sitting pose). Reads as: cat strolls across the rug, sits
+  //     and shows how it feels for a beat, then strolls back.
   //   - Wrapped in Animated.View around the Image so the transform
-  //     composes cleanly with the Image's layout `left`/`top`.
+  //     composes cleanly with the Image's layout left/top.
   const walkX = useRef(new Animated.Value(0)).current;
-  const flipX = useRef(new Animated.Value(1)).current; // 1 = right, -1 = left
+  const flipX = useRef(new Animated.Value(1)).current;
+  const [isWalking, setIsWalking] = useState(false);
   useEffect(() => {
     // Cat doesn't walk during the sleep window — would be jarring.
     if (lunaMood === 'sleep') {
@@ -179,16 +183,19 @@ const Room = ({
         duration: 600,
         useNativeDriver: true,
       }).start();
+      setIsWalking(false);
       return;
     }
-    // Larger range so the motion reads from across the room.
-    // Rug spans rx=86 around center; cat is 64px wide; 70px each
-    // side leaves a small breath of margin and is unmistakable.
     const RANGE = 70;
-    // Slower when sad (dragging); zippier when happy.
+    // Walk speed scales with mood; sad cat drags, happy cat zips.
     const stepMs =
       lunaMood === 'sad' ? 7000 : lunaMood === 'happy' ? 3500 : 5000;
+    // How long the cat stands still showing emotion at each end.
+    // Long enough to feel intentional (the user can read the mood),
+    // short enough that the room doesn't feel frozen.
+    const restMs = 2400;
     let stopped = false;
+    let pauseTimer: ReturnType<typeof setTimeout> | null = null;
 
     const setFacing = (dir: 'right' | 'left') => {
       Animated.timing(flipX, {
@@ -198,26 +205,34 @@ const Room = ({
       }).start();
     };
 
-    const leg = (to: number, dir: 'right' | 'left', next: () => void) => {
+    const walkLeg = (
+      to: number,
+      dir: 'right' | 'left',
+      next: () => void,
+    ) => {
       setFacing(dir);
+      setIsWalking(true);
       Animated.timing(walkX, {
         toValue: to,
         duration: stepMs,
         useNativeDriver: true,
         easing: Easing.inOut(Easing.sin),
       }).start(({ finished }) => {
-        if (finished && !stopped) next();
+        if (!finished || stopped) return;
+        // Arrived at one end — sit and show the current emotion
+        // for restMs, then start the next leg in the OPPOSITE
+        // direction.
+        setIsWalking(false);
+        pauseTimer = setTimeout(() => {
+          if (!stopped) next();
+        }, restMs);
       });
     };
 
     const loop = () => {
       if (stopped) return;
-      // Full sweep right→left→right so the very first observable
-      // motion crosses the rug, not just nudges from center.
-      leg(RANGE, 'right', () =>
-        leg(-RANGE, 'left', () =>
-          leg(RANGE, 'right', () => loop()),
-        ),
+      walkLeg(RANGE, 'right', () =>
+        walkLeg(-RANGE, 'left', () => loop()),
       );
     };
     loop();
@@ -226,6 +241,7 @@ const Room = ({
       stopped = true;
       walkX.stopAnimation();
       flipX.stopAnimation();
+      if (pauseTimer) clearTimeout(pauseTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lunaMood]);
@@ -628,8 +644,12 @@ const Room = ({
       }}
       pointerEvents="none"
     >
+      {/* GIF swaps between walk sprite (while in motion) and the
+         current emotion sprite (at each rest stop) so the cat
+         visibly walks → sits + emotes → walks back. Sleep mood
+         disables the walk loop entirely (see useEffect above). */}
       <Image
-        source={lunaSource(lunaMood)}
+        source={lunaSource(isWalking ? 'walk' : lunaMood)}
         style={{ width: '100%', height: '100%' }}
         resizeMode="contain"
         accessibilityLabel="Luna"
