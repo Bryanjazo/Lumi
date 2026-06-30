@@ -114,6 +114,45 @@ struct LumiMoodWidget: Widget {
 // 2 · LIVE ACTIVITY — per-task focus session for the Dynamic Island
 // ═════════════════════════════════════════════════════════════════════
 
+// ── Animated Luna sprite ──────────────────────────────────────────────
+// Live Activities can't render animated GIFs (WidgetKit's Image only
+// shows the first frame). To give the Dynamic Island cat the same
+// "alive" feeling as the JS-side GIFs we layer a continuous SwiftUI
+// transform animation on the static PNG: a soft breathe (scale) +
+// vertical bob (offset). Apple permits these repeating modifier
+// animations in Live Activities — they run on the system render
+// budget without forcing TimelineView refreshes.
+//
+// The animation is driven by a @State toggle that flips on .onAppear.
+// `.animation(...).repeatForever(autoreverses: true)` then bounces
+// the scale/offset between two values forever. Works in compact-
+// leading, minimal, expanded, AND the lock screen.
+@available(iOS 16.1, *)
+struct LunaSpriteView: View {
+    let mood: String
+    let size: CGFloat
+    // Slightly bigger breathe on the larger renderings so the motion
+    // is still readable at 18px in the minimal slot.
+    var amplitude: CGFloat { size < 24 ? 0.10 : 0.07 }
+    var bob: CGFloat { size < 24 ? 0.6 : 1.2 }
+
+    @State private var pulse = false
+
+    var body: some View {
+        Image("luna-\(mood)")
+            .resizable()
+            .interpolation(.none)
+            .frame(width: size, height: size)
+            .scaleEffect(pulse ? 1.0 + amplitude : 1.0 - amplitude * 0.5)
+            .offset(y: pulse ? -bob : bob)
+            .animation(
+                .easeInOut(duration: 1.1).repeatForever(autoreverses: true),
+                value: pulse
+            )
+            .onAppear { pulse = true }
+    }
+}
+
 @available(iOS 16.1, *)
 struct LumiTaskLiveActivity: Widget {
     var body: some WidgetConfiguration {
@@ -131,10 +170,7 @@ struct LumiTaskLiveActivity: Widget {
                 // ── EXPANDED (long-pressed pill) ──
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 8) {
-                        Image("luna-\(context.state.mood)")
-                            .resizable()
-                            .interpolation(.none)
-                            .frame(width: 32, height: 32)
+                        LunaSpriteView(mood: context.state.mood, size: 32)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(context.attributes.petName)
                                 .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -171,10 +207,7 @@ struct LumiTaskLiveActivity: Widget {
                 }
             } compactLeading: {
                 // ── COMPACT LEADING (left of camera) ──
-                Image("luna-\(context.state.mood)")
-                    .resizable()
-                    .interpolation(.none)
-                    .frame(width: 20, height: 20)
+                LunaSpriteView(mood: context.state.mood, size: 20)
             } compactTrailing: {
                 // ── COMPACT TRAILING (right of camera) ──
                 Text(formatRemaining(
@@ -186,10 +219,7 @@ struct LumiTaskLiveActivity: Widget {
                 .monospacedDigit()
             } minimal: {
                 // ── MINIMAL (multiple activities competing) ──
-                Image("luna-\(context.state.mood)")
-                    .resizable()
-                    .interpolation(.none)
-                    .frame(width: 18, height: 18)
+                LunaSpriteView(mood: context.state.mood, size: 18)
             }
         }
     }
@@ -202,10 +232,7 @@ struct LockScreenView: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Image("luna-\(state.mood)")
-                .resizable()
-                .interpolation(.none)
-                .frame(width: 52, height: 52)
+            LunaSpriteView(mood: state.mood, size: 52)
             VStack(alignment: .leading, spacing: 4) {
                 Text(attributes.taskTitle)
                     .font(.system(size: 16, weight: .semibold))

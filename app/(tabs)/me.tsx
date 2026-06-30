@@ -27,7 +27,7 @@ import Svg, {
   Path,
 } from 'react-native-svg';
 import { fonts } from '../../constants/fonts';
-import { lunaSource } from '../../lib/luna-source';
+import { lunaSource, type LunaMood } from '../../lib/luna-source';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
 import { useCompanionMode } from '../../lib/companion-mode';
 import {
@@ -180,6 +180,11 @@ const Room = ({
   // emotion → 'walk', so the user never sees a flip animation.
   const flipX = useRef(new Animated.Value(1)).current;
   const [isWalking, setIsWalking] = useState(false);
+  // During rest stops we sometimes interrupt the emotion sprite
+  // with a brief grooming beat (cat licks itself) so the room
+  // doesn't feel like a state machine — it feels like a real cat
+  // with little personality quirks. Rolls a dice at each pause.
+  const [isLicking, setIsLicking] = useState(false);
   // Defensive fallback — if luna-walk.gif failed to bundle (e.g.,
   // user is on an EAS build from before the asset was added but JS
   // hot-reloaded the latest code), the require resolves to a broken
@@ -187,6 +192,17 @@ const Room = ({
   // first onError and fall back to the emotion sprite for the rest
   // of the session so the cat is visible instead of invisible.
   const [walkAssetFailed, setWalkAssetFailed] = useState(false);
+
+  // Which sprite to render this frame. Precedence: walking >
+  // licking > current ambient emotion. activeSprite is also used
+  // by the Image style block to decide whether to upscale (the
+  // walk + lick GIFs need the 1.35× bump; sitting sprites don't).
+  const activeSprite: LunaMood =
+    isWalking && !walkAssetFailed
+      ? 'walk'
+      : isLicking
+        ? 'lick'
+        : lunaMood;
   useEffect(() => {
     // Cat doesn't walk during the sleep window — would be jarring.
     if (lunaMood === 'sleep') {
@@ -197,6 +213,7 @@ const Room = ({
         useNativeDriver: true,
       }).start();
       setIsWalking(false);
+      setIsLicking(false);
       return;
     }
     const RANGE = 70;
@@ -219,6 +236,7 @@ const Room = ({
     const walkLeg = (to: number, dir: 'right' | 'left', next: () => void) => {
       flipX.setValue(dir === 'right' ? -1 : 1);
       setIsWalking(true);
+      setIsLicking(false);
       Animated.timing(walkX, {
         toValue: to,
         duration: stepMs,
@@ -228,12 +246,26 @@ const Room = ({
         if (!finished || stopped) return;
         // Arrived — sit and show the current emotion. Reset flip
         // so the sitting sprite renders in its natural orientation
-        // (mirrored idle cats look uncanny).
+        // (mirrored idle cats look uncanny). 1-in-3 chance the cat
+        // grooms itself for ~1.6s before going back to its mood —
+        // ~half the pause beats it as a little character moment.
         flipX.setValue(1);
         setIsWalking(false);
-        pauseTimer = setTimeout(() => {
-          if (!stopped) next();
-        }, restMs);
+        const willLick = Math.random() < 0.33;
+        if (willLick) {
+          setIsLicking(true);
+          pauseTimer = setTimeout(() => {
+            if (stopped) return;
+            setIsLicking(false);
+            pauseTimer = setTimeout(() => {
+              if (!stopped) next();
+            }, Math.max(0, restMs - 1600));
+          }, 1600);
+        } else {
+          pauseTimer = setTimeout(() => {
+            if (!stopped) next();
+          }, restMs);
+        }
       });
     };
 
@@ -672,14 +704,28 @@ const Room = ({
          If luna-walk.gif isn't bundled (old EAS build + new JS),
          onError flips walkAssetFailed and we render the emotion
          sprite during the walk too — cat is visible, just sliding. */}
+      {/* The walking + lick sprites get upscaled ~1.35× because
+         the source GIFs (48×45 for walk, similar margin on lick)
+         have more whitespace around the cat than the sitting
+         sprites — without compensation they read visibly smaller
+         when the loop swaps in. transformOrigin pins the scale to
+         '50% 100%' (center-bottom) so the cat grows UPWARD and
+         its feet stay planted on the rug instead of sinking
+         through it. Wrapper has overflow visible by default, so
+         the bigger image renders fine even when it overflows the
+         64px box on the top and sides. */}
       <Image
-        source={lunaSource(
-          isWalking && !walkAssetFailed ? 'walk' : lunaMood,
-        )}
+        source={lunaSource(activeSprite)}
         onError={() => {
           if (isWalking) setWalkAssetFailed(true);
         }}
-        style={{ width: '100%', height: '100%' }}
+        style={[
+          { width: '100%', height: '100%' },
+          (activeSprite === 'walk' || activeSprite === 'lick') && {
+            transform: [{ scale: 1.35 }],
+            transformOrigin: '50% 100%',
+          },
+        ]}
         resizeMode="contain"
         accessibilityLabel="Luna"
       />

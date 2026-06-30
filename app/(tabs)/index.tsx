@@ -1126,15 +1126,39 @@ export default function Home() {
       celebrateTimerRef.current = null;
     }, 30_000);
   };
+
+  // Brief grooming beat. Plays for ~1.8s on focus-start and on
+  // task-completion before falling back to whatever the cat would
+  // normally be showing (celebration → happy, otherwise ambient).
+  // Reads as: the cat licks itself like it's busy / settling in,
+  // then goes back to its mood. Takes precedence over celebrating
+  // so the lick lands first on completion and the 30-second happy
+  // window picks up after.
+  const [licking, setLicking] = useState(false);
+  const lickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerLick = (durationMs = 1800) => {
+    if (lickTimerRef.current) clearTimeout(lickTimerRef.current);
+    setLicking(true);
+    lickTimerRef.current = setTimeout(() => {
+      setLicking(false);
+      lickTimerRef.current = null;
+    }, durationMs);
+  };
+
   // Cleanup on unmount so a stale timeout can't try to setState
   // after the screen's torn down.
   useEffect(
     () => () => {
       if (celebrateTimerRef.current) clearTimeout(celebrateTimerRef.current);
+      if (lickTimerRef.current) clearTimeout(lickTimerRef.current);
     },
     [],
   );
-  const nookMood = celebrating ? 'happy' : ambientMood;
+  const nookMood = licking
+    ? 'lick'
+    : celebrating
+      ? 'happy'
+      : ambientMood;
 
   // ── Store ────────────────────────────────────────────────────────
   const xp = useUserStore((s) => s.xp);
@@ -1399,6 +1423,11 @@ export default function Home() {
     // feedback (companion-mode-spec §2).
     if (companion.showCheer) {
       setCheer((c) => c + 1);
+      // Lick first, then the 30s happy window takes over. The
+      // licking nookMood overrides 'happy' for the first 1.8s so
+      // the cat reads as "busy grooming, satisfied" instead of
+      // jumping straight to a static smile.
+      triggerLick();
       triggerCelebrate();
       const fId = q.id + '-' + Date.now();
       setFloater({
@@ -2536,6 +2565,11 @@ export default function Home() {
                       if (ownThisSession) {
                         void endFocus({ reason: 'cancelled' });
                       } else {
+                        // Quick grooming beat as the focus session
+                        // starts — reads as the cat settling in to
+                        // work alongside the user, then returns to
+                        // ambient mood while the timer runs.
+                        triggerLick();
                         void startFocus({
                           questId: hero.id,
                           taskTitle: hero.title,
