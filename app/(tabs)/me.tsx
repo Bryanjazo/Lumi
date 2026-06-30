@@ -154,6 +154,62 @@ const Room = ({
   const W = width ?? 344;
   const H = height ?? 288;
 
+  // ── Walking animation — slides the cat left/right across the rug
+  // and flips its facing at each end so it looks like it's pacing
+  // the room. Distinct from the GIF's internal bob; this is the
+  // BIG horizontal motion the user sees from across the screen.
+  const walkX = useRef(new Animated.Value(0)).current;
+  const [facing, setFacing] = useState<'right' | 'left'>('right');
+  useEffect(() => {
+    // Cat doesn't walk during the sleep window — that'd be jarring.
+    // Just stays still in the center while sleeping.
+    if (lunaMood === 'sleep') {
+      walkX.stopAnimation();
+      Animated.timing(walkX, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+    // Walking range — keep the cat well inside the rug edges.
+    // Rug spans ~rx=86 around center; cat sprite is 64px wide so
+    // a 44px each-side range leaves a comfortable margin.
+    const RANGE = 44;
+    // Slower when sad (the cat is dragging); zippier when happy.
+    const stepMs =
+      lunaMood === 'sad' ? 9000 : lunaMood === 'happy' ? 5000 : 7000;
+    let stopped = false;
+
+    const leg = (
+      to: number,
+      dir: 'right' | 'left',
+      next: () => void,
+    ) => {
+      setFacing(dir);
+      Animated.timing(walkX, {
+        toValue: to,
+        duration: stepMs,
+        useNativeDriver: true,
+        easing: Easing.inOut(Easing.sin),
+      }).start(({ finished }) => {
+        if (finished && !stopped) next();
+      });
+    };
+
+    const loop = () => {
+      if (stopped) return;
+      leg(RANGE, 'right', () => leg(-RANGE, 'left', () => loop()));
+    };
+    loop();
+
+    return () => {
+      stopped = true;
+      walkX.stopAnimation();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lunaMood]);
+
   useEffect(() => {
     let raf: number;
     const tick = () => {
@@ -539,8 +595,10 @@ const Room = ({
        sprite used to draw. 64×64 = clean 2× of the 32×32 source
        so the pixel art stays sharp. Mood comes from the shared
        ambient hook (sleep window, overdue pile, all-done state,
-       streak) so the room and the rest of the app agree. */}
-    <Image
+       streak) so the room and the rest of the app agree.
+       walkX translates the cat horizontally; facing flips scaleX
+       so the cat looks like it's pacing left↔right across the rug. */}
+    <Animated.Image
       source={lunaSource(lunaMood)}
       style={{
         position: 'absolute',
@@ -548,6 +606,10 @@ const Room = ({
         top: gifTop,
         width: GIF_SIZE,
         height: GIF_SIZE,
+        transform: [
+          { translateX: walkX },
+          { scaleX: facing === 'right' ? 1 : -1 },
+        ],
       }}
       resizeMode="contain"
       accessibilityLabel="Luna"
