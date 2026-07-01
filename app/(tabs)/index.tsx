@@ -1204,14 +1204,6 @@ export default function Home() {
   const [focusPickerOpen, setFocusPickerOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
   const [capText, setCapText] = useState('');
-  // Tracks the pill TextInput's rendered height so we can clamp
-  // growth AND actually enable internal scrolling once the user has
-  // typed past the cap. iOS multiline TextInput needs an explicit
-  // `height` (not just maxHeight) for scrollEnabled to fire — with
-  // maxHeight alone the input just grows unbounded past the limit.
-  const [capPillHeight, setCapPillHeight] = useState(36);
-  const CAP_PILL_MIN = 36;
-  const CAP_PILL_MAX = 130;
   const [moreOpen, setMoreOpen] = useState(false);
   // Someday → real-date sheet target. When set, the MoveBackToDateSheet
   // opens for this task.
@@ -1640,16 +1632,35 @@ export default function Home() {
 
     setPreviewTasks((cur) => {
       if (!cur) return cur;
-      // Match LLM tasks to deterministic tasks by index. If the LLM
-      // returns a different count, only patch overlapping slots —
-      // we don't want to silently drop or invent rows the user can
-      // already see.
-      const next = [...cur];
-      const n = Math.min(cur.length, result.tasks.length);
-      for (let i = 0; i < n; i += 1) {
-        next[i] = patchWithUnderstood(cur[i], result.tasks[i]);
-      }
-      return next;
+      // The LLM is the source of truth for splitting a dump into
+      // individual tasks — the deterministic parser (splitFragments
+      // in lib/capture.ts) is conservative and only splits on
+      // "and"/"then"/"." patterns. If the user's dump is a
+      // comma-list ("finish deck, reply to Sam, book dentist…"),
+      // parseSmartCapture may return 2 tasks while the LLM returns
+      // 13. Previously we only patched min(deterministic, llm)
+      // slots and silently dropped the extras — regression that
+      // squashed long brain-dumps into 1 giant title. Fix: rebuild
+      // previewTasks from the LLM's output. For each LLM task,
+      // reuse the deterministic slot at the same index if one
+      // exists (preserves timeOptions / raw / etc. from the local
+      // parser); otherwise mint a fresh stub and patch onto it.
+      const stub = (t: UnderstoodTask): SmartTask => ({
+        title: t.title,
+        importance: 'medium',
+        energyDemand: 'medium',
+        timeMode: 'windowed',
+        at: null,
+        date: null,
+        window: 'midday',
+        recur: null,
+        raw: t.title,
+        needsFollowup: false,
+      });
+      return result.tasks.map((llmTask, i) => {
+        const base = cur[i] ?? stub(llmTask);
+        return patchWithUnderstood(base, llmTask);
+      });
     });
   };
 
@@ -2899,28 +2910,10 @@ export default function Home() {
               onChangeText={setCapText}
               placeholder="Dump a thought…"
               placeholderTextColor={C.mute}
-              style={[
-                styles.capturePillInput,
-                { height: capPillHeight },
-              ]}
+              style={styles.capturePillInput}
               multiline
               scrollEnabled
               returnKeyType="send"
-              // Track intrinsic content height and clamp to
-              // [MIN, MAX]. Once capped at MAX, scrollEnabled
-              // takes over so the user can scroll the overflow
-              // — without this, iOS lets the input grow past the
-              // cap unbounded (no scroll ever fires).
-              onContentSizeChange={(e) => {
-                const h = e.nativeEvent.contentSize.height;
-                const next = Math.max(
-                  CAP_PILL_MIN,
-                  Math.min(CAP_PILL_MAX, h),
-                );
-                if (Math.abs(next - capPillHeight) > 0.5) {
-                  setCapPillHeight(next);
-                }
-              }}
               onSubmitEditing={sendCapture}
               blurOnSubmit={false}
             />
@@ -3639,11 +3632,14 @@ const makeStyles = (accent: Accent) =>
       color: C.bone,
       letterSpacing: -0.1,
       padding: 0,
-      // Height is set inline via capPillHeight state (tracked from
-      // onContentSizeChange). MIN/MAX come from the CAP_PILL_MIN /
-      // CAP_PILL_MAX constants — using explicit height instead of
-      // maxHeight is what makes scrollEnabled actually work on
-      // iOS multiline inputs.
+      // Reverted to the previous simple pattern per user — min +
+      // maxHeight caps growth to ~5 lines. iOS won't do true
+      // internal scrolling with maxHeight alone (that needed the
+      // tracked-height pattern we removed), but the visual cap
+      // + long-dump-expand path via the fullscreen brain-dump
+      // modal is what the user asked for.
+      minHeight: 36,
+      maxHeight: 130,
       paddingTop: 8,
       paddingBottom: 8,
       lineHeight: 20,
