@@ -394,9 +394,19 @@ export const AuthDoor = ({ initialMode }: Props) => {
     try {
       if (isUp) {
         setName_(name.trim());
-        await signUp(email, pw);
+        const { needsEmailConfirmation } = await signUp(email, pw);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        router.replace('/auth/done' as never);
+        if (needsEmailConfirmation) {
+          // Supabase withheld the session — user needs to click the
+          // link in their email. Send them to the verify screen; the
+          // deep link handler in _layout.tsx picks the session up on
+          // click and verify-email auto-navigates to /auth/done.
+          router.replace(
+            `/auth/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}` as never,
+          );
+        } else {
+          router.replace('/auth/done' as never);
+        }
       } else {
         await signIn(email, pw);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -532,14 +542,15 @@ export const AuthDoor = ({ initialMode }: Props) => {
             </Pressable>
           </View>
 
-          {/* Defensive nudge — Lumi treats Google + email as separate
-              accounts by default, so using the wrong button silently
-              creates a fresh empty account. The visible reminder
-              prevents most cases until the Supabase auto-link setting
-              is enabled server-side. */}
+          {/* With Supabase "Link identities" enabled server-side, an
+              OAuth sign-in with an email that already has a Lumi
+              account will merge into the existing user row instead
+              of silently creating a duplicate. If linking is off,
+              the OAuth handler in lib/auth.ts surfaces a clear
+              "sign in with the method you used before" error. */}
           <Text style={styles.socialHint}>
-            Use the same option you signed up with — Google and email
-            are separate accounts.
+            Same email? I&apos;ll link Google / Apple / password into
+            one account.
           </Text>
 
           {/* Divider */}

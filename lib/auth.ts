@@ -47,19 +47,51 @@ const requireConfigured = () => {
 // ── email + password ────────────────────────────────────────────────────
 
 /**
- * Create a new account with email + password. The user gets a session
- * immediately, assuming "Confirm email" is disabled in Supabase Auth
- * settings (recommended — there's no second factor that needs a
- * confirmed email).
+ * Create a new account with email + password. Returns whether the
+ * caller needs to wait for the user to click a confirmation link
+ * before they're actually signed in.
+ *
+ *   { needsEmailConfirmation: true }  → Supabase created the user
+ *     but withheld a session — the app should route to the
+ *     verify-email screen and wait for the deep link.
+ *   { needsEmailConfirmation: false } → session was created
+ *     immediately (email confirmations disabled in dashboard);
+ *     caller can route straight to onboarding / done.
+ *
+ * Whether Supabase issues a session depends on Authentication →
+ * Settings → "Enable email confirmations". Confirmations ON is the
+ * production-safe default — otherwise anyone can create an account
+ * with a fake email and reach the app.
  */
 export const signUp = async (
   email: string,
   password: string,
-): Promise<void> => {
+): Promise<{ needsEmailConfirmation: boolean }> => {
   requireConfigured();
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email: email.trim().toLowerCase(),
     password,
+    options: { emailRedirectTo: getRedirectUrl() },
+  });
+  if (error) throw error;
+  // No session AND we have a user → confirmation email was sent,
+  // waiting for the click. No session AND no user → shouldn't
+  // happen; treat as error.
+  const needsEmailConfirmation = !data.session && !!data.user;
+  return { needsEmailConfirmation };
+};
+
+/**
+ * Re-send the signup confirmation email. Supabase throttles these
+ * server-side (typically 1/min per address); we don't need to
+ * enforce a client-side cooldown, but the UI does anyway to avoid
+ * hammering the button.
+ */
+export const resendConfirmation = async (email: string): Promise<void> => {
+  requireConfigured();
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email: email.trim().toLowerCase(),
     options: { emailRedirectTo: getRedirectUrl() },
   });
   if (error) throw error;
@@ -125,7 +157,21 @@ export const signInWithApple = async (): Promise<{
     provider: 'apple',
     token: credential.identityToken,
   });
-  if (error) throw error;
+  if (error) {
+    const msg = error.message ?? 'Apple sign-in failed';
+    // Same "already registered under another provider" translation
+    // the Google flow does — surfaces which method the user should
+    // use instead of dumping a raw Supabase internal string.
+    if (
+      /already registered|identity.*exists|duplicate/i.test(msg) ||
+      /email.*already/i.test(msg)
+    ) {
+      throw new Error(
+        'That Apple ID’s email already has a Lumi account — sign in with the method you used before (email/password or Google).',
+      );
+    }
+    throw error;
+  }
 
   // Apple gives the name ONLY on the first sign-in for this Services
   // ID. Caller (sign-up flow) uses this to seed the userStore name.
@@ -315,12 +361,24 @@ export const signInWithGoogle = async (): Promise<{
   if (supabaseError) {
     const msg = supabaseError.message ?? 'Supabase rejected the Google token';
     console.warn('[google] supabase signInWithIdToken failed', msg);
-    // Translate the most common Supabase rejection into copy the user
-    // can actually act on (vs. the raw "Unacceptable audience" line
-    // that's meaningless outside our codebase).
+    // Translate common Supabase rejections into copy the user can
+    // act on (vs. raw internal error strings).
     if (/audience|aud/i.test(msg)) {
       throw new Error(
         'Sign-in rejected — this build’s Google client doesn’t match the server. Update to the latest Lumi build.',
+      );
+    }
+    // Supabase returns this when "Link identities" is DISABLED in
+    // the dashboard AND the user's email is already registered under
+    // a different provider (email/password or Apple). Message tells
+    // the user which provider to use so they don't spin their
+    // wheels.
+    if (
+      /already registered|identity.*exists|duplicate/i.test(msg) ||
+      /email.*already/i.test(msg)
+    ) {
+      throw new Error(
+        'That email already has a Lumi account — sign in with the method you used before (email/password or Apple).',
       );
     }
     throw new Error(msg);
