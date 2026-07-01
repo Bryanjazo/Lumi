@@ -3543,11 +3543,19 @@ const makeStyles = (accent: Accent) =>
     capturePillInner: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
-      paddingLeft: 15,
-      paddingRight: 8,
-      paddingVertical: 8,
-      borderRadius: 22,
+      // Icons on the right (MicButton + expand OR submit) each own
+      // their own 36×36 hitbox — the gap here is the visible space
+      // BETWEEN them, and paddingRight is the space between the last
+      // icon and the pill edge. Bumped both for the calmer, more
+      // balanced spacing the mockup has (was 10 / 8, felt crammed).
+      gap: 12,
+      paddingLeft: 16,
+      paddingRight: 10,
+      // Slightly taller pill so the icons sit with breathing room
+      // above / below (was 8 → felt squished, icons kissed the top
+      // and bottom of the frosted glass).
+      paddingVertical: 10,
+      borderRadius: 24,
       borderWidth: 1,
       borderColor: hexA(C.bone, 0.1),
       backgroundColor: hexA('#241C17', 0.86),
@@ -3561,22 +3569,32 @@ const makeStyles = (accent: Accent) =>
     },
     capturePillSpark: {
       fontFamily: fonts.inter,
-      fontSize: 15,
+      fontSize: 16,
       flexShrink: 0,
+      // Small right margin so the sparkle doesn't kiss the input
+      // caret when the user focuses an empty pill (the flex gap
+      // above only kicks in between siblings, not between the
+      // sparkle text and the TextInput baseline).
+      marginRight: 2,
     },
     capturePillInput: {
       flex: 1,
       minWidth: 0,
       fontFamily: fonts.inter,
-      fontSize: 14.5,
+      fontSize: 15,
       color: C.bone,
       letterSpacing: -0.1,
       padding: 0,
+      // Explicit height matches the icon buttons so the vertical
+      // center of the text aligns with the vertical center of the
+      // MicButton + expand button — otherwise the text was
+      // drifting a couple px up depending on font metrics.
+      height: 36,
     },
     capturePillSubmit: {
       width: 36,
       height: 36,
-      borderRadius: 12,
+      borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
       flexShrink: 0,
@@ -3589,7 +3607,11 @@ const makeStyles = (accent: Accent) =>
     capturePillExpand: {
       width: 36,
       height: 36,
-      borderRadius: 12,
+      // MicButton internally renders as a border-radius: 18 pill
+      // (fully rounded). Matching that here keeps the two right-
+      // side icons visually consistent — a rounded-square expand
+      // next to a fully-rounded mic reads as a shape mismatch.
+      borderRadius: 18,
       borderWidth: 1,
       alignItems: 'center',
       justifyContent: 'center',
