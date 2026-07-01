@@ -2892,17 +2892,21 @@ export default function Home() {
               placeholder="Dump a thought…"
               placeholderTextColor={C.mute}
               style={styles.capturePillInput}
+              multiline
+              scrollEnabled
               returnKeyType="send"
+              // Multiline inputs on iOS treat Return as newline by
+              // default; but blurOnSubmit + a manual onSubmitEditing
+              // still catches the hardware send action when the user
+              // has one attached. Long dumps expand the pill up to
+              // ~5 lines then scroll internally.
               onSubmitEditing={sendCapture}
-              blurOnSubmit
+              blurOnSubmit={false}
             />
-            {/* Mic + expand are ALWAYS visible. Mic is for
-               speak-instead-of-type; expand opens the full brain-
-               dump modal. Typed text submits via the keyboard's
-               Return key (wired above via onSubmitEditing) — no
-               separate ↑ button, since the user's mental model
-               here is "these two icons let me capture, the text
-               field is just a bonus". */}
+            {/* Mic is ALWAYS visible — the pill's primary purpose is
+               speak-instead-of-type. Recording state pulses a dot,
+               transcribing state shows an ellipsis, idle shows the
+               icon. */}
             <Pressable
               onPress={handleMic}
               hitSlop={10}
@@ -2922,32 +2926,61 @@ export default function Home() {
                 <MicIcon size={20} color={C.boneDim} />
               )}
             </Pressable>
-            <Pressable
-              onPress={() => {
-                Haptics.selectionAsync();
-                setCapOpen(true);
-              }}
-              style={[
-                styles.capturePillExpand,
-                {
-                  borderColor: hexA(accent.fg, 0.4),
-                  backgroundColor: hexA(accent.fg, 0.14),
-                },
-              ]}
-              hitSlop={6}
-              accessibilityLabel="Open full brain-dump"
-            >
-              <Svg width={18} height={18} viewBox="0 0 24 24">
-                <Path
-                  d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"
-                  stroke={accent.fg}
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  fill="none"
-                />
-              </Svg>
-            </Pressable>
+            {/* Right-most slot flips between EXPAND (empty → opens
+               the brain-dump modal for messier dumps) and SEND
+               (text present → runs sendCapture through the LLM
+               parse + preview pipeline). Same footprint so the
+               swap doesn't shift the mic's position. */}
+            {capText.trim() ? (
+              <Pressable
+                onPress={sendCapture}
+                style={[
+                  styles.capturePillExpand,
+                  {
+                    borderColor: accent.fg,
+                    backgroundColor: accent.fg,
+                  },
+                ]}
+                hitSlop={6}
+                accessibilityLabel="Send"
+              >
+                <Text
+                  style={[
+                    styles.capturePillSendGlyph,
+                    { color: C.void },
+                  ]}
+                >
+                  ↑
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setCapOpen(true);
+                }}
+                style={[
+                  styles.capturePillExpand,
+                  {
+                    borderColor: hexA(accent.fg, 0.4),
+                    backgroundColor: hexA(accent.fg, 0.14),
+                  },
+                ]}
+                hitSlop={6}
+                accessibilityLabel="Open full brain-dump"
+              >
+                <Svg width={18} height={18} viewBox="0 0 24 24">
+                  <Path
+                    d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"
+                    stroke={accent.fg}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                </Svg>
+              </Pressable>
+            )}
           </View>
         </View>
       )}
@@ -3542,18 +3575,15 @@ const makeStyles = (accent: Accent) =>
     },
     capturePillInner: {
       flexDirection: 'row',
-      alignItems: 'center',
-      // Icons on the right (MicButton + expand OR submit) each own
-      // their own 36×36 hitbox — the gap here is the visible space
-      // BETWEEN them, and paddingRight is the space between the last
-      // icon and the pill edge. Bumped both for the calmer, more
-      // balanced spacing the mockup has (was 10 / 8, felt crammed).
+      // alignItems: flex-end so when the input grows multiline the
+      // sparkle + icon buttons stay pinned to the bottom of the
+      // pill, and the text expands UPWARD. On a single-line input
+      // this reads the same as center-aligned (icons and text share
+      // the same baseline).
+      alignItems: 'flex-end',
       gap: 12,
       paddingLeft: 16,
       paddingRight: 10,
-      // Slightly taller pill so the icons sit with breathing room
-      // above / below (was 8 → felt squished, icons kissed the top
-      // and bottom of the frosted glass).
       paddingVertical: 10,
       borderRadius: 24,
       borderWidth: 1,
@@ -3571,11 +3601,12 @@ const makeStyles = (accent: Accent) =>
       fontFamily: fonts.inter,
       fontSize: 16,
       flexShrink: 0,
-      // Small right margin so the sparkle doesn't kiss the input
-      // caret when the user focuses an empty pill (the flex gap
-      // above only kicks in between siblings, not between the
-      // sparkle text and the TextInput baseline).
       marginRight: 2,
+      // Sparkle sits on the same baseline as the 36-tall icon
+      // buttons. Padding-bottom aligns it with the vertical
+      // center of the first line of text at the bottom of the
+      // multi-line stack.
+      paddingBottom: 8,
     },
     capturePillInput: {
       flex: 1,
@@ -3585,11 +3616,25 @@ const makeStyles = (accent: Accent) =>
       color: C.bone,
       letterSpacing: -0.1,
       padding: 0,
-      // Explicit height matches the icon buttons so the vertical
-      // center of the text aligns with the vertical center of the
-      // MicButton + expand button — otherwise the text was
-      // drifting a couple px up depending on font metrics.
-      height: 36,
+      // Multi-line growth clamp — minHeight matches the 36-tall
+      // icon buttons so a single-line pill isn't taller than
+      // needed; maxHeight caps the growth at ~5 lines before the
+      // input starts scrolling internally so the pill doesn't
+      // eat the whole screen on a long dump.
+      minHeight: 36,
+      maxHeight: 130,
+      // Vertical padding centers the text within the minHeight
+      // when it's a single line, and gives the multi-line stack
+      // breathing room from the top/bottom edges.
+      paddingTop: 8,
+      paddingBottom: 8,
+      lineHeight: 20,
+      textAlignVertical: 'top',
+    },
+    capturePillSendGlyph: {
+      fontFamily: fonts.interSemi,
+      fontSize: 18,
+      lineHeight: 20,
     },
     capturePillSubmit: {
       width: 36,
