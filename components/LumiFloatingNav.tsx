@@ -299,16 +299,15 @@ export default function LumiFloatingNav({
               >
                 <View
                   style={{
-                    // Tight box hugging the icon (~23px) with even
-                    // padding on all sides. Rounded square (not full
-                    // pill) matches the mockup outline shape. Fill
-                    // bumped from 0.08 → 0.16 so the ember tint
-                    // actually reads as a warm pillow behind the
-                    // icon; border made a hair softer so it doesn't
-                    // fight the fill for attention.
-                    width: 46,
-                    height: 42,
-                    borderRadius: 12,
+                    // Sized to hug JUST the ~23px icon with a small
+                    // even padding on all sides — height dropped so
+                    // the box's bottom edge sits ABOVE where the
+                    // label starts in the cell (label was reading
+                    // as "inside" the box at 42-tall). Rounded
+                    // square proportions match the mockup.
+                    width: 44,
+                    height: 34,
+                    borderRadius: 11,
                     backgroundColor: hexA(C.ember, 0.16),
                     borderWidth: 1,
                     borderColor: hexA(C.ember, 0.5),
@@ -437,7 +436,12 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     paddingVertical: 9,
-    gap: 3,
+    // Icon → label spacing bumped from 3 → 7 so the label sits
+    // clearly BELOW the outlined box on the active tab (the box
+    // wraps only the icon at ~34px tall; the label needs to land
+    // outside its bottom edge with a visible gap, not tucked
+    // right under it).
+    gap: 7,
   },
   label: {
     fontSize: 9.5,
