@@ -374,10 +374,43 @@ export function LumiFocusCard({
       <Shell glow>
         <View style={styles.doneWrap}>
           <View style={styles.doneRingWrap}>
-            {/* Rotating sun rays — 14 vertical gradient bars in a
-               group, wrapped Animated.View rotates the whole SVG
-               slowly (20s cycle) so the rays sweep behind the
-               medallion. Native driver on the rotation. */}
+            {/* Soft radial halo — SVG RadialGradient so it fades
+               smoothly to transparent with NO hard circle edge (the
+               previous borderRadius+backgroundColor approach was
+               reading as a dark disc behind the medallion). Fills
+               the full 220px container so the softening happens
+               well beyond the ring. */}
+            <View style={styles.doneRingHaloWrap} pointerEvents="none">
+              <Svg width={220} height={220} viewBox="0 0 220 220">
+                <Defs>
+                  <RadialGradient
+                    id="doneHaloGrad"
+                    cx="50%"
+                    cy="50%"
+                    r="50%"
+                    fx="50%"
+                    fy="50%"
+                  >
+                    <Stop offset="0" stopColor={C.glow} stopOpacity={0.22} />
+                    <Stop
+                      offset="0.4"
+                      stopColor={C.ember}
+                      stopOpacity={0.1}
+                    />
+                    <Stop offset="1" stopColor={C.ember} stopOpacity={0} />
+                  </RadialGradient>
+                </Defs>
+                <Circle cx={110} cy={110} r={110} fill="url(#doneHaloGrad)" />
+              </Svg>
+            </View>
+
+            {/* Rotating sun rays — 14 tapered gradient bars extending
+               from just outside the ring (~r=45) outward to ~r=100.
+               Wider footprint and brighter middle stop than the
+               previous version; wrapped Animated.View rotates the
+               whole SVG at 20s. Positioned to extend past the 168
+               medallion area — the wrap is 220 to give the rays
+               room. */}
             <Animated.View
               style={[
                 styles.doneRays,
@@ -385,7 +418,7 @@ export function LumiFocusCard({
               ]}
               pointerEvents="none"
             >
-              <Svg width={168} height={168} viewBox="0 0 168 168">
+              <Svg width={220} height={220} viewBox="0 0 220 220">
                 <Defs>
                   <LinearGradient
                     id="doneRayGrad"
@@ -395,7 +428,11 @@ export function LumiFocusCard({
                     y2="1"
                   >
                     <Stop offset="0" stopColor={C.glow} stopOpacity={0} />
-                    <Stop offset="0.5" stopColor={C.glow} stopOpacity={0.16} />
+                    <Stop
+                      offset="0.5"
+                      stopColor={C.glow}
+                      stopOpacity={0.42}
+                    />
                     <Stop offset="1" stopColor={C.glow} stopOpacity={0} />
                   </LinearGradient>
                 </Defs>
@@ -405,14 +442,14 @@ export function LumiFocusCard({
                     <G
                       key={i}
                       rotation={angle}
-                      originX={84}
-                      originY={84}
+                      originX={110}
+                      originY={110}
                     >
                       <Rect
-                        x={82.5}
-                        y={22}
-                        width={3}
-                        height={56}
+                        x={108}
+                        y={10}
+                        width={4}
+                        height={65}
                         fill="url(#doneRayGrad)"
                       />
                     </G>
@@ -420,28 +457,6 @@ export function LumiFocusCard({
                 })}
               </Svg>
             </Animated.View>
-
-            {/* Breathing halo — behind the medallion, ember→transparent */}
-            <Animated.View
-              style={[
-                styles.doneRingHalo,
-                {
-                  opacity: halo.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.6, 1],
-                  }),
-                  transform: [
-                    {
-                      scale: halo.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [1, 1.08],
-                      }),
-                    },
-                  ],
-                },
-              ]}
-              pointerEvents="none"
-            />
 
             {/* Medallion — radial fill + gradient ring + drawn check.
                Ring + check both animate in via strokeDashoffset when
@@ -1145,28 +1160,28 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   doneRingWrap: {
-    width: 168,
-    height: 168,
-    marginBottom: 18,
+    // 220 gives the rays room to extend well outside the medallion
+    // (which is 150 tall, centered in this box). Bumped from 168.
+    width: 220,
+    height: 220,
+    marginBottom: 12,
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  doneRays: {
+  doneRingHaloWrap: {
     position: 'absolute',
-    width: 168,
-    height: 168,
     top: 0,
     left: 0,
+    width: 220,
+    height: 220,
   },
-  doneRingHalo: {
+  doneRays: {
     position: 'absolute',
-    top: -6,
-    left: -6,
-    right: -6,
-    bottom: -6,
-    borderRadius: 90,
-    backgroundColor: hexA(C.glow, 0.14),
+    width: 220,
+    height: 220,
+    top: 0,
+    left: 0,
   },
   doneCheckMount: {
     position: 'absolute',
