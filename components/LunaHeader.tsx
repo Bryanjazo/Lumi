@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, StyleSheet, Dimensions, Image } from 'react-native';
 import Svg, { Rect, G } from 'react-native-svg';
 import { colors } from '../constants/colors';
-import { lunaSource } from '../lib/luna-source';
+import { lunaSource, useLunaSkin } from '../lib/luna-source';
 import { useAmbientLunaMood } from '../lib/luna-mood';
 import { LunaState } from '../lib/gamification';
 import { usePetStore } from '../store/petStore';
@@ -114,6 +114,7 @@ export const LunaHeader = ({ state, height = 140 }: Props) => {
   // means the user hasn't shown up in a while.
   const ambient = useAmbientLunaMood();
   const mood = state === 'away' ? 'sleep' : ambient;
+  const lunaSkin = useLunaSkin();
 
   const screenWidth = Math.min(Dimensions.get('window').width, 480);
   const width = screenWidth;
@@ -243,7 +244,7 @@ export const LunaHeader = ({ state, height = 140 }: Props) => {
          the same baseline as the old SVG cat's feet — and its center
          is at catX*scale. */}
       <Image
-        source={lunaSource(mood)}
+        source={lunaSource(mood, lunaSkin)}
         style={{
           position: 'absolute',
           left: catX * scale - 32,

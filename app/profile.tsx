@@ -38,7 +38,7 @@ import { DayRibbon } from '../components/DayRibbon';
 
 import { fonts } from '../constants/fonts';
 import { skins } from '../constants/skins';
-import { lunaSource, type LunaMood } from '../lib/luna-source';
+import { lunaSource, useLunaSkin, type LunaMood } from '../lib/luna-source';
 import { skinPreview } from '../lib/skin-preview';
 import { useAmbientLunaMood } from '../lib/luna-mood';
 import {
@@ -406,6 +406,7 @@ const ModePreview = ({
 }: {
   mode: 'full' | 'minimal' | 'focused';
 }) => {
+  const lunaSkin = useLunaSkin();
   if (mode === 'full') {
     return (
       <View style={previewStyles.frame}>
@@ -423,7 +424,7 @@ const ModePreview = ({
         </View>
         {/* Luna on the floor */}
         <Image
-          source={lunaSource('idle')}
+          source={lunaSource('idle', lunaSkin)}
           style={previewStyles.fullLuna}
         />
         {/* Streak ember */}
@@ -449,7 +450,7 @@ const ModePreview = ({
           </View>
         </View>
         <Image
-          source={lunaSource('idle')}
+          source={lunaSource('idle', lunaSkin)}
           style={previewStyles.minLuna}
         />
       </View>

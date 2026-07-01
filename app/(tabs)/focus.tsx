@@ -54,7 +54,7 @@ import {
   selectRemainingSeconds,
   isLiveActivityAvailable,
 } from '../../lib/focusSession';
-import { lunaSource } from '../../lib/luna-source';
+import { lunaSource, useLunaSkin } from '../../lib/luna-source';
 
 // ═════════════════════════════════════════════════════════════════════
 // Palette (kept local so the file is self-contained)
@@ -747,6 +747,7 @@ function SessionStep({
   const resume = useFocusSession((s) => s.resume);
   const end = useFocusSession((s) => s.end);
   const clearLastCompleted = useFocusSession((s) => s.clearLastCompleted);
+  const lunaSkin = useLunaSkin();
 
   const isPaused = currentFocus?.pausedAt != null;
   const doneMode = currentFocus == null && lastCompleted != null;
@@ -812,7 +813,7 @@ function SessionStep({
         {!companion.isFocused && (
           <View style={styles.doneCatMount}>
             <Image
-              source={lunaSource('lick')}
+              source={lunaSource('lick', lunaSkin)}
               style={styles.doneCat}
               resizeMode="contain"
             />
@@ -885,7 +886,7 @@ function SessionStep({
       {!companion.isFocused && (
         <View style={styles.sessionCatMount}>
           <Image
-            source={lunaSource('lick')}
+            source={lunaSource('lick', lunaSkin)}
             style={styles.sessionCat}
             resizeMode="contain"
           />

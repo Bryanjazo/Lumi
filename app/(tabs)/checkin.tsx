@@ -157,13 +157,16 @@ const LunaMark = ({
 }: {
   size?: number;
   mood?: LunaMood;
-}) => (
-  <Image
-    source={lunaSource(mood)}
-    style={{ width: size, height: size }}
-    resizeMode="contain"
-  />
-);
+}) => {
+  const lunaSkin = useLunaSkin();
+  return (
+    <Image
+      source={lunaSource(mood, lunaSkin)}
+      style={{ width: size, height: size }}
+      resizeMode="contain"
+    />
+  );
+};
 
 // ═════════════════════════════════════════════════════════════════════
 // Move runner — deterministic pile operations.

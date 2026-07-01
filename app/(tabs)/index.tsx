@@ -45,7 +45,7 @@ import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
 import { timeColors as C } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { lunaSource } from '../../lib/luna-source';
+import { lunaSource, useLunaSkin } from '../../lib/luna-source';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
 import { useCompanionMode } from '../../lib/companion-mode';
 import { IMPORTANCE, Importance } from '../../constants/importance';
@@ -1099,6 +1099,7 @@ export default function Home() {
   // Ambient mood — reflects sleep window, overdue pile, streak.
   // The nook cat updates as the user's state changes.
   const ambientMood = useAmbientLunaMood();
+  const lunaSkin = useLunaSkin();
 
   // Focus session — the LumiFocusCard component owns the full
   // lifecycle (start / pause / resume / end) via useFocusSession
@@ -2550,7 +2551,7 @@ export default function Home() {
                    32×32 native asset rendered at 64×64 = clean 2×
                    for sharp pixels. */}
                 <Image
-                  source={lunaSource(nookMood)}
+                  source={lunaSource(nookMood, lunaSkin)}
                   style={{ width: 64, height: 64 }}
                   resizeMode="contain"
                   accessibilityLabel="Luna"
@@ -2614,7 +2615,7 @@ export default function Home() {
                rest). 96×96 = clean 3× scale of the 32×32 source. */}
             <View style={styles.doneLuna}>
               <Image
-                source={lunaSource(ambientMood)}
+                source={lunaSource(ambientMood, lunaSkin)}
                 style={{ width: 96, height: 96 }}
                 resizeMode="contain"
                 accessibilityLabel="Luna"

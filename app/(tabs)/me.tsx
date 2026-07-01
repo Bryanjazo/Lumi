@@ -27,7 +27,7 @@ import Svg, {
   Path,
 } from 'react-native-svg';
 import { fonts } from '../../constants/fonts';
-import { lunaSource, type LunaMood } from '../../lib/luna-source';
+import { lunaSource, useLunaSkin, type LunaMood } from '../../lib/luna-source';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
 import { useCompanionMode } from '../../lib/companion-mode';
 import {
@@ -134,6 +134,7 @@ const Room = ({
 }) => {
   const accent = useAccent();
   const lunaMood = useAmbientLunaMood();
+  const lunaSkin = useLunaSkin();
   const [, force] = useState(0);
   const S = useRef<RoomState & { joy: number }>({
     t: 0,
@@ -726,7 +727,7 @@ const Room = ({
          transitions seamless. */}
       {activeSprite === 'walk' || activeSprite === 'lick' ? (
         <Image
-          source={lunaSource(activeSprite)}
+          source={lunaSource(activeSprite, lunaSkin)}
           onError={() => {
             if (isWalking) setWalkAssetFailed(true);
           }}
@@ -742,7 +743,7 @@ const Room = ({
         />
       ) : (
         <Image
-          source={lunaSource(activeSprite)}
+          source={lunaSource(activeSprite, lunaSkin)}
           onError={() => {
             if (isWalking) setWalkAssetFailed(true);
           }}
