@@ -2896,82 +2896,58 @@ export default function Home() {
               onSubmitEditing={sendCapture}
               blurOnSubmit
             />
-            {capText.trim() ? (
-              <Pressable
-                onPress={sendCapture}
-                style={[
-                  styles.capturePillSubmit,
-                  { backgroundColor: accent.fg },
-                ]}
-                hitSlop={6}
-              >
-                <Text
+            {/* Mic + expand are ALWAYS visible. Mic is for
+               speak-instead-of-type; expand opens the full brain-
+               dump modal. Typed text submits via the keyboard's
+               Return key (wired above via onSubmitEditing) — no
+               separate ↑ button, since the user's mental model
+               here is "these two icons let me capture, the text
+               field is just a bonus". */}
+            <Pressable
+              onPress={handleMic}
+              hitSlop={10}
+              style={styles.capturePillMic}
+              accessibilityLabel="Voice capture"
+            >
+              {voice.state === 'transcribing' ? (
+                <Text style={styles.capturePillMicTranscribing}>…</Text>
+              ) : voice.state === 'recording' ? (
+                <View
                   style={[
-                    styles.capturePillSubmitGlyph,
-                    { color: C.void },
+                    styles.capturePillMicDot,
+                    { backgroundColor: accent.fg },
                   ]}
-                >
-                  ↑
-                </Text>
-              </Pressable>
-            ) : (
-              <>
-                {/* Bare inline mic — mockup uses a chromeless icon,
-                   not a bordered button. Uses the same handleMic
-                   flow the old inline capture used, so voice
-                   recording state (pulse dot / transcribing ellipsis)
-                   colors and behavior are consistent app-wide. */}
-                <Pressable
-                  onPress={handleMic}
-                  hitSlop={10}
-                  style={styles.capturePillMic}
-                  accessibilityLabel="Voice capture"
-                >
-                  {voice.state === 'transcribing' ? (
-                    <Text style={styles.capturePillMicTranscribing}>…</Text>
-                  ) : voice.state === 'recording' ? (
-                    <View
-                      style={[
-                        styles.capturePillMicDot,
-                        { backgroundColor: accent.fg },
-                      ]}
-                    />
-                  ) : (
-                    <MicIcon size={20} color={C.boneDim} />
-                  )}
-                </Pressable>
-                {/* Expand — rounded SQUARE with corners icon, ember
-                   bordered and tinted. Rounded square is intentional
-                   here (matches the mockup); the mic beside it is a
-                   bare icon so shape symmetry isn't required. */}
-                <Pressable
-                  onPress={() => {
-                    Haptics.selectionAsync();
-                    setCapOpen(true);
-                  }}
-                  style={[
-                    styles.capturePillExpand,
-                    {
-                      borderColor: hexA(accent.fg, 0.4),
-                      backgroundColor: hexA(accent.fg, 0.14),
-                    },
-                  ]}
-                  hitSlop={6}
-                  accessibilityLabel="Open full brain-dump"
-                >
-                  <Svg width={18} height={18} viewBox="0 0 24 24">
-                    <Path
-                      d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"
-                      stroke={accent.fg}
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      fill="none"
-                    />
-                  </Svg>
-                </Pressable>
-              </>
-            )}
+                />
+              ) : (
+                <MicIcon size={20} color={C.boneDim} />
+              )}
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setCapOpen(true);
+              }}
+              style={[
+                styles.capturePillExpand,
+                {
+                  borderColor: hexA(accent.fg, 0.4),
+                  backgroundColor: hexA(accent.fg, 0.14),
+                },
+              ]}
+              hitSlop={6}
+              accessibilityLabel="Open full brain-dump"
+            >
+              <Svg width={18} height={18} viewBox="0 0 24 24">
+                <Path
+                  d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"
+                  stroke={accent.fg}
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fill="none"
+                />
+              </Svg>
+            </Pressable>
           </View>
         </View>
       )}
