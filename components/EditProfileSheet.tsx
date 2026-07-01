@@ -93,9 +93,19 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
   }, [visible, currentName, currentAvatar]);
 
   const trimmed = draftName.trim();
+  const nameChanged = trimmed !== currentName.trim();
+  const avatarChanged = draftAvatar !== currentAvatar;
   const nameValid = trimmed.length >= 1 && trimmed.length <= NAME_MAX;
-  const changed =
-    (trimmed && trimmed !== currentName) || draftAvatar !== currentAvatar;
+  // Save is enabled when EITHER an avatar swap is pending OR a
+  // name change is pending AND that name is valid. Empty name with
+  // only avatar changing must NOT block — user shouldn't be forced
+  // to type a name they already have (or don't want to set) just to
+  // pick a different cat. Previous logic gated on `nameValid` for
+  // every save, which is why the button read as broken from the
+  // avatar picker.
+  const canSave =
+    avatarChanged || (nameChanged && nameValid);
+  const changed = nameChanged || avatarChanged;
 
   const options: AvatarOption[] = [
     {
@@ -119,10 +129,13 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
   ];
 
   const save = () => {
-    if (!nameValid || !changed) return;
+    if (!canSave) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (trimmed !== currentName) setName(trimmed);
-    if (draftAvatar !== currentAvatar) setAvatar(draftAvatar);
+    // Only push a name update when the user actually changed it AND
+    // the new value is valid — an empty draft with a valid stored
+    // name shouldn't wipe the stored name.
+    if (nameChanged && nameValid) setName(trimmed);
+    if (avatarChanged) setAvatar(draftAvatar);
     onClose();
   };
 
@@ -147,14 +160,14 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
               <Text style={styles.title}>Edit profile</Text>
               <Pressable
                 onPress={save}
-                disabled={!nameValid || !changed}
+                disabled={!canSave}
                 hitSlop={12}
               >
                 <Text
                   style={[
                     styles.action,
                     {
-                      color: nameValid && changed ? accent.fg : C.mute,
+                      color: canSave ? accent.fg : C.mute,
                       fontFamily: fonts.interSemi,
                     },
                   ]}
