@@ -114,26 +114,19 @@ struct LumiMoodWidget: Widget {
 // 2 · LIVE ACTIVITY — per-task focus session for the Dynamic Island
 // ═════════════════════════════════════════════════════════════════════
 
-// ── Animated Luna sprite (licking cycle) ─────────────────────────────
+// ── Static Luna sprite ─────────────────────────────────────────────
 //
-// The Focus session cat LICKS in the Dynamic Island — same body-double
-// behavior the JS side uses on Home / Me / Focus. Since WidgetKit's
-// Image can't render animated GIFs, we extracted 4 PNG frames from
-// luna-lick.gif into the asset catalog (luna-lick-1..4) and cycle
-// them here via `TimelineView(.periodic)` — the ONE timeline
-// schedule iOS still respects inside a Live Activity. (`.animation`
-// is blocked; `.repeatForever` on transforms is silently optimized
-// away; `.periodic` still fires the closure on the interval we ask
-// for, subject to iOS throttling.)
+// Simplified per user — iOS Live Activity animation constraints are
+// severe enough (TimelineView(.periodic) gets throttled to render-once,
+// state-driven pushes burn ActivityKit budget) that a still,
+// well-composed sprite reads better than a chunky 1fps animation. The
+// cat "rests" through the focus session; motion lives in the app.
 //
-// Refresh interval is 0.35s → full 4-frame cycle every ~1.4s. If
-// iOS throttles us further under load, the cat still cycles just
-// more slowly — never fully static.
-//
-// The `mood` param is unused for the sprite name (we always show
-// the licking cat during a focus session) but kept in the signature
-// so callers don't need to know the widget's internal choice; if we
-// later add per-mood behavior we won't have to touch every call site.
+// Fixed to the sleeping sprite regardless of the mood param — this is
+// the Live Activity's "curled up while you focus" pose. mood + elapsed
+// kept in the signature so callers don't need to know the widget's
+// internal choice; future per-mood behavior can hook in without
+// touching every render site.
 @available(iOS 16.1, *)
 struct LunaSpriteView: View {
     let mood: String
@@ -141,21 +134,10 @@ struct LunaSpriteView: View {
     let elapsedSeconds: Int
 
     var body: some View {
-        // Frame driven directly by state.elapsedSeconds so every JS
-        // tick (now 1 second, see lib/focusSession.ts TICK_MS) the
-        // widget re-renders with the next sprite. iOS runs
-        // ContentState-driven re-renders reliably; the earlier
-        // TimelineView(.periodic) approach worked once at first
-        // render and then got throttled to "never" by the Live
-        // Activity budget.
-        //
-        // 20 frames × 1s ticks = 20-second full cycle. Not as
-        // buttery as the source GIF but visibly animating instead
-        // of frozen; matches the constraint iOS actually enforces.
-        let frame = (elapsedSeconds % 20) + 1  // 1...20
-        Image("luna-lick-\(frame)")
+        Image("luna-sleep")
             .resizable()
             .interpolation(.none)
+            .aspectRatio(contentMode: .fit)
             .frame(width: size, height: size)
     }
 }
@@ -238,9 +220,12 @@ struct LumiTaskLiveActivity: Widget {
                 }
             } compactLeading: {
                 // ── COMPACT LEADING (left of camera) ──
+                // 24pt is the practical max for a compact-leading
+                // icon before iOS clips it. Bumped from 20 → 24 per
+                // user ("make it the biggest it can be").
                 LunaSpriteView(
                     mood: context.state.mood,
-                    size: 20,
+                    size: 24,
                     elapsedSeconds: context.state.elapsedSeconds
                 )
             } compactTrailing: {
@@ -260,9 +245,11 @@ struct LumiTaskLiveActivity: Widget {
                 .monospacedDigit()
             } minimal: {
                 // ── MINIMAL (multiple activities competing) ──
+                // Minimal slot is smaller than compact leading —
+                // 22pt is the practical max here.
                 LunaSpriteView(
                     mood: context.state.mood,
-                    size: 18,
+                    size: 22,
                     elapsedSeconds: context.state.elapsedSeconds
                 )
             }

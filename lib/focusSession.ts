@@ -19,17 +19,14 @@ import {
   isLiveActivityAvailable,
 } from 'lumi-live-activity';
 
-// 1-second cadence so the widget's LunaSpriteView can re-render on
-// each tick — the cat cycles frames off state.elapsedSeconds, and
-// iOS won't run any TimelineView animation faster than the state
-// updates it receives. Apple's guidance suggests slower cadences
-// (5-10s) for battery, but a focus session is short-lived (~25-90
-// min) and the user's phone is idle anyway, so the extra push
-// budget is well-spent on the actual reason they're looking at the
-// Dynamic Island. If iOS starts throttling us on long sessions the
-// countdown gracefully degrades — Text(timerInterval:) is
-// self-updating and unaffected.
-const TICK_MS = 1_000;
+// 5-second cadence — matches Apple's recommended ActivityKit update
+// budget. The Dynamic Island cat is now a static image (no per-tick
+// frame cycling), and the countdown text uses Text(timerInterval:)
+// which iOS auto-refreshes every second natively, so we don't need
+// aggressive JS-side pushes anymore. Reverted from 1s (which was
+// only needed to drive the sprite animation before that was
+// simplified to a still).
+const TICK_MS = 5_000;
 
 export interface FocusSession {
   /** questStore id this session is tied to. */
