@@ -3567,10 +3567,12 @@ const makeStyles = (accent: Accent) =>
       position: 'absolute',
       left: 14,
       right: 14,
-      // +10 above the "just above nav" spot — user landed on this
-      // after trying +30 (too high) and -12 (too low). Sits with a
-      // small breathing gap between pill bottom and nav top.
-      bottom: FLOATING_NAV_CLEARANCE - 2,
+      // Sits FLOATING_NAV_CLEARANCE + 4 above the screen bottom —
+      // just clear of the nav's top edge (nav occupies the bottom
+      // FLOATING_NAV_CLEARANCE zone). Gives a ~4px visible gap
+      // between pill bottom and nav top so the two surfaces read
+      // as stacked, not touching.
+      bottom: FLOATING_NAV_CLEARANCE + 4,
       zIndex: 30,
     },
     capturePillInner: {
