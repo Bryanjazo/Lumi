@@ -301,15 +301,19 @@ export default function LumiFloatingNav({
                   style={{
                     // Tight box hugging the icon (~23px) with even
                     // padding on all sides. Rounded square (not full
-                    // pill) matches the mockup outline shape.
+                    // pill) matches the mockup outline shape. Fill
+                    // bumped from 0.08 → 0.16 so the ember tint
+                    // actually reads as a warm pillow behind the
+                    // icon; border made a hair softer so it doesn't
+                    // fight the fill for attention.
                     width: 46,
                     height: 42,
                     borderRadius: 12,
-                    backgroundColor: hexA(C.ember, 0.08),
+                    backgroundColor: hexA(C.ember, 0.16),
                     borderWidth: 1,
-                    borderColor: hexA(C.ember, 0.55),
+                    borderColor: hexA(C.ember, 0.5),
                     shadowColor: C.ember,
-                    shadowOpacity: 0.28,
+                    shadowOpacity: 0.32,
                     shadowRadius: 14,
                     shadowOffset: { width: 0, height: 4 },
                   }}
