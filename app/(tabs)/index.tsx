@@ -1204,6 +1204,14 @@ export default function Home() {
   const [focusPickerOpen, setFocusPickerOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
   const [capText, setCapText] = useState('');
+  // Tracks the pill TextInput's rendered height so we can clamp
+  // growth AND actually enable internal scrolling once the user has
+  // typed past the cap. iOS multiline TextInput needs an explicit
+  // `height` (not just maxHeight) for scrollEnabled to fire — with
+  // maxHeight alone the input just grows unbounded past the limit.
+  const [capPillHeight, setCapPillHeight] = useState(36);
+  const CAP_PILL_MIN = 36;
+  const CAP_PILL_MAX = 130;
   const [moreOpen, setMoreOpen] = useState(false);
   // Someday → real-date sheet target. When set, the MoveBackToDateSheet
   // opens for this task.
@@ -2891,15 +2899,28 @@ export default function Home() {
               onChangeText={setCapText}
               placeholder="Dump a thought…"
               placeholderTextColor={C.mute}
-              style={styles.capturePillInput}
+              style={[
+                styles.capturePillInput,
+                { height: capPillHeight },
+              ]}
               multiline
               scrollEnabled
               returnKeyType="send"
-              // Multiline inputs on iOS treat Return as newline by
-              // default; but blurOnSubmit + a manual onSubmitEditing
-              // still catches the hardware send action when the user
-              // has one attached. Long dumps expand the pill up to
-              // ~5 lines then scroll internally.
+              // Track intrinsic content height and clamp to
+              // [MIN, MAX]. Once capped at MAX, scrollEnabled
+              // takes over so the user can scroll the overflow
+              // — without this, iOS lets the input grow past the
+              // cap unbounded (no scroll ever fires).
+              onContentSizeChange={(e) => {
+                const h = e.nativeEvent.contentSize.height;
+                const next = Math.max(
+                  CAP_PILL_MIN,
+                  Math.min(CAP_PILL_MAX, h),
+                );
+                if (Math.abs(next - capPillHeight) > 0.5) {
+                  setCapPillHeight(next);
+                }
+              }}
               onSubmitEditing={sendCapture}
               blurOnSubmit={false}
             />
@@ -3618,16 +3639,11 @@ const makeStyles = (accent: Accent) =>
       color: C.bone,
       letterSpacing: -0.1,
       padding: 0,
-      // Multi-line growth clamp — minHeight matches the 36-tall
-      // icon buttons so a single-line pill isn't taller than
-      // needed; maxHeight caps the growth at ~5 lines before the
-      // input starts scrolling internally so the pill doesn't
-      // eat the whole screen on a long dump.
-      minHeight: 36,
-      maxHeight: 130,
-      // Vertical padding centers the text within the minHeight
-      // when it's a single line, and gives the multi-line stack
-      // breathing room from the top/bottom edges.
+      // Height is set inline via capPillHeight state (tracked from
+      // onContentSizeChange). MIN/MAX come from the CAP_PILL_MIN /
+      // CAP_PILL_MAX constants — using explicit height instead of
+      // maxHeight is what makes scrollEnabled actually work on
+      // iOS multiline inputs.
       paddingTop: 8,
       paddingBottom: 8,
       lineHeight: 20,
