@@ -3558,13 +3558,12 @@ const makeStyles = (accent: Accent) =>
       position: 'absolute',
       left: 14,
       right: 14,
-      // Sit CLEARLY ABOVE the nav's clearance zone (which is
-      // FLOATING_NAV_CLEARANCE tall from the bottom). Anything less
-      // than that puts the pill INSIDE the nav's real estate and
-      // it reads as overlapping / getting cut off by the frosted
-      // glass. +8 gives a small breathing gap between pill bottom
-      // and nav top.
-      bottom: FLOATING_NAV_CLEARANCE + 8,
+      // Halfway between "overlapping the nav" (bottom ~= 88, too
+      // low) and "hovering way above" (bottom ~= 128, too high per
+      // user). This spot lets the pill sit just above the nav's
+      // top edge with a subtle gap — the nav's own gradient/glass
+      // still shows through underneath.
+      bottom: FLOATING_NAV_CLEARANCE - 12,
       zIndex: 30,
     },
     capturePillInner: {
