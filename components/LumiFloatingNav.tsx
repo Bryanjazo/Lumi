@@ -285,15 +285,13 @@ export default function LumiFloatingNav({
                     width: slotWidth,
                     height: '100%',
                     transform: [{ translateX }],
-                    // Center a small fixed-size box horizontally in
-                    // the slot, pin it to the top so it wraps only
-                    // the icon (the label sits below in the cell,
-                    // outside the outline). Matches the mockup —
-                    // outline reads as "around the icon", not "the
-                    // whole cell".
                     alignItems: 'center',
                     justifyContent: 'flex-start',
-                    paddingTop: 4,
+                    // paddingTop bumped 4 → 9 in sync with the
+                    // cell's own paddingTop bump below — keeps the
+                    // outline centered on the icon after both shift
+                    // downward inside the cell.
+                    paddingTop: 9,
                   },
                 ]}
               >
@@ -432,11 +430,14 @@ const styles = StyleSheet.create({
   cell: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 9,
-    // Icon → label spacing bumped again to 14 to keep the label
-    // clear of the box now that the box is square (40×40 instead
-    // of 44×34). Box occupies y≈4 to y≈44; label starts at
-    // y ≈ 9 + 23 + 14 = 46, leaving a ~2px visible gap.
+    // Asymmetric vertical padding: content sinks toward the
+    // bottom of the cell so the outline + icon aren't riding
+    // against the top edge with a big gap of empty space below
+    // the label. Top → bottom padding delta was 0 (paddingVertical:
+    // 9); shifting content down ~5px so the box sits closer to
+    // the vertical center visually.
+    paddingTop: 14,
+    paddingBottom: 4,
     gap: 14,
   },
   label: {
