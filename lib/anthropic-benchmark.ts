@@ -104,7 +104,9 @@ export interface UnderstandCase {
     | 'identity'
     | 'edge'
     | 'duration'
-    | 'sanity';
+    | 'sanity'
+    | 'chatter'
+    | 'punctuation';
   raw: string;
   expect: UnderstandExpect;
   notes?: string;
@@ -524,6 +526,151 @@ export const UNDERSTAND_CASES: UnderstandCase[] = [
     },
     notes:
       'All-caps is emphasis, not urgency. A milk run is still a low-importance whim.',
+  },
+
+  // ── Bare comma-list (the regression that hit prod) ───────────────
+  //
+  // splitFragments in lib/capture.ts only splits on and / then / . / ;
+  // — plain comma-separated lists collapse to 1-2 fragments there.
+  // The LLM is the source of truth for splitting; these cases pin
+  // that behavior so a future prompt regression can't hide.
+  {
+    name: 'bare-comma-list-six-tasks',
+    category: 'splitting',
+    raw: "finish the pitch deck this morning, reply to Sam about the timeline by noon, book the dentist, edit this week's podcast at 4pm, send the client invoice by 5pm, tidy the desk",
+    expect: {
+      taskCountMin: 5,
+      taskCountMax: 6,
+      tasks: [
+        { titleIncludes: ['pitch', 'deck'] },
+        { titleIncludes: ['sam'] },
+        { titleIncludes: ['dentist'] },
+        { titleIncludes: ['podcast'] },
+        { titleIncludes: ['invoice'] },
+        { titleIncludes: ['desk'] },
+      ],
+    },
+    notes:
+      'The exact regression — 6 comma-separated actions must NOT collapse to 1-2 tasks.',
+  },
+  {
+    name: 'bare-comma-list-chores',
+    category: 'splitting',
+    raw: 'call mom, pick up prescription, gas, dishes',
+    expect: {
+      taskCountMin: 3,
+      taskCountMax: 4,
+      tasks: [
+        { titleIncludes: ['mom'] },
+        { titleIncludes: ['prescription'] },
+      ],
+    },
+    notes:
+      'Short comma-list including single-word chore fragments ("gas", "dishes"). All should surface as tasks.',
+  },
+
+  // ── Comma-as-punctuation (the OPPOSITE — comma must NOT split) ────
+  {
+    name: 'comma-appositive-manager',
+    category: 'punctuation',
+    raw: 'Email Bob, the manager, about the deadline',
+    expect: {
+      taskCount: 1,
+      tasks: [
+        {
+          titleIncludes: ['bob'],
+          titleExcludes: ['manager', 'deadline'],
+          noteRequired: true,
+        },
+      ],
+    },
+    notes:
+      'Commas set off an appositive ("the manager") and a topic — the whole thing is ONE task.',
+  },
+  {
+    name: 'comma-appositive-mentor',
+    category: 'punctuation',
+    raw: 'talk to David, my mentor, tomorrow',
+    expect: {
+      taskCount: 1,
+      tasks: [
+        {
+          titleIncludes: ['david'],
+          titleExcludes: ['mentor'],
+          noteRequired: true,
+          noteIncludes: ['mentor'],
+        },
+      ],
+    },
+  },
+  {
+    name: 'comma-descriptor-clause',
+    category: 'punctuation',
+    raw: 'send Sarah the file, the one from last week',
+    expect: {
+      taskCount: 1,
+      tasks: [
+        {
+          titleIncludes: ['sarah', 'file'],
+          noteRequired: true,
+          noteIncludes: ['last week'],
+        },
+      ],
+    },
+  },
+
+  // ── Casual chatter + real tasks (venting alongside actions) ──────
+  {
+    name: 'chatter-single-task-with-time',
+    category: 'chatter',
+    raw:
+      'man today sucks, gotta finish that report by 5pm otherwise the boss will kill me',
+    expect: {
+      taskCount: 1,
+      tasks: [
+        {
+          titleIncludes: ['report'],
+          titleExcludes: ['boss', 'sucks'],
+          timeRequired: true,
+          importance: 'high',
+        },
+      ],
+    },
+    notes:
+      'Pure venting ("man today sucks", "the boss will kill me") stripped; single real action ("finish report by 5pm") extracted.',
+  },
+  {
+    name: 'chatter-ugh-still-need-to',
+    category: 'chatter',
+    raw: 'ugh so tired but I still need to send the invoice',
+    expect: {
+      taskCount: 1,
+      tasks: [
+        {
+          titleIncludes: ['invoice'],
+          titleExcludes: ['tired', 'ugh', 'need', 'i '],
+        },
+      ],
+    },
+  },
+  {
+    name: 'chatter-stress-two-tasks',
+    category: 'chatter',
+    raw:
+      "I'm so stressed about the presentation, need to prep slides, also groceries",
+    expect: {
+      taskCountMin: 2,
+      taskCountMax: 2,
+      tasks: [
+        {
+          titleIncludes: ['slides'],
+          importance: 'high',
+        },
+        { titleIncludes: ['grocer'] },
+      ],
+    },
+    notes:
+      'Stress framing ("so stressed about the presentation") signals HIGH importance on the associated task. Groceries stays medium.',
   },
 ];
 
