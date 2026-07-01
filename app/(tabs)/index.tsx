@@ -84,6 +84,7 @@ import { HabitScheduleSheet } from '../../components/HabitScheduleSheet';
 import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
 import { EditQuestSheet } from '../../components/EditQuestSheet';
 import { MicIcon } from '../../components/MicIcon';
+import { MicButton } from '../../components/MicButton';
 import {
   useCorrectionsStore,
   summarizeCorrections,
@@ -2073,6 +2074,60 @@ export default function Home() {
   // Tap to start, tap again to stop + transcribe. The transcribed text
   // flows straight through the smart-capture pipeline so the user's
   // just speaking their tasks into existence.
+
+  /**
+   * Post-transcribe processing — shared by the two mic entry points:
+   * the standalone MicButton on the floating capture pill AND the old
+   * inline `handleMic` path that lives inside the expanded capture.
+   * Same behavior in both places: transcript → parseSmartCapture →
+   * previewTasks (user reviews before commit). Text is stashed in
+   * capText briefly so any UI that reads it while the parse is
+   * happening still shows what Lumi heard.
+   */
+  const handleTranscribed = (text: string) => {
+    const final = text.trim();
+    if (!final) return;
+    setCapText(final);
+    const ctx: CaptureContext = {
+      sharpWindow,
+      foggyWindow,
+      peakStart: digest.curve.peakStart,
+      peakEnd: digest.curve.peakEnd,
+      slumpStart: digest.curve.slumpStart,
+      slumpEnd: digest.curve.slumpEnd,
+      effectiveWindows,
+      now,
+      nowMin: now.getHours() * 60 + now.getMinutes(),
+      wakeMin: anchors.wake,
+      sleepMin: anchors.sleep,
+    };
+    const tasks = parseSmartCapture(final, ctx);
+    if (tasks.length === 0) {
+      // Deterministic parser couldn't extract anything — surface the
+      // transcript in the expanded capture so the user can edit and
+      // resubmit. Beats swallowing the voice input silently.
+      setCapOpen(true);
+      return;
+    }
+    setPreviewTasks(tasks);
+    setEditingIdx(null);
+    setCapText('');
+    setCapOpen(false);
+    Haptics.selectionAsync();
+    // Same LLM upgrade the text path does — kicks a background call
+    // so previewed tasks pick up structured comprehension when it
+    // returns.
+    if (isAnthropicConfigured) {
+      setAiPending(true);
+      const timeout = new Promise<void>((resolve) =>
+        setTimeout(resolve, 5000),
+      );
+      void Promise.race([upgradeWithUnderstand(final), timeout]).finally(() =>
+        setAiPending(false),
+      );
+    }
+  };
+
   const handleMic = async () => {
     if (voice.state === 'idle') {
       if (!capOpen) setCapOpen(true);
@@ -2531,42 +2586,15 @@ export default function Home() {
           </View>
         ) : null}
 
-        {/* ── Capture — one calm line ── */}
-        {!capOpen ? (
-          <View ref={captureRef as never} style={styles.captureClosed}>
-            <Pressable
-              onPress={() => setCapOpen(true)}
-              style={styles.captureClosedText}
-              hitSlop={4}
-            >
-              <Text style={[styles.captureSpark, { color: accent.fg }]}>
-                ✦
-              </Text>
-              <Text style={styles.capturePlaceholder}>
-                Dump a thought… I&apos;ll sort it later
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={handleMic}
-              hitSlop={10}
-              style={[
-                styles.captureMicBtn,
-                voice.state === 'recording' && {
-                  backgroundColor: accent.fg,
-                },
-              ]}
-            >
-              {voice.state === 'transcribing' ? (
-                <Text style={styles.captureMic}>…</Text>
-              ) : (
-                <MicIcon
-                  size={16}
-                  color={voice.state === 'recording' ? C.void : C.mute}
-                />
-              )}
-            </Pressable>
-          </View>
-        ) : (
+        {/* ── Capture — expanded state only ──
+            The one-line closed capture that used to live inline was
+            promoted to a floating pill anchored above the nav (see
+            HomeCapturePill render below). What stays inline is the
+            expanded brain-dump surface — the tall textarea + Tuck /
+            Cancel affordance — which the user reaches by tapping the
+            pill's expand icon OR by starting a voice dump that
+            couldn't be parsed deterministically. */}
+        {capOpen && (
           <View
             style={[styles.captureOpen, { borderColor: accent.fg }]}
           >
@@ -2670,6 +2698,7 @@ export default function Home() {
             </View>
           </View>
         )}
+
 
         {/* ── Lumi suggests — preview after brain-dump. Sequential
             LumiSuggestCard rendering: shows the first task with a
@@ -2938,6 +2967,97 @@ export default function Home() {
         <View style={{ height: 24 }} />
       </ScrollView>
 
+      {/* ── Floating capture pill ──────────────────────────────────
+          Anchored above the LumiFloatingNav, always visible on Home
+          (hides only while the expanded brain-dump is showing to
+          avoid stacking two capture surfaces).
+
+          Composition:
+            ✦ sparkle       — Lumi's voice, matches the hero eyebrow
+            editable input  — one-line quick capture; Return submits
+            MicButton       — real component (not the raw MicIcon);
+                              onTranscribed → same LLM-parse pipeline
+            expand icon     — SVG "corners outward" glyph; opens the
+                              inline expanded capture for messy dumps
+
+          When capText has content: the mic + expand collapse into a
+          single ember-filled ↑ submit button that runs sendCapture,
+          matching the mockup's quick-fire capture pattern. */}
+      {!capOpen && !previewTasks && (
+        <View style={styles.capturePill} pointerEvents="box-none">
+          <View style={styles.capturePillInner}>
+            <Text
+              style={[styles.capturePillSpark, { color: accent.fg }]}
+            >
+              ✦
+            </Text>
+            <TextInput
+              value={capText}
+              onChangeText={setCapText}
+              placeholder="Dump a thought…"
+              placeholderTextColor={C.mute}
+              style={styles.capturePillInput}
+              returnKeyType="send"
+              onSubmitEditing={sendCapture}
+              blurOnSubmit
+            />
+            {capText.trim() ? (
+              <Pressable
+                onPress={sendCapture}
+                style={[
+                  styles.capturePillSubmit,
+                  { backgroundColor: accent.fg },
+                ]}
+                hitSlop={6}
+              >
+                <Text
+                  style={[
+                    styles.capturePillSubmitGlyph,
+                    { color: C.void },
+                  ]}
+                >
+                  ↑
+                </Text>
+              </Pressable>
+            ) : (
+              <>
+                <MicButton
+                  size="small"
+                  showError={false}
+                  onTranscribed={handleTranscribed}
+                />
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setCapOpen(true);
+                  }}
+                  style={[
+                    styles.capturePillExpand,
+                    {
+                      borderColor: hexA(accent.fg, 0.4),
+                      backgroundColor: hexA(accent.fg, 0.14),
+                    },
+                  ]}
+                  hitSlop={6}
+                  accessibilityLabel="Open full brain-dump"
+                >
+                  <Svg width={16} height={16} viewBox="0 0 24 24">
+                    <Path
+                      d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"
+                      stroke={accent.fg}
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      fill="none"
+                    />
+                  </Svg>
+                </Pressable>
+              </>
+            )}
+          </View>
+        </View>
+      )}
+
       {/* "Schedule habit" sheet — opens when the user taps the
           "Lumi noticed" suggestion. Pre-filled with Lumi's guess as
           the starting point; the user adjusts cadence/day/time and
@@ -3042,10 +3162,12 @@ const makeStyles = (accent: Accent) =>
     scroll: {
       paddingHorizontal: 22,
       paddingTop: 26,
-      // Clearance for the floating glass nav so the last card
-      // (typically the brain-dump quick capture or empty-state
-      // suggestion) isn't hidden under the pill.
-      paddingBottom: FLOATING_NAV_CLEARANCE,
+      // Clearance for the floating glass nav + the always-visible
+      // capture pill that sits on top of it. Nav (~120) + pill
+      // (~52 tall, anchored ~32 above the nav's clearance line)
+      // together own the bottom ~170px, so the last card doesn't
+      // get eaten by either surface.
+      paddingBottom: FLOATING_NAV_CLEARANCE + 68,
     },
 
     // ── Toast ──
@@ -3484,6 +3606,76 @@ const makeStyles = (accent: Accent) =>
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: 'transparent',
+    },
+
+    // ── Floating capture pill ──
+    // Anchored above the floating nav via FLOATING_NAV_CLEARANCE.
+    // pointerEvents on the outer wrapper is 'box-none' so taps that
+    // don't hit the pill itself pass through to whatever's behind
+    // (nav, scroll content). The inner styled row is what actually
+    // catches touches.
+    capturePill: {
+      position: 'absolute',
+      left: 14,
+      right: 14,
+      // Sit just above the nav pill with a small breathing gap.
+      bottom: FLOATING_NAV_CLEARANCE - 32,
+      zIndex: 30,
+    },
+    capturePillInner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingLeft: 15,
+      paddingRight: 8,
+      paddingVertical: 8,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: hexA(C.bone, 0.1),
+      backgroundColor: hexA('#241C17', 0.86),
+      // Match the nav's frosted-glass shadow so the two surfaces
+      // feel like one floating dock.
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 12 },
+      shadowRadius: 24,
+      shadowOpacity: 0.5,
+      elevation: 8,
+    },
+    capturePillSpark: {
+      fontFamily: fonts.inter,
+      fontSize: 15,
+      flexShrink: 0,
+    },
+    capturePillInput: {
+      flex: 1,
+      minWidth: 0,
+      fontFamily: fonts.inter,
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.1,
+      padding: 0,
+    },
+    capturePillSubmit: {
+      width: 36,
+      height: 36,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    capturePillSubmitGlyph: {
+      fontFamily: fonts.interSemi,
+      fontSize: 18,
+      lineHeight: 20,
+    },
+    capturePillExpand: {
+      width: 36,
+      height: 36,
+      borderRadius: 12,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
     },
 
     // ── Guided follow-up ──
