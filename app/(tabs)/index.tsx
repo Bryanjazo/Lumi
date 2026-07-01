@@ -1249,6 +1249,13 @@ export default function Home() {
   // indicator on each task so the user doesn't fixate on a
   // placeholder date/window that's about to change.
   const [aiPending, setAiPending] = useState(false);
+  // Raw text being sorted by the LLM. When non-null, the sorting
+  // card renders above the (still-null) preview. Cleared when the
+  // LLM returns (or the 5s timeout fires and we fall back to the
+  // deterministic result). Point is to NEVER show the wrong
+  // deterministic preview and then re-render into the correct LLM
+  // one — one clean sorting → done transition instead.
+  const [sortingRaw, setSortingRaw] = useState<string | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [editingDate, setEditingDate] = useState<'today' | 'tomorrow'>('today');
@@ -1590,6 +1597,88 @@ export default function Home() {
    * preview tasks in place using the math layer for placement.
    * No-op on any failure — deterministic preview stays.
    */
+  /**
+   * Run the LLM understand pass for a capture. Returns the LLM's
+   * result (or null on timeout / error). Callers use this to build
+   * the previewTasks list AUTHORITATIVELY from the LLM's output
+   * instead of showing the deterministic parse first and rebuilding
+   * later (which caused a visible wrong→right re-render flash).
+   */
+  const runLlmUnderstand = async (
+    rawText: string,
+  ): Promise<UnderstoodTask[] | null> => {
+    const todayISO = todayKey();
+    const dow = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
+      now.getDay()
+    ];
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const fmtAnchor = (m: number) => {
+      const h = Math.floor(m / 60);
+      const mn = m % 60;
+      return `${String(h).padStart(2, '0')}:${String(mn).padStart(2, '0')}`;
+    };
+    const understandCtx: UnderstandContext = {
+      nowLabel: `${dow}, ${todayISO} ${hh}:${mm}`,
+      todayISO,
+      sharpWindow,
+      foggyWindow,
+      peakRange:
+        digest.curve.peakStart != null && digest.curve.peakEnd != null
+          ? `${fmtAnchor(digest.curve.peakStart)}–${fmtAnchor(digest.curve.peakEnd)}`
+          : null,
+      slumpRange:
+        digest.curve.slumpStart != null && digest.curve.slumpEnd != null
+          ? `${fmtAnchor(digest.curve.slumpStart)}–${fmtAnchor(digest.curve.slumpEnd)}`
+          : null,
+      curveTrusted: quests.filter((q) => q.completed).length >= 14,
+      anchors: {
+        wake: fmtAnchor(anchors.wake),
+        breakfast: fmtAnchor(anchors.breakfast),
+        lunch: fmtAnchor(anchors.lunch),
+        dinner: fmtAnchor(anchors.dinner),
+        sleep: fmtAnchor(anchors.sleep),
+      },
+      struggles: struggles.slice(0, 3),
+      recentCorrections: summarizeCorrections(recentCorrections(6)),
+      userName: userName.trim() || undefined,
+    };
+    // Race the LLM against a 5s timeout so a slow / hung request
+    // doesn't leave the sorting card up forever.
+    const llm = llmUnderstand(rawText, understandCtx).then((r) => r ?? null);
+    const timeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), 5000),
+    );
+    const result = await Promise.race([llm, timeout]);
+    return result?.tasks ?? null;
+  };
+
+  /**
+   * Build a SmartTask[] from the LLM's understood tasks. Reuses each
+   * matching deterministic slot as the base (preserves timeOptions /
+   * raw / needsFollowup) and stubs when the LLM found more.
+   */
+  const smartTasksFromLlm = (
+    llmTasks: UnderstoodTask[],
+    detTasks: SmartTask[],
+  ): SmartTask[] => {
+    const stub = (t: UnderstoodTask): SmartTask => ({
+      title: t.title,
+      importance: 'medium',
+      energyDemand: 'medium',
+      timeMode: 'windowed',
+      at: null,
+      date: null,
+      window: 'midday',
+      recur: null,
+      raw: t.title,
+      needsFollowup: false,
+    });
+    return llmTasks.map((llmTask, i) =>
+      patchWithUnderstood(detTasks[i] ?? stub(llmTask), llmTask),
+    );
+  };
+
   const upgradeWithUnderstand = async (rawText: string): Promise<void> => {
     const todayISO = todayKey();
     const dow = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
@@ -1813,36 +1902,39 @@ export default function Home() {
       sleepMin: anchors.sleep,
     };
 
-    const tasks = parseSmartCapture(text, ctx);
-    if (tasks.length === 0) return;
+    const detTasks = parseSmartCapture(text, ctx);
+    if (detTasks.length === 0) return;
 
-    // Preview-then-confirm — surface Lumi's best guess instead of
-    // auto-committing. User approves with one tap, or tweaks
-    // title/date/window inline. Cancel discards.
-    setPreviewTasks(tasks);
     setEditingIdx(null);
     setCapText('');
     setCapOpen(false);
-
-    // Background LLM upgrade — ONE structured comprehension call.
-    // While in flight, the previewed tasks show a "Lumi is reading…"
-    // indicator INSTEAD of their (possibly wrong) deterministic
-    // date/window meta — so the user never reads "tomorrow" only
-    // to watch it switch to "Aug 1" two seconds later.
-    if (isAnthropicConfigured && tasks.length > 0) {
-      setAiPending(true);
-      // Hard timeout — if the LLM doesn't respond within 5s, settle
-      // back to the deterministic preview rather than leaving the
-      // Accept button disabled and the title spinning forever.
-      // Whichever resolves first wins; .finally fires either way.
-      const timeout = new Promise<void>((resolve) =>
-        setTimeout(resolve, 5000),
-      );
-      void Promise.race([upgradeWithUnderstand(text), timeout]).finally(() =>
-        setAiPending(false),
-      );
-    }
     Haptics.selectionAsync();
+
+    if (isAnthropicConfigured) {
+      // Sorting flow — don't show the deterministic preview at all.
+      // sortingRaw drives the "Lumi is sorting…" card up top; we
+      // only set previewTasks once the LLM has returned (or the
+      // 5s timeout forces a fallback). This eliminates the wrong→
+      // right re-render flash — the user sees "sorting" then the
+      // correct "1 of N" list, never the deterministic 1-task guess
+      // for a comma dump.
+      setSortingRaw(text);
+      setAiPending(true);
+      void runLlmUnderstand(text).then((llmTasks) => {
+        setSortingRaw(null);
+        setAiPending(false);
+        if (llmTasks && llmTasks.length > 0) {
+          setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
+        } else {
+          // LLM failed or timed out — fall back to deterministic
+          // so the user still gets SOMETHING (better than nothing).
+          setPreviewTasks(detTasks);
+        }
+      });
+    } else {
+      // No LLM configured — deterministic is all we have.
+      setPreviewTasks(detTasks);
+    }
   };
 
   // ── Preview confirmation handlers ────────────────────────────────
@@ -2125,30 +2217,35 @@ export default function Home() {
       wakeMin: anchors.wake,
       sleepMin: anchors.sleep,
     };
-    const tasks = parseSmartCapture(final, ctx);
-    if (tasks.length === 0) {
+    const detTasks = parseSmartCapture(final, ctx);
+    if (detTasks.length === 0) {
       // Deterministic parser couldn't extract anything — surface the
       // transcript in the expanded capture so the user can edit and
       // resubmit. Beats swallowing the voice input silently.
       setCapOpen(true);
       return;
     }
-    setPreviewTasks(tasks);
     setEditingIdx(null);
     setCapText('');
     setCapOpen(false);
     Haptics.selectionAsync();
-    // Same LLM upgrade the text path does — kicks a background call
-    // so previewed tasks pick up structured comprehension when it
-    // returns.
+    // Same sorting → LLM → preview flow as the typed path. Never
+    // show the deterministic guess up front; only render once the
+    // LLM has resolved (or 5s timeout falls back).
     if (isAnthropicConfigured) {
+      setSortingRaw(final);
       setAiPending(true);
-      const timeout = new Promise<void>((resolve) =>
-        setTimeout(resolve, 5000),
-      );
-      void Promise.race([upgradeWithUnderstand(final), timeout]).finally(() =>
-        setAiPending(false),
-      );
+      void runLlmUnderstand(final).then((llmTasks) => {
+        setSortingRaw(null);
+        setAiPending(false);
+        if (llmTasks && llmTasks.length > 0) {
+          setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
+        } else {
+          setPreviewTasks(detTasks);
+        }
+      });
+    } else {
+      setPreviewTasks(detTasks);
     }
   };
 
@@ -2619,22 +2716,49 @@ export default function Home() {
             just toggles capOpen; the modal takes over from there. */}
 
 
+        {/* Sorting card — shown while the LLM is processing a fresh
+            capture. Renders in place of the LumiSuggestCard so the
+            user never sees the wrong deterministic guess first.
+            Cleared as soon as sortingRaw is null (LLM returned or
+            5s timeout fired). */}
+        {sortingRaw && (
+          <View style={styles.sortingCard}>
+            <View style={styles.sortingHeaderRow}>
+              <Text style={[styles.sortingSpark, { color: accent.fg }]}>
+                ✦
+              </Text>
+              <Text style={styles.sortingEyebrow}>Lumi is sorting…</Text>
+            </View>
+            <Text style={styles.sortingTitle}>reading what you said</Text>
+            <View style={styles.sortingDotsRow}>
+              <View
+                style={[styles.sortingDot, { backgroundColor: accent.fg }]}
+              />
+              <View
+                style={[styles.sortingDot, { backgroundColor: accent.fg }]}
+              />
+              <View
+                style={[styles.sortingDot, { backgroundColor: accent.fg }]}
+              />
+            </View>
+          </View>
+        )}
+
         {/* ── Lumi suggests — preview after brain-dump. Sequential
             LumiSuggestCard rendering: shows the first task with a
             "1 of N" badge, user accepts/dismisses → next task slides
             in. Bulk "Accept all remaining" button below for users
-            who don't want to step through one-by-one. */}
-        {previewTasks && previewTasks[0] && (
+            who don't want to step through one-by-one. Hidden while
+            sortingRaw is set so we never render the (possibly
+            deterministic) preview before the LLM has spoken. */}
+        {!sortingRaw && previewTasks && previewTasks[0] && (
           <View style={{ marginBottom: 16 }}>
             <LumiSuggestCard
               input={{
                 id: 'preview_0',
-                title: aiPending ? 'Lumi is sorting…' : previewTasks[0].title,
-                subtitle: aiPending ? 'reading what you said' : undefined,
-                // LLM-extracted context line ("about doctor appointment",
-                // "she needs it before Friday"). Falls back to undefined
-                // while aiPending so it doesn't flash a stale note.
-                note: aiPending ? undefined : previewTasks[0].note ?? undefined,
+                title: previewTasks[0].title,
+                subtitle: undefined,
+                note: previewTasks[0].note ?? undefined,
                 defaultWindow:
                   previewTasks[0].window === 'someday'
                     ? 'evening'
@@ -2902,7 +3026,7 @@ export default function Home() {
           When capText has content: the mic + expand collapse into a
           single ember-filled ↑ submit button that runs sendCapture,
           matching the mockup's quick-fire capture pattern. */}
-      {!capOpen && !previewTasks && (
+      {!capOpen && !previewTasks && !sortingRaw && (
         <View style={styles.capturePill} pointerEvents="box-none">
           <View style={styles.capturePillInner}>
             <Text
@@ -3136,6 +3260,52 @@ const makeStyles = (accent: Accent) =>
       // ~56 tall, so the last card shouldn't be able to scroll into
       // the pill zone either (total reserved = ~184).
       paddingBottom: FLOATING_NAV_CLEARANCE + 72,
+    },
+
+    // ── Sorting card (shown while LLM is processing a capture) ──
+    sortingCard: {
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: hexA(accent.fg, 0.32),
+      backgroundColor: hexA(C.void2, 0.6),
+      paddingHorizontal: 20,
+      paddingVertical: 22,
+      marginBottom: 16,
+      alignItems: 'flex-start',
+    },
+    sortingHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 8,
+    },
+    sortingSpark: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+    },
+    sortingEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10.5,
+      letterSpacing: 2,
+      textTransform: 'uppercase',
+      color: C.boneDim,
+    },
+    sortingTitle: {
+      fontFamily: fonts.fraunces,
+      fontSize: 22,
+      color: C.bone,
+      letterSpacing: -0.3,
+      marginBottom: 14,
+    },
+    sortingDotsRow: {
+      flexDirection: 'row',
+      gap: 6,
+    },
+    sortingDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      opacity: 0.6,
     },
 
     // ── Toast ──
