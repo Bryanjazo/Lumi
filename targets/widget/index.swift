@@ -141,19 +141,24 @@ struct LunaSpriteView: View {
     let elapsedSeconds: Int
 
     var body: some View {
-        TimelineView(
-            .periodic(from: Date(), by: 0.35)
-        ) { context in
-            // Frame index from the timeline date — ticks 0.35s apart,
-            // 4 frames total. Modulo keeps it in range.
-            let bucket = Int(context.date.timeIntervalSinceReferenceDate / 0.35)
-            let frame = (bucket % 4) + 1  // 1...4
+        // Frame from elapsedSeconds — every tick (5s) the frame
+        // rotates. State-driven cycling is what iOS actually
+        // respects in Live Activities; TimelineView(.periodic) was
+        // returning an empty view in the compactLeading slot on
+        // the previous attempt (the cat disappeared entirely).
+        // With 4 frames this loops the licking pose every 20s.
+        let frame = (elapsedSeconds / 5) % 4 + 1  // 1...4
 
+        // Wrapped in a Group so if the named image is missing from
+        // the asset catalog (build didn't pick up the new PNGs
+        // yet) SwiftUI still lays out the frame — better than a
+        // silently-empty compact slot.
+        Group {
             Image("luna-lick-\(frame)")
                 .resizable()
                 .interpolation(.none)
-                .frame(width: size, height: size)
         }
+        .frame(width: size, height: size)
     }
 }
 
