@@ -115,41 +115,52 @@ struct LumiMoodWidget: Widget {
 // ═════════════════════════════════════════════════════════════════════
 
 // ── Animated Luna sprite ──────────────────────────────────────────────
-// Live Activities can't render animated GIFs (WidgetKit's Image only
-// shows the first frame). To give the Dynamic Island cat the same
-// "alive" feeling as the JS-side GIFs we layer a continuous SwiftUI
-// transform animation on the static PNG: a soft breathe (scale) +
-// vertical bob (offset). Apple permits these repeating modifier
-// animations in Live Activities — they run on the system render
-// budget without forcing TimelineView refreshes.
+// iOS Live Activities do NOT support continuous animations on raster
+// images — Apple restricts `.repeatForever` / `TimelineView(.animation)`
+// in the Live Activity render context to save battery. A previous
+// attempt used @State + repeatForever; iOS optimized it away after the
+// first render and the cat sat frozen.
 //
-// The animation is driven by a @State toggle that flips on .onAppear.
-// `.animation(...).repeatForever(autoreverses: true)` then bounces
-// the scale/offset between two values forever. Works in compact-
-// leading, minimal, expanded, AND the lock screen.
+// What Live Activities DO support: SwiftUI transitions triggered when
+// the ActivityAttributes.ContentState changes. The JS side ticks
+// `elapsedSeconds` every 5 seconds via updateTaskActivity, so we can
+// drive the cat's transform off that value — each tick interpolates
+// the scale + offset via `withAnimation`, giving a real breath (not
+// smooth 60fps, but honest motion instead of a frozen sprite).
+//
+// The 5-second cadence matches Apple's guidance for Live Activity
+// update frequency (more frequent burns the ActivityKit budget and
+// gets throttled), so we're using the same channel that keeps the
+// countdown accurate to also drive the visual life.
 @available(iOS 16.1, *)
 struct LunaSpriteView: View {
     let mood: String
     let size: CGFloat
-    // Slightly bigger breathe on the larger renderings so the motion
-    // is still readable at 18px in the minimal slot.
+    let elapsedSeconds: Int
+    // Amplitude scales up at smaller sizes so motion stays readable
+    // at 18px in the minimal slot.
     var amplitude: CGFloat { size < 24 ? 0.10 : 0.07 }
-    var bob: CGFloat { size < 24 ? 0.6 : 1.2 }
-
-    @State private var pulse = false
+    var bobMax: CGFloat { size < 24 ? 0.6 : 1.2 }
 
     var body: some View {
-        Image("luna-\(mood)")
+        // Two-phase breath: even ticks scale up + bob up, odd ticks
+        // relax back down. Each ContentState update animates between
+        // these two states via the .animation modifier below.
+        let phase = (elapsedSeconds / 5) % 2  // 0 or 1
+        let scale = phase == 0 ? 1.0 + amplitude : 1.0 - amplitude * 0.5
+        let bob = phase == 0 ? -bobMax : bobMax
+
+        return Image("luna-\(mood)")
             .resizable()
             .interpolation(.none)
             .frame(width: size, height: size)
-            .scaleEffect(pulse ? 1.0 + amplitude : 1.0 - amplitude * 0.5)
-            .offset(y: pulse ? -bob : bob)
-            .animation(
-                .easeInOut(duration: 1.1).repeatForever(autoreverses: true),
-                value: pulse
-            )
-            .onAppear { pulse = true }
+            .scaleEffect(scale)
+            .offset(y: bob)
+            // Animation triggered by ContentState changes — iOS DOES
+            // permit these in Live Activities. Duration matches the
+            // ~5s tick cadence so the breath eases naturally between
+            // updates instead of snapping.
+            .animation(.easeInOut(duration: 2.5), value: elapsedSeconds)
     }
 }
 
@@ -170,7 +181,11 @@ struct LumiTaskLiveActivity: Widget {
                 // ── EXPANDED (long-pressed pill) ──
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 8) {
-                        LunaSpriteView(mood: context.state.mood, size: 32)
+                        LunaSpriteView(
+                            mood: context.state.mood,
+                            size: 32,
+                            elapsedSeconds: context.state.elapsedSeconds
+                        )
                         VStack(alignment: .leading, spacing: 1) {
                             Text(context.attributes.petName)
                                 .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -207,7 +222,11 @@ struct LumiTaskLiveActivity: Widget {
                 }
             } compactLeading: {
                 // ── COMPACT LEADING (left of camera) ──
-                LunaSpriteView(mood: context.state.mood, size: 20)
+                LunaSpriteView(
+                    mood: context.state.mood,
+                    size: 20,
+                    elapsedSeconds: context.state.elapsedSeconds
+                )
             } compactTrailing: {
                 // ── COMPACT TRAILING (right of camera) ──
                 Text(formatRemaining(
@@ -219,7 +238,11 @@ struct LumiTaskLiveActivity: Widget {
                 .monospacedDigit()
             } minimal: {
                 // ── MINIMAL (multiple activities competing) ──
-                LunaSpriteView(mood: context.state.mood, size: 18)
+                LunaSpriteView(
+                    mood: context.state.mood,
+                    size: 18,
+                    elapsedSeconds: context.state.elapsedSeconds
+                )
             }
         }
     }
@@ -232,7 +255,11 @@ struct LockScreenView: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            LunaSpriteView(mood: state.mood, size: 52)
+            LunaSpriteView(
+                mood: state.mood,
+                size: 52,
+                elapsedSeconds: state.elapsedSeconds
+            )
             VStack(alignment: .leading, spacing: 4) {
                 Text(attributes.taskTitle)
                     .font(.system(size: 16, weight: .semibold))
