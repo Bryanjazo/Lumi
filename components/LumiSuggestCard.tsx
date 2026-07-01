@@ -110,6 +110,14 @@ export interface SuggestInput {
   title: string;
   /** Optional sub-line under the title (e.g., "the LLM is still sorting"). */
   subtitle?: string;
+  /**
+   * LLM-extracted context / detail about the task. Rendered as a
+   * small italic dusk line below the title ("the why behind the
+   * what"). Example: title "Call mom" + note "About doctor
+   * appointment". Distinct from `subtitle` which is for transient
+   * UI states (e.g. "Lumi is sorting…").
+   */
+  note?: string;
   /** Default part-of-day; defaults to 'evening' if omitted. */
   defaultWindow?: WindowKey;
   /** Default minute-of-day for the pinned-time toggle; null = float. */
@@ -229,8 +237,13 @@ export const LumiSuggestCard = ({
         </Pressable>
       </View>
 
-      {/* Title + live summary */}
+      {/* Title + optional LLM-extracted note + live summary */}
       <Text style={styles.title}>{input.title}</Text>
+      {input.note && (
+        <Text style={styles.noteText} numberOfLines={3}>
+          {input.note}
+        </Text>
+      )}
       <View style={styles.summaryRow}>
         <View
           style={[styles.summaryDot, { backgroundColor: effWinObj.color }]}
@@ -521,6 +534,19 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
     lineHeight: 34,
     marginBottom: 6,
+  },
+  // Note — the "context" sub-line under the title. Dusk-tinted
+  // because it's Lumi's extracted interpretation, not the user's
+  // own headline. Italic Fraunces so it reads as "the why" without
+  // competing with the bone-colored title.
+  noteText: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 14,
+    color: C.dusk,
+    lineHeight: 19,
+    marginTop: -2,
+    marginBottom: 10,
   },
   summaryRow: {
     flexDirection: 'row',

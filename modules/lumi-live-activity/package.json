@@ -1,0 +1,8 @@
+{
+  "name": "lumi-live-activity",
+  "version": "0.1.0",
+  "description": "Custom Expo Module wrapping iOS ActivityKit for the Lumi per-task Dynamic Island Live Activity.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "platforms": ["ios"]
+}

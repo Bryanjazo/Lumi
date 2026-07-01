@@ -27,7 +27,7 @@ import Svg, {
   Path,
 } from 'react-native-svg';
 import { fonts } from '../../constants/fonts';
-import { lunaSource } from '../../lib/luna-source';
+import { lunaSource, useLunaSkin, type LunaMood } from '../../lib/luna-source';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
 import { useCompanionMode } from '../../lib/companion-mode';
 import {
@@ -134,6 +134,7 @@ const Room = ({
 }) => {
   const accent = useAccent();
   const lunaMood = useAmbientLunaMood();
+  const lunaSkin = useLunaSkin();
   const [, force] = useState(0);
   const S = useRef<RoomState & { joy: number }>({
     t: 0,
@@ -153,6 +154,138 @@ const Room = ({
   }, [cheer]);
   const W = width ?? 344;
   const H = height ?? 288;
+
+  // ── Walking animation — paces the cat left↔right across the rug,
+  // showing the walk GIF while in motion and dropping back to the
+  // current emotion (idle/happy/sad) at each rest stop. Sequence:
+  //   walk right → pause showing emotion → walk left → pause →
+  //   walk right → … (loop)
+  //
+  // Implementation notes:
+  //   - walkX (Animated.Value) → translateX
+  //   - flipX (Animated.Value) → scaleX, ±1 by direction. Both
+  //     Animated so the whole transform runs on the native driver —
+  //     mixing a JS literal silently no-op'd the animation on iOS.
+  //   - isWalking (useState) → swaps the rendered GIF between
+  //     'walk' (animated walking sprite) and the current emotion
+  //     (sitting pose). Reads as: cat strolls across the rug, sits
+  //     and shows how it feels for a beat, then strolls back.
+  //   - Wrapped in Animated.View around the Image so the transform
+  //     composes cleanly with the Image's layout left/top.
+  const walkX = useRef(new Animated.Value(0)).current;
+  // Static scaleX (not animated). flipX is an Animated.Value only
+  // so the whole transform stays on the native driver; we call
+  // setValue() to instantly mirror the walking sprite per
+  // direction. The swap happens DURING the sit-pause (between
+  // legs), at the same instant the sprite changes from 'walk' →
+  // emotion → 'walk', so the user never sees a flip animation.
+  const flipX = useRef(new Animated.Value(1)).current;
+  const [isWalking, setIsWalking] = useState(false);
+  // During rest stops we sometimes interrupt the emotion sprite
+  // with a brief grooming beat (cat licks itself) so the room
+  // doesn't feel like a state machine — it feels like a real cat
+  // with little personality quirks. Rolls a dice at each pause.
+  const [isLicking, setIsLicking] = useState(false);
+  // Defensive fallback — if luna-walk.gif failed to bundle (e.g.,
+  // user is on an EAS build from before the asset was added but JS
+  // hot-reloaded the latest code), the require resolves to a broken
+  // asset id and the Image renders nothing. Flag the failure on
+  // first onError and fall back to the emotion sprite for the rest
+  // of the session so the cat is visible instead of invisible.
+  const [walkAssetFailed, setWalkAssetFailed] = useState(false);
+
+  // Which sprite to render this frame. Precedence: walking >
+  // licking > current ambient emotion. activeSprite is also used
+  // by the Image style block to decide whether to upscale (the
+  // walk + lick GIFs need the 1.35× bump; sitting sprites don't).
+  const activeSprite: LunaMood =
+    isWalking && !walkAssetFailed
+      ? 'walk'
+      : isLicking
+        ? 'lick'
+        : lunaMood;
+  useEffect(() => {
+    // Cat doesn't walk during the sleep window — would be jarring.
+    if (lunaMood === 'sleep') {
+      walkX.stopAnimation();
+      Animated.timing(walkX, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: true,
+      }).start();
+      setIsWalking(false);
+      setIsLicking(false);
+      return;
+    }
+    const RANGE = 70;
+    // Walk speed scales with mood; sad cat drags, happy cat zips.
+    const stepMs =
+      lunaMood === 'sad' ? 7000 : lunaMood === 'happy' ? 3500 : 5000;
+    // How long the cat stands still showing emotion at each end.
+    // Long enough to feel intentional (the user can read the mood),
+    // short enough that the room doesn't feel frozen.
+    const restMs = 2400;
+    let stopped = false;
+    let pauseTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // No flip ANIMATION — instead we set scaleX instantly at the
+    // start of each leg. The walking GIF naturally faces left, so:
+    //   walking right (positive translateX) → scaleX = -1 (mirror)
+    //   walking left  (negative translateX) → scaleX = 1  (default)
+    // While sitting + emoting, scaleX resets to 1 so the rest
+    // sprites (luna-idle/happy/sad) never get mirrored.
+    const walkLeg = (to: number, dir: 'right' | 'left', next: () => void) => {
+      flipX.setValue(dir === 'right' ? -1 : 1);
+      setIsWalking(true);
+      setIsLicking(false);
+      Animated.timing(walkX, {
+        toValue: to,
+        duration: stepMs,
+        useNativeDriver: true,
+        easing: Easing.inOut(Easing.sin),
+      }).start(({ finished }) => {
+        if (!finished || stopped) return;
+        // Arrived — sit and show the current emotion. Reset flip
+        // so the sitting sprite renders in its natural orientation
+        // (mirrored idle cats look uncanny). 1-in-3 chance the cat
+        // grooms itself for ~1.6s before going back to its mood —
+        // ~half the pause beats it as a little character moment.
+        flipX.setValue(1);
+        setIsWalking(false);
+        const willLick = Math.random() < 0.33;
+        if (willLick) {
+          setIsLicking(true);
+          pauseTimer = setTimeout(() => {
+            if (stopped) return;
+            setIsLicking(false);
+            pauseTimer = setTimeout(() => {
+              if (!stopped) next();
+            }, Math.max(0, restMs - 1600));
+          }, 1600);
+        } else {
+          pauseTimer = setTimeout(() => {
+            if (!stopped) next();
+          }, restMs);
+        }
+      });
+    };
+
+    const loop = () => {
+      if (stopped) return;
+      walkLeg(RANGE, 'right', () =>
+        walkLeg(-RANGE, 'left', () => loop()),
+      );
+    };
+    loop();
+
+    return () => {
+      stopped = true;
+      walkX.stopAnimation();
+      flipX.stopAnimation();
+      if (pauseTimer) clearTimeout(pauseTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lunaMood]);
 
   useEffect(() => {
     let raf: number;
@@ -522,36 +655,104 @@ const Room = ({
         fill={hexA(v > 0.4 ? accent.fg : '#4A3D36', 0.5)}
       />
 
-      {/* Luna shadow only — the rest of the sprite is replaced by
-         the GIF overlay below. The shadow stays inside the SVG so
-         it sits between the rug and the cat naturally. */}
-      <G>
-        <Ellipse
-          cx={lunaX}
-          cy={lunaY + 12}
-          rx={8}
-          ry={2}
-          fill="rgba(0,0,0,0.22)"
-        />
-      </G>
+      {/* (Cat shadow moved OUT of the static SVG so it can ride
+         along inside the Animated.View wrapper below — keeps the
+         shadow planted under the cat as it walks across the rug.) */}
     </Svg>
-    {/* Animated pixel cat — overlaid at the same spot the SVG
-       sprite used to draw. 64×64 = clean 2× of the 32×32 source
-       so the pixel art stays sharp. Mood comes from the shared
-       ambient hook (sleep window, overdue pile, all-done state,
-       streak) so the room and the rest of the app agree. */}
-    <Image
-      source={lunaSource(lunaMood)}
+    {/* Pixel cat overlay. The outer Animated.View owns the
+       transform (translateX + scaleX, both Animated values so the
+       native driver runs the whole thing) and the inner Image
+       just fills it. Keeping the transform on a separate node
+       avoids the silent-no-op iOS hit where a literal scaleX
+       mixed with an Animated translateX failed to apply. */}
+    {/* The wrapping Animated.View carries BOTH the cat image AND
+       its shadow so the shadow translates with the cat as it
+       walks the rug. The shadow View is positioned at the cat's
+       feet — using View (not SVG) so it doesn't require touching
+       the SVG node tree on every Animated frame. */}
+    <Animated.View
       style={{
         position: 'absolute',
         left: gifLeft,
         top: gifTop,
         width: GIF_SIZE,
         height: GIF_SIZE,
+        transform: [{ translateX: walkX }, { scaleX: flipX }],
       }}
-      resizeMode="contain"
-      accessibilityLabel="Luna"
-    />
+      pointerEvents="none"
+    >
+      {/* Soft elliptical shadow at the cat's feet. Stays put
+         under the cat as the wrapper translates; scaleX flip on
+         the parent doesn't visually change a centered ellipse. */}
+      <View
+        style={{
+          position: 'absolute',
+          // Cat sits centered on lunaX, with FEET on lunaY+12
+          // (which was the old shadow line in SVG coords). Inside
+          // this wrapper the feet land at the bottom of the box.
+          bottom: 4,
+          left: GIF_SIZE / 2 - 9,
+          width: 18,
+          height: 4,
+          borderRadius: 2,
+          backgroundColor: 'rgba(0,0,0,0.22)',
+        }}
+      />
+      {/* GIF swaps between walk sprite (while in motion) and the
+         current emotion sprite (at each rest stop) so the cat
+         visibly walks → sits + emotes → walks back. Sleep mood
+         disables the walk loop entirely (see useEffect above).
+         If luna-walk.gif isn't bundled (old EAS build + new JS),
+         onError flips walkAssetFailed and we render the emotion
+         sprite during the walk too — cat is visible, just sliding. */}
+      {/* Walking + lick sprites render in a BIGGER, bottom-anchored,
+         aspect-correct box so the cat's visual feet plant at the
+         same Y the sitting sprites plant.
+
+         Why aspect-correct: the walk GIF is 48×45 (wider than tall).
+         With resizeMode="contain" inside a square box, the renderer
+         centers the image vertically and leaves empty padding above
+         AND below the cat — which lifts the feet off the rug. By
+         sizing the box at 48:45 we let contain fill the box edge-
+         to-edge, planting the cat's bottom row of pixels exactly at
+         box bottom. The lick GIF is 32×32 (square); inside the same
+         48:45 box, contain still aligns its bottom edge to box
+         bottom (just with small horizontal margins), so the planting
+         math works for both sprites.
+
+         The bigger box (1.35× the wrapper width) gives the user the
+         "bit bigger" cat they asked for; the negative `left` offset
+         keeps it horizontally centered on the wrapper's vertical
+         axis. The bottom: 0 anchor is what keeps walking/sitting
+         transitions seamless. */}
+      {activeSprite === 'walk' || activeSprite === 'lick' ? (
+        <Image
+          source={lunaSource(activeSprite, lunaSkin)}
+          onError={() => {
+            if (isWalking) setWalkAssetFailed(true);
+          }}
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: -((GIF_SIZE * 1.35 - GIF_SIZE) / 2),
+            width: GIF_SIZE * 1.35,
+            height: GIF_SIZE * 1.35 * (45 / 48),
+          }}
+          resizeMode="contain"
+          accessibilityLabel="Luna"
+        />
+      ) : (
+        <Image
+          source={lunaSource(activeSprite, lunaSkin)}
+          onError={() => {
+            if (isWalking) setWalkAssetFailed(true);
+          }}
+          style={{ width: '100%', height: '100%' }}
+          resizeMode="contain"
+          accessibilityLabel="Luna"
+        />
+      )}
+    </Animated.View>
     </View>
   );
 };

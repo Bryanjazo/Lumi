@@ -45,7 +45,7 @@ import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
 import { timeColors as C } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
-import { lunaSource } from '../../lib/luna-source';
+import { lunaSource, useLunaSkin } from '../../lib/luna-source';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
 import { useCompanionMode } from '../../lib/companion-mode';
 import { IMPORTANCE, Importance } from '../../constants/importance';
@@ -100,6 +100,10 @@ import {
   LumiSuggestCard,
   type SuggestAcceptOptions,
 } from '../../components/LumiSuggestCard';
+import { LumiFocusCard } from '../../components/LumiFocusCard';
+import { FocusTaskPickerModal } from '../../components/FocusTaskPickerModal';
+import { HomeCaptureModal } from '../../components/HomeCaptureModal';
+import { useFocusSession } from '../../lib/focusSession';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -1095,6 +1099,13 @@ export default function Home() {
   // Ambient mood — reflects sleep window, overdue pile, streak.
   // The nook cat updates as the user's state changes.
   const ambientMood = useAmbientLunaMood();
+  const lunaSkin = useLunaSkin();
+
+  // Focus session — the LumiFocusCard component owns the full
+  // lifecycle (start / pause / resume / end) via useFocusSession
+  // internally. Home only needs the pet name for the Live Activity
+  // label, which it passes down to the card.
+  const focusPetName = useUserStore((s) => s.petName);
   // Transient "celebration" override — when the user completes a
   // quest, the nook cat flips to 'happy' for ~30s then springs back
   // to ambient. A small, earned moment of feedback that doesn't
@@ -1111,15 +1122,39 @@ export default function Home() {
       celebrateTimerRef.current = null;
     }, 30_000);
   };
+
+  // Brief grooming beat. Plays for ~1.8s on focus-start and on
+  // task-completion before falling back to whatever the cat would
+  // normally be showing (celebration → happy, otherwise ambient).
+  // Reads as: the cat licks itself like it's busy / settling in,
+  // then goes back to its mood. Takes precedence over celebrating
+  // so the lick lands first on completion and the 30-second happy
+  // window picks up after.
+  const [licking, setLicking] = useState(false);
+  const lickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggerLick = (durationMs = 1800) => {
+    if (lickTimerRef.current) clearTimeout(lickTimerRef.current);
+    setLicking(true);
+    lickTimerRef.current = setTimeout(() => {
+      setLicking(false);
+      lickTimerRef.current = null;
+    }, durationMs);
+  };
+
   // Cleanup on unmount so a stale timeout can't try to setState
   // after the screen's torn down.
   useEffect(
     () => () => {
       if (celebrateTimerRef.current) clearTimeout(celebrateTimerRef.current);
+      if (lickTimerRef.current) clearTimeout(lickTimerRef.current);
     },
     [],
   );
-  const nookMood = celebrating ? 'happy' : ambientMood;
+  const nookMood = licking
+    ? 'lick'
+    : celebrating
+      ? 'happy'
+      : ambientMood;
 
   // ── Store ────────────────────────────────────────────────────────
   const xp = useUserStore((s) => s.xp);
@@ -1162,6 +1197,12 @@ export default function Home() {
   const [now, setNow] = useState(() => new Date());
   const [swap, setSwap] = useState(0);
   const [cheer, setCheer] = useState(0);
+  // Focus-picker modal — opens from the LumiFocusCard's "Focus on
+  // another task →" link and shows a full-height sheet of today's
+  // incomplete quests. Tapping a quest starts a focus session on it
+  // (the timer then renders inside the modal via a nested
+  // LumiFocusCard bound to the picked quest).
+  const [focusPickerOpen, setFocusPickerOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
   const [capText, setCapText] = useState('');
   const [moreOpen, setMoreOpen] = useState(false);
@@ -1209,6 +1250,13 @@ export default function Home() {
   // indicator on each task so the user doesn't fixate on a
   // placeholder date/window that's about to change.
   const [aiPending, setAiPending] = useState(false);
+  // Raw text being sorted by the LLM. When non-null, the sorting
+  // card renders above the (still-null) preview. Cleared when the
+  // LLM returns (or the 5s timeout fires and we fall back to the
+  // deterministic result). Point is to NEVER show the wrong
+  // deterministic preview and then re-render into the correct LLM
+  // one — one clean sorting → done transition instead.
+  const [sortingRaw, setSortingRaw] = useState<string | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [editingDate, setEditingDate] = useState<'today' | 'tomorrow'>('today');
@@ -1274,12 +1322,21 @@ export default function Home() {
   const candidates = useMemo(() => {
     const open = todayQuests.filter((q) => !q.completed);
     return [...open].sort((a, b) => {
+      // IMPORTANCE first — a Trial (high) always trumps a Task
+      // (medium) or a Whim (low) regardless of window. This is what
+      // "Lumi suggests" is FOR: surfacing the biggest thing so the
+      // user doesn't waste their sharpest attention on a whim.
+      // (Previously window won; a medium task in the current window
+      // hid a high-tier task waiting in the next one — hence a
+      // dentist appointment surfacing over the overdue invoice.)
+      const rankDiff =
+        IMPORTANCE[b.importance].rank - IMPORTANCE[a.importance].rank;
+      if (rankDiff !== 0) return rankDiff;
+      // Same tier → prefer the current window (still doable now),
+      // then the sooner windows via the ordered list.
       const wa = order.indexOf(a.window);
       const wb = order.indexOf(b.window);
-      if (wa !== wb) return wa - wb;
-      return (
-        IMPORTANCE[b.importance].rank - IMPORTANCE[a.importance].rank
-      );
+      return wa - wb;
     });
   }, [todayQuests, order]);
   const allDone = candidates.length === 0 && todayQuests.length > 0;
@@ -1365,6 +1422,17 @@ export default function Home() {
     registerActivity();
     addShard();
 
+    // If a focus session is running ON THIS quest, end it cleanly
+    // so the Dynamic Island pill clears immediately (otherwise it
+    // lingers until its full duration ticks out, which feels broken
+    // after the user already marked the task done). Reason is
+    // 'cancelled' — the user gets their celebration from the manual
+    // completion path, not from the focus-card's done screen.
+    const fs = useFocusSession.getState();
+    if (fs.current?.questId === q.id) {
+      void fs.end({ reason: 'cancelled' });
+    }
+
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setSwap(0);
 
@@ -1375,6 +1443,11 @@ export default function Home() {
     // feedback (companion-mode-spec §2).
     if (companion.showCheer) {
       setCheer((c) => c + 1);
+      // Lick first, then the 30s happy window takes over. The
+      // licking nookMood overrides 'happy' for the first 1.8s so
+      // the cat reads as "busy grooming, satisfied" instead of
+      // jumping straight to a static smile.
+      triggerLick();
       triggerCelebrate();
       const fId = q.id + '-' + Date.now();
       setFloater({
@@ -1534,6 +1607,88 @@ export default function Home() {
    * preview tasks in place using the math layer for placement.
    * No-op on any failure — deterministic preview stays.
    */
+  /**
+   * Run the LLM understand pass for a capture. Returns the LLM's
+   * result (or null on timeout / error). Callers use this to build
+   * the previewTasks list AUTHORITATIVELY from the LLM's output
+   * instead of showing the deterministic parse first and rebuilding
+   * later (which caused a visible wrong→right re-render flash).
+   */
+  const runLlmUnderstand = async (
+    rawText: string,
+  ): Promise<UnderstoodTask[] | null> => {
+    const todayISO = todayKey();
+    const dow = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
+      now.getDay()
+    ];
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const fmtAnchor = (m: number) => {
+      const h = Math.floor(m / 60);
+      const mn = m % 60;
+      return `${String(h).padStart(2, '0')}:${String(mn).padStart(2, '0')}`;
+    };
+    const understandCtx: UnderstandContext = {
+      nowLabel: `${dow}, ${todayISO} ${hh}:${mm}`,
+      todayISO,
+      sharpWindow,
+      foggyWindow,
+      peakRange:
+        digest.curve.peakStart != null && digest.curve.peakEnd != null
+          ? `${fmtAnchor(digest.curve.peakStart)}–${fmtAnchor(digest.curve.peakEnd)}`
+          : null,
+      slumpRange:
+        digest.curve.slumpStart != null && digest.curve.slumpEnd != null
+          ? `${fmtAnchor(digest.curve.slumpStart)}–${fmtAnchor(digest.curve.slumpEnd)}`
+          : null,
+      curveTrusted: quests.filter((q) => q.completed).length >= 14,
+      anchors: {
+        wake: fmtAnchor(anchors.wake),
+        breakfast: fmtAnchor(anchors.breakfast),
+        lunch: fmtAnchor(anchors.lunch),
+        dinner: fmtAnchor(anchors.dinner),
+        sleep: fmtAnchor(anchors.sleep),
+      },
+      struggles: struggles.slice(0, 3),
+      recentCorrections: summarizeCorrections(recentCorrections(6)),
+      userName: userName.trim() || undefined,
+    };
+    // Race the LLM against a 5s timeout so a slow / hung request
+    // doesn't leave the sorting card up forever.
+    const llm = llmUnderstand(rawText, understandCtx).then((r) => r ?? null);
+    const timeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), 5000),
+    );
+    const result = await Promise.race([llm, timeout]);
+    return result?.tasks ?? null;
+  };
+
+  /**
+   * Build a SmartTask[] from the LLM's understood tasks. Reuses each
+   * matching deterministic slot as the base (preserves timeOptions /
+   * raw / needsFollowup) and stubs when the LLM found more.
+   */
+  const smartTasksFromLlm = (
+    llmTasks: UnderstoodTask[],
+    detTasks: SmartTask[],
+  ): SmartTask[] => {
+    const stub = (t: UnderstoodTask): SmartTask => ({
+      title: t.title,
+      importance: 'medium',
+      energyDemand: 'medium',
+      timeMode: 'windowed',
+      at: null,
+      date: null,
+      window: 'midday',
+      recur: null,
+      raw: t.title,
+      needsFollowup: false,
+    });
+    return llmTasks.map((llmTask, i) =>
+      patchWithUnderstood(detTasks[i] ?? stub(llmTask), llmTask),
+    );
+  };
+
   const upgradeWithUnderstand = async (rawText: string): Promise<void> => {
     const todayISO = todayKey();
     const dow = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
@@ -1573,19 +1728,43 @@ export default function Home() {
     };
     const result = await llmUnderstand(rawText, ctx);
     if (!result) return;
+    // LLM correctly returned 0 tasks (question / emoji / venting).
+    // Keep the deterministic preview instead of wiping it — the
+    // user typed SOMETHING that parseSmartCapture caught, so we
+    // shouldn't silently clear it just because the LLM disagreed.
+    if (result.tasks.length === 0) return;
 
     setPreviewTasks((cur) => {
       if (!cur) return cur;
-      // Match LLM tasks to deterministic tasks by index. If the LLM
-      // returns a different count, only patch overlapping slots —
-      // we don't want to silently drop or invent rows the user can
-      // already see.
-      const next = [...cur];
-      const n = Math.min(cur.length, result.tasks.length);
-      for (let i = 0; i < n; i += 1) {
-        next[i] = patchWithUnderstood(cur[i], result.tasks[i]);
-      }
-      return next;
+      // The LLM is the source of truth for splitting a dump into
+      // individual tasks — the deterministic parser (splitFragments
+      // in lib/capture.ts) is conservative and only splits on
+      // "and"/"then"/"." patterns. If the user's dump is a
+      // comma-list ("finish deck, reply to Sam, book dentist…"),
+      // parseSmartCapture may return 2 tasks while the LLM returns
+      // 13. Previously we only patched min(deterministic, llm)
+      // slots and silently dropped the extras — regression that
+      // squashed long brain-dumps into 1 giant title. Fix: rebuild
+      // previewTasks from the LLM's output. For each LLM task,
+      // reuse the deterministic slot at the same index if one
+      // exists (preserves timeOptions / raw / etc. from the local
+      // parser); otherwise mint a fresh stub and patch onto it.
+      const stub = (t: UnderstoodTask): SmartTask => ({
+        title: t.title,
+        importance: 'medium',
+        energyDemand: 'medium',
+        timeMode: 'windowed',
+        at: null,
+        date: null,
+        window: 'midday',
+        recur: null,
+        raw: t.title,
+        needsFollowup: false,
+      });
+      return result.tasks.map((llmTask, i) => {
+        const base = cur[i] ?? stub(llmTask);
+        return patchWithUnderstood(base, llmTask);
+      });
     });
   };
 
@@ -1733,36 +1912,39 @@ export default function Home() {
       sleepMin: anchors.sleep,
     };
 
-    const tasks = parseSmartCapture(text, ctx);
-    if (tasks.length === 0) return;
+    const detTasks = parseSmartCapture(text, ctx);
+    if (detTasks.length === 0) return;
 
-    // Preview-then-confirm — surface Lumi's best guess instead of
-    // auto-committing. User approves with one tap, or tweaks
-    // title/date/window inline. Cancel discards.
-    setPreviewTasks(tasks);
     setEditingIdx(null);
     setCapText('');
     setCapOpen(false);
-
-    // Background LLM upgrade — ONE structured comprehension call.
-    // While in flight, the previewed tasks show a "Lumi is reading…"
-    // indicator INSTEAD of their (possibly wrong) deterministic
-    // date/window meta — so the user never reads "tomorrow" only
-    // to watch it switch to "Aug 1" two seconds later.
-    if (isAnthropicConfigured && tasks.length > 0) {
-      setAiPending(true);
-      // Hard timeout — if the LLM doesn't respond within 5s, settle
-      // back to the deterministic preview rather than leaving the
-      // Accept button disabled and the title spinning forever.
-      // Whichever resolves first wins; .finally fires either way.
-      const timeout = new Promise<void>((resolve) =>
-        setTimeout(resolve, 5000),
-      );
-      void Promise.race([upgradeWithUnderstand(text), timeout]).finally(() =>
-        setAiPending(false),
-      );
-    }
     Haptics.selectionAsync();
+
+    if (isAnthropicConfigured) {
+      // Sorting flow — don't show the deterministic preview at all.
+      // sortingRaw drives the "Lumi is sorting…" card up top; we
+      // only set previewTasks once the LLM has returned (or the
+      // 5s timeout forces a fallback). This eliminates the wrong→
+      // right re-render flash — the user sees "sorting" then the
+      // correct "1 of N" list, never the deterministic 1-task guess
+      // for a comma dump.
+      setSortingRaw(text);
+      setAiPending(true);
+      void runLlmUnderstand(text).then((llmTasks) => {
+        setSortingRaw(null);
+        setAiPending(false);
+        if (llmTasks && llmTasks.length > 0) {
+          setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
+        } else {
+          // LLM failed or timed out — fall back to deterministic
+          // so the user still gets SOMETHING (better than nothing).
+          setPreviewTasks(detTasks);
+        }
+      });
+    } else {
+      // No LLM configured — deterministic is all we have.
+      setPreviewTasks(detTasks);
+    }
   };
 
   // ── Preview confirmation handlers ────────────────────────────────
@@ -2018,6 +2200,65 @@ export default function Home() {
   // Tap to start, tap again to stop + transcribe. The transcribed text
   // flows straight through the smart-capture pipeline so the user's
   // just speaking their tasks into existence.
+
+  /**
+   * Post-transcribe processing — shared by the two mic entry points:
+   * the standalone MicButton on the floating capture pill AND the old
+   * inline `handleMic` path that lives inside the expanded capture.
+   * Same behavior in both places: transcript → parseSmartCapture →
+   * previewTasks (user reviews before commit). Text is stashed in
+   * capText briefly so any UI that reads it while the parse is
+   * happening still shows what Lumi heard.
+   */
+  const handleTranscribed = (text: string) => {
+    const final = text.trim();
+    if (!final) return;
+    setCapText(final);
+    const ctx: CaptureContext = {
+      sharpWindow,
+      foggyWindow,
+      peakStart: digest.curve.peakStart,
+      peakEnd: digest.curve.peakEnd,
+      slumpStart: digest.curve.slumpStart,
+      slumpEnd: digest.curve.slumpEnd,
+      effectiveWindows,
+      now,
+      nowMin: now.getHours() * 60 + now.getMinutes(),
+      wakeMin: anchors.wake,
+      sleepMin: anchors.sleep,
+    };
+    const detTasks = parseSmartCapture(final, ctx);
+    if (detTasks.length === 0) {
+      // Deterministic parser couldn't extract anything — surface the
+      // transcript in the expanded capture so the user can edit and
+      // resubmit. Beats swallowing the voice input silently.
+      setCapOpen(true);
+      return;
+    }
+    setEditingIdx(null);
+    setCapText('');
+    setCapOpen(false);
+    Haptics.selectionAsync();
+    // Same sorting → LLM → preview flow as the typed path. Never
+    // show the deterministic guess up front; only render once the
+    // LLM has resolved (or 5s timeout falls back).
+    if (isAnthropicConfigured) {
+      setSortingRaw(final);
+      setAiPending(true);
+      void runLlmUnderstand(final).then((llmTasks) => {
+        setSortingRaw(null);
+        setAiPending(false);
+        if (llmTasks && llmTasks.length > 0) {
+          setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
+        } else {
+          setPreviewTasks(detTasks);
+        }
+      });
+    } else {
+      setPreviewTasks(detTasks);
+    }
+  };
+
   const handleMic = async () => {
     if (voice.state === 'idle') {
       if (!capOpen) setCapOpen(true);
@@ -2310,7 +2551,7 @@ export default function Home() {
                    32×32 native asset rendered at 64×64 = clean 2×
                    for sharp pixels. */}
                 <Image
-                  source={lunaSource(nookMood)}
+                  source={lunaSource(nookMood, lunaSkin)}
                   style={{ width: 64, height: 64 }}
                   resizeMode="contain"
                   accessibilityLabel="Luna"
@@ -2374,7 +2615,7 @@ export default function Home() {
                rest). 96×96 = clean 3× scale of the 32×32 source. */}
             <View style={styles.doneLuna}>
               <Image
-                source={lunaSource(ambientMood)}
+                source={lunaSource(ambientMood, lunaSkin)}
                 style={{ width: 96, height: 96 }}
                 resizeMode="contain"
                 accessibilityLabel="Luna"
@@ -2400,254 +2641,115 @@ export default function Home() {
           </View>
         ) : hero ? (
           <View ref={heroRef as never} style={styles.heroWrap}>
-            <View
-              style={[
-                styles.heroCard,
-                {
-                  borderColor: hexA(IMPORTANCE[hero.importance].color, 0.35),
-                },
-              ]}
-            >
-              {/* Header — cleaned up per the v2 spec: just "LUMI
-                 SUGGESTS" + the ⋯ menu. The time pill + window pill
-                 are gone (window moves into the meta row below). */}
-              <View style={styles.heroHeader}>
-                <Text style={[styles.heroEyebrowGlyph, { color: C.dusk }]}>
-                  ✦
-                </Text>
-                <Text style={styles.heroEyebrow}>Lumi suggests</Text>
-                <View style={{ flex: 1 }} />
-              </View>
-              <HeroOverflowMenu quest={hero} onEdit={setEditingQuest} />
-              <Text style={styles.heroTitle}>{hero.title}</Text>
-              {/* YOUR COMMENT pins above the description (only
-                 rendered when present). */}
-              {hero.comment && (
-                <HeroComment
-                  comment={hero.comment}
+            <LumiFocusCard
+              quest={hero}
+              petName={focusPetName}
+              ambientMood={ambientMood}
+              xpReward={hero.xpReward}
+              onMarkItDone={() => completeQuest(hero)}
+              onOpenPicker={() => setFocusPickerOpen(true)}
+              onSwap={
+                candidates.length > 1
+                  ? () => setSwap((s) => s + 1)
+                  : undefined
+              }
+              swapAvailable={candidates.length > 1}
+              onFocusStart={triggerLick}
+              headerRight={
+                <HeroOverflowMenu quest={hero} onEdit={setEditingQuest} />
+              }
+              aboveTitleSlot={
+                hero.comment ? (
+                  <HeroComment
+                    comment={hero.comment}
+                    accentColor={accent.fg}
+                  />
+                ) : null
+              }
+              descriptionSlot={
+                <HeroDescription
+                  text={
+                    hero.note ??
+                    whyLine(
+                      hero,
+                      hero.window === cw,
+                      effectiveWindows[hero.window].label,
+                    )
+                  }
                   accentColor={accent.fg}
                 />
-              )}
-              {/* Description — LLM-extracted note, falling back to
-                 the deterministic why-line. Self-measuring: clamps
-                 to 3 lines with `more` / `less` when the text
-                 actually overflows, so long descriptions don't blow
-                 out the hero card height. */}
-              <HeroDescription
-                text={
-                  hero.note ??
-                  whyLine(
-                    hero,
-                    hero.window === cw,
-                    effectiveWindows[hero.window].label,
-                  )
-                }
-                accentColor={accent.fg}
-              />
-              {/* Meta row — sigil + tier · window · +xp. Window
-                 moved here from the header so it's part of the
-                 compact context line, not a competing top-right
-                 element. */}
-              <View style={styles.heroMeta}>
-                <Text
-                  style={[
-                    styles.heroTierLabel,
-                    { color: IMPORTANCE[hero.importance].color },
-                  ]}
-                >
-                  <Text style={styles.heroTierSigil}>
-                    {IMPORTANCE[hero.importance].sigil}
-                  </Text>{' '}
-                  {IMPORTANCE[hero.importance].label}
-                </Text>
-                <View style={styles.metaDot} />
-                <Text
-                  style={[
-                    styles.heroWindowMeta,
-                    { color: WINDOWS[hero.window].color },
-                  ]}
-                >
-                  {WINDOWS[hero.window].glyph}{' '}
-                  {effectiveWindows[hero.window].label}
-                </Text>
-                <View style={styles.metaDot} />
-                <Text style={styles.heroXp}>
-                  <Text style={styles.heroXpNum}>+{hero.xpReward}</Text> xp
-                </Text>
-              </View>
-              <View style={styles.markDoneWrap}>
-                <Pressable
-                  onPress={() => completeQuest(hero)}
-                  style={({ pressed }) => [
-                    styles.markDoneBtn,
-                    { backgroundColor: accent.fg },
-                    pressed && { opacity: 0.86 },
-                  ]}
-                >
-                  <View style={styles.markDoneCheck}>
-                    <Text style={styles.markDoneCheckGlyph}>✓</Text>
-                  </View>
-                  <Text style={styles.markDoneText}>Mark it done</Text>
-                </Pressable>
-                {floater && (
-                  <View style={styles.floaterMount}>
-                    <XpFloater amount={floater.amount} color={floater.color} />
-                  </View>
-                )}
-              </View>
-              {candidates.length > 1 && (
-                <Pressable
-                  onPress={() => {
-                    Haptics.selectionAsync();
-                    setSwap((s) => s + 1);
-                  }}
-                  hitSlop={10}
-                >
-                  <Text style={styles.swapText}>
-                    not feeling it? → show me another
+              }
+              metaSlot={
+                <View style={styles.heroMeta}>
+                  <Text
+                    style={[
+                      styles.heroTierLabel,
+                      { color: IMPORTANCE[hero.importance].color },
+                    ]}
+                  >
+                    <Text style={styles.heroTierSigil}>
+                      {IMPORTANCE[hero.importance].sigil}
+                    </Text>{' '}
+                    {IMPORTANCE[hero.importance].label}
                   </Text>
-                </Pressable>
-              )}
-            </View>
+                  <View style={styles.metaDot} />
+                  <Text
+                    style={[
+                      styles.heroWindowMeta,
+                      { color: WINDOWS[hero.window].color },
+                    ]}
+                  >
+                    {WINDOWS[hero.window].glyph}{' '}
+                    {effectiveWindows[hero.window].label}
+                  </Text>
+                  <View style={styles.metaDot} />
+                  <Text style={styles.heroXp}>
+                    <Text style={styles.heroXpNum}>+{hero.xpReward}</Text> xp
+                  </Text>
+                </View>
+              }
+            />
+            {floater && (
+              <View style={styles.floaterMount}>
+                <XpFloater amount={floater.amount} color={floater.color} />
+              </View>
+            )}
           </View>
         ) : null}
 
-        {/* ── Capture — one calm line ── */}
-        {!capOpen ? (
-          <View ref={captureRef as never} style={styles.captureClosed}>
-            <Pressable
-              onPress={() => setCapOpen(true)}
-              style={styles.captureClosedText}
-              hitSlop={4}
-            >
-              <Text style={[styles.captureSpark, { color: accent.fg }]}>
+        {/* The expanded brain-dump surface no longer renders inline
+            in the scroll — it was popping up somewhere mid-page
+            depending on scroll position and reading as buggy. It's
+            now a proper slide-from-bottom sheet (HomeCaptureModal),
+            rendered at the end of the SafeAreaView so it composes
+            with the other modals. The pill's expand button still
+            just toggles capOpen; the modal takes over from there. */}
+
+
+        {/* Sorting card — shown while the LLM is processing a fresh
+            capture. Renders in place of the LumiSuggestCard so the
+            user never sees the wrong deterministic guess first.
+            Cleared as soon as sortingRaw is null (LLM returned or
+            5s timeout fired). */}
+        {sortingRaw && (
+          <View style={styles.sortingCard}>
+            <View style={styles.sortingHeaderRow}>
+              <Text style={[styles.sortingSpark, { color: accent.fg }]}>
                 ✦
               </Text>
-              <Text style={styles.capturePlaceholder}>
-                Dump a thought… I&apos;ll sort it later
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={handleMic}
-              hitSlop={10}
-              style={[
-                styles.captureMicBtn,
-                voice.state === 'recording' && {
-                  backgroundColor: accent.fg,
-                },
-              ]}
-            >
-              {voice.state === 'transcribing' ? (
-                <Text style={styles.captureMic}>…</Text>
-              ) : (
-                <MicIcon
-                  size={16}
-                  color={voice.state === 'recording' ? C.void : C.mute}
-                />
-              )}
-            </Pressable>
-          </View>
-        ) : (
-          <View
-            style={[styles.captureOpen, { borderColor: accent.fg }]}
-          >
-            {/* Multiline input — grows from a one-liner up to a tall
-                ~12-line frame, then scrolls internally past that.
-                We use minHeight + maxHeight (not a tracked explicit
-                height) because RN iOS multiline auto-grows reliably
-                with that style pattern; the earlier
-                onContentSizeChange path silently failed to grow on
-                iOS once it hit the clamp. Submit via the "Tuck it
-                away" button — Return adds a newline, which is what
-                the user wants when brain-dumping. */}
-            <TextInput
-              autoFocus
-              value={capText}
-              onChangeText={setCapText}
-              placeholder="dump anything — calls, errands, half-thoughts. messy is fine, I'll sort it."
-              placeholderTextColor={C.mute}
-              style={styles.captureInput}
-              multiline
-              textAlignVertical="top"
-              scrollEnabled
-              editable={voice.state !== 'transcribing'}
-              // Auto-cancel when the user taps outside an empty input.
-              // onBlur fires when iOS pulls focus to anything else,
-              // so this gives a "tap-anywhere-to-dismiss" feel for
-              // empty drafts without disturbing in-progress dumps.
-              // Voice-recording state pauses this — the user's mid-
-              // recording, focus naturally bounces.
-              onBlur={() => {
-                if (
-                  !capText.trim() &&
-                  voice.state !== 'recording' &&
-                  voice.state !== 'transcribing'
-                ) {
-                  setCapOpen(false);
-                }
-              }}
-            />
-            {capText.trim().length > 80 && (
-              <Text style={styles.captureCount}>
-                {capText.trim().split(/\s+/).length} words
-              </Text>
-            )}
-            <View style={styles.captureActions}>
-              <Pressable
-                onPress={handleMic}
-                hitSlop={6}
-                style={[
-                  styles.captureMicBtn,
-                  voice.state === 'recording' && {
-                    backgroundColor: accent.fg,
-                  },
-                ]}
-              >
-                {voice.state === 'transcribing' ? (
-                  <Text style={styles.captureMic}>…</Text>
-                ) : (
-                  <MicIcon
-                    size={16}
-                    color={voice.state === 'recording' ? C.void : C.mute}
-                  />
-                )}
-              </Pressable>
-              <View style={{ flex: 1 }} />
-              <Pressable
-                onPress={() => {
-                  setCapOpen(false);
-                  setCapText('');
-                  if (voice.state === 'recording') {
-                    voice.cancel();
-                  }
-                }}
-                style={styles.captureCancel}
-              >
-                <Text style={styles.captureCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={sendCapture}
-                disabled={!capText.trim()}
-                style={[
-                  styles.captureSend,
-                  capText.trim()
-                    ? { backgroundColor: accent.dk }
-                    : {
-                        backgroundColor: 'transparent',
-                        borderWidth: 1,
-                        borderColor: C.hair,
-                      },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.captureSendText,
-                    { color: capText.trim() ? C.bone : C.mute },
-                  ]}
-                >
-                  Tuck it away
-                </Text>
-              </Pressable>
+              <Text style={styles.sortingEyebrow}>Lumi is sorting…</Text>
+            </View>
+            <Text style={styles.sortingTitle}>reading what you said</Text>
+            <View style={styles.sortingDotsRow}>
+              <View
+                style={[styles.sortingDot, { backgroundColor: accent.fg }]}
+              />
+              <View
+                style={[styles.sortingDot, { backgroundColor: accent.fg }]}
+              />
+              <View
+                style={[styles.sortingDot, { backgroundColor: accent.fg }]}
+              />
             </View>
           </View>
         )}
@@ -2656,14 +2758,17 @@ export default function Home() {
             LumiSuggestCard rendering: shows the first task with a
             "1 of N" badge, user accepts/dismisses → next task slides
             in. Bulk "Accept all remaining" button below for users
-            who don't want to step through one-by-one. */}
-        {previewTasks && previewTasks[0] && (
+            who don't want to step through one-by-one. Hidden while
+            sortingRaw is set so we never render the (possibly
+            deterministic) preview before the LLM has spoken. */}
+        {!sortingRaw && previewTasks && previewTasks[0] && (
           <View style={{ marginBottom: 16 }}>
             <LumiSuggestCard
               input={{
                 id: 'preview_0',
-                title: aiPending ? 'Lumi is sorting…' : previewTasks[0].title,
-                subtitle: aiPending ? 'reading what you said' : undefined,
+                title: previewTasks[0].title,
+                subtitle: undefined,
+                note: previewTasks[0].note ?? undefined,
                 defaultWindow:
                   previewTasks[0].window === 'someday'
                     ? 'evening'
@@ -2709,6 +2814,12 @@ export default function Home() {
               input={{
                 id: heroSuggestion.id,
                 title: heroSuggestion.title,
+                // For recurrence suggestions the "note" is the span
+                // copy ("4 Sundays in a row") — the evidence that
+                // made Lumi spot the pattern in the first place.
+                note: heroSuggestion.span
+                  ? `You've done this ${heroSuggestion.span.toLowerCase()}`
+                  : undefined,
                 defaultWindow:
                   (heroSuggestion.guess?.part as WindowKey) ?? 'evening',
                 defaultExactMinute: heroSuggestion.guess?.at ?? null,
@@ -2909,6 +3020,124 @@ export default function Home() {
         <View style={{ height: 24 }} />
       </ScrollView>
 
+      {/* ── Floating capture pill ──────────────────────────────────
+          Anchored above the LumiFloatingNav, always visible on Home
+          (hides only while the expanded brain-dump is showing to
+          avoid stacking two capture surfaces).
+
+          Composition:
+            ✦ sparkle       — Lumi's voice, matches the hero eyebrow
+            editable input  — one-line quick capture; Return submits
+            MicButton       — real component (not the raw MicIcon);
+                              onTranscribed → same LLM-parse pipeline
+            expand icon     — SVG "corners outward" glyph; opens the
+                              inline expanded capture for messy dumps
+
+          When capText has content: the mic + expand collapse into a
+          single ember-filled ↑ submit button that runs sendCapture,
+          matching the mockup's quick-fire capture pattern. */}
+      {!capOpen && !previewTasks && !sortingRaw && (
+        <View style={styles.capturePill} pointerEvents="box-none">
+          <View style={styles.capturePillInner}>
+            <Text
+              style={[styles.capturePillSpark, { color: accent.fg }]}
+            >
+              ✦
+            </Text>
+            <TextInput
+              value={capText}
+              onChangeText={setCapText}
+              placeholder="Dump a thought…"
+              placeholderTextColor={C.mute}
+              style={styles.capturePillInput}
+              multiline
+              scrollEnabled
+              returnKeyType="send"
+              onSubmitEditing={sendCapture}
+              blurOnSubmit={false}
+            />
+            {/* Mic is ALWAYS visible — the pill's primary purpose is
+               speak-instead-of-type. Recording state pulses a dot,
+               transcribing state shows an ellipsis, idle shows the
+               icon. */}
+            <Pressable
+              onPress={handleMic}
+              hitSlop={10}
+              style={styles.capturePillMic}
+              accessibilityLabel="Voice capture"
+            >
+              {voice.state === 'transcribing' ? (
+                <Text style={styles.capturePillMicTranscribing}>…</Text>
+              ) : voice.state === 'recording' ? (
+                <View
+                  style={[
+                    styles.capturePillMicDot,
+                    { backgroundColor: accent.fg },
+                  ]}
+                />
+              ) : (
+                <MicIcon size={20} color={C.boneDim} />
+              )}
+            </Pressable>
+            {/* Right-most slot flips between EXPAND (empty → opens
+               the brain-dump modal for messier dumps) and SEND
+               (text present → runs sendCapture through the LLM
+               parse + preview pipeline). Same footprint so the
+               swap doesn't shift the mic's position. */}
+            {capText.trim() ? (
+              <Pressable
+                onPress={sendCapture}
+                style={[
+                  styles.capturePillExpand,
+                  {
+                    borderColor: accent.fg,
+                    backgroundColor: accent.fg,
+                  },
+                ]}
+                hitSlop={6}
+                accessibilityLabel="Send"
+              >
+                <Text
+                  style={[
+                    styles.capturePillSendGlyph,
+                    { color: C.void },
+                  ]}
+                >
+                  ↑
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setCapOpen(true);
+                }}
+                style={[
+                  styles.capturePillExpand,
+                  {
+                    borderColor: hexA(accent.fg, 0.4),
+                    backgroundColor: hexA(accent.fg, 0.14),
+                  },
+                ]}
+                hitSlop={6}
+                accessibilityLabel="Open full brain-dump"
+              >
+                <Svg width={18} height={18} viewBox="0 0 24 24">
+                  <Path
+                    d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"
+                    stroke={accent.fg}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                </Svg>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      )}
+
       {/* "Schedule habit" sheet — opens when the user taps the
           "Lumi noticed" suggestion. Pre-filled with Lumi's guess as
           the starting point; the user adjusts cadence/day/time and
@@ -2976,6 +3205,44 @@ export default function Home() {
           }
         }}
       />
+
+      {/* Focus task-picker modal — opens from the LumiFocusCard's
+          "Focus on another task →" link. Shows today's incomplete
+          quests; picking one starts a session on it and the modal
+          swaps its body to the same LumiFocusCard bound to the
+          chosen quest. Closing the modal doesn't cancel the session
+          (the timer keeps ticking in the Dynamic Island). */}
+      <FocusTaskPickerModal
+        visible={focusPickerOpen}
+        onClose={() => setFocusPickerOpen(false)}
+        quests={todayQuests.filter((q) => !q.completed)}
+        petName={focusPetName}
+        ambientMood={ambientMood}
+        onCompleteQuest={(q) => completeQuest(q)}
+        onFocusStart={triggerLick}
+      />
+
+      {/* Brain-dump sheet — slides up from the bottom, taking over
+          the screen with a big Fraunces prompt + a proper multiline
+          textarea + the real MicButton + a "Make sense of it →"
+          submit. Opens when the user taps the floating pill's
+          expand button, or when handleTranscribed can't parse a
+          voice transcript deterministically and defers to review. */}
+      <HomeCaptureModal
+        visible={capOpen}
+        onClose={() => {
+          setCapOpen(false);
+          setCapText('');
+          if (voice.state === 'recording') {
+            void voice.cancel();
+          }
+        }}
+        capText={capText}
+        setCapText={setCapText}
+        onSubmit={sendCapture}
+        onTranscribed={handleTranscribed}
+        submitting={aiPending}
+      />
     </SafeAreaView>
   );
 }
@@ -2997,10 +3264,58 @@ const makeStyles = (accent: Accent) =>
     scroll: {
       paddingHorizontal: 22,
       paddingTop: 26,
-      // Clearance for the floating glass nav so the last card
-      // (typically the brain-dump quick capture or empty-state
-      // suggestion) isn't hidden under the pill.
-      paddingBottom: FLOATING_NAV_CLEARANCE,
+      // Clearance for the floating glass nav + the pill that hovers
+      // above it. Nav owns FLOATING_NAV_CLEARANCE from the bottom;
+      // the pill sits at bottom: FLOATING_NAV_CLEARANCE + 8 and is
+      // ~56 tall, so the last card shouldn't be able to scroll into
+      // the pill zone either (total reserved = ~184).
+      paddingBottom: FLOATING_NAV_CLEARANCE + 72,
+    },
+
+    // ── Sorting card (shown while LLM is processing a capture) ──
+    sortingCard: {
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: hexA(accent.fg, 0.32),
+      backgroundColor: hexA(C.void2, 0.6),
+      paddingHorizontal: 20,
+      paddingVertical: 22,
+      marginBottom: 16,
+      alignItems: 'flex-start',
+    },
+    sortingHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 8,
+    },
+    sortingSpark: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+    },
+    sortingEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10.5,
+      letterSpacing: 2,
+      textTransform: 'uppercase',
+      color: C.boneDim,
+    },
+    sortingTitle: {
+      fontFamily: fonts.fraunces,
+      fontSize: 22,
+      color: C.bone,
+      letterSpacing: -0.3,
+      marginBottom: 14,
+    },
+    sortingDotsRow: {
+      flexDirection: 'row',
+      gap: 6,
+    },
+    sortingDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      opacity: 0.6,
     },
 
     // ── Toast ──
@@ -3364,6 +3679,28 @@ const makeStyles = (accent: Accent) =>
       color: C.void,
       letterSpacing: 0.1,
     },
+    // Start / End focus pill below the Mark-it-done CTA. Outline
+    // style so it reads as a secondary action; flips ember-tinted
+    // when a session is running on this quest.
+    focusBtn: {
+      marginTop: 10,
+      paddingVertical: 11,
+      borderRadius: 13,
+      borderWidth: 1,
+      borderColor: hexA(C.boneDim, 0.25),
+      backgroundColor: 'transparent',
+      alignItems: 'center',
+    },
+    focusBtnActive: {
+      borderColor: hexA(C.ember, 0.5),
+      backgroundColor: hexA(C.ember, 0.08),
+    },
+    focusBtnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 13.5,
+      color: C.boneDim,
+      letterSpacing: 0.1,
+    },
     floaterMount: {
       position: 'absolute',
       right: 18,
@@ -3417,6 +3754,135 @@ const makeStyles = (accent: Accent) =>
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: 'transparent',
+    },
+
+    // ── Floating capture pill ──
+    // Anchored above the floating nav via FLOATING_NAV_CLEARANCE.
+    // pointerEvents on the outer wrapper is 'box-none' so taps that
+    // don't hit the pill itself pass through to whatever's behind
+    // (nav, scroll content). The inner styled row is what actually
+    // catches touches.
+    capturePill: {
+      position: 'absolute',
+      left: 14,
+      right: 14,
+      // Sits FLOATING_NAV_CLEARANCE + 4 above the screen bottom —
+      // just clear of the nav's top edge (nav occupies the bottom
+      // FLOATING_NAV_CLEARANCE zone). Gives a ~4px visible gap
+      // between pill bottom and nav top so the two surfaces read
+      // as stacked, not touching.
+      bottom: FLOATING_NAV_CLEARANCE + 4,
+      zIndex: 30,
+    },
+    capturePillInner: {
+      flexDirection: 'row',
+      // alignItems: flex-end so when the input grows multiline the
+      // sparkle + icon buttons stay pinned to the bottom of the
+      // pill, and the text expands UPWARD. On a single-line input
+      // this reads the same as center-aligned (icons and text share
+      // the same baseline).
+      alignItems: 'flex-end',
+      gap: 12,
+      paddingLeft: 16,
+      paddingRight: 10,
+      paddingVertical: 10,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: hexA(C.bone, 0.1),
+      backgroundColor: hexA('#241C17', 0.86),
+      // Match the nav's frosted-glass shadow so the two surfaces
+      // feel like one floating dock.
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 12 },
+      shadowRadius: 24,
+      shadowOpacity: 0.5,
+      elevation: 8,
+    },
+    capturePillSpark: {
+      fontFamily: fonts.inter,
+      fontSize: 16,
+      flexShrink: 0,
+      marginRight: 2,
+      // Sparkle sits on the same baseline as the 36-tall icon
+      // buttons. Padding-bottom aligns it with the vertical
+      // center of the first line of text at the bottom of the
+      // multi-line stack.
+      paddingBottom: 8,
+    },
+    capturePillInput: {
+      flex: 1,
+      minWidth: 0,
+      fontFamily: fonts.inter,
+      fontSize: 15,
+      color: C.bone,
+      letterSpacing: -0.1,
+      padding: 0,
+      // Reverted to the previous simple pattern per user — min +
+      // maxHeight caps growth to ~5 lines. iOS won't do true
+      // internal scrolling with maxHeight alone (that needed the
+      // tracked-height pattern we removed), but the visual cap
+      // + long-dump-expand path via the fullscreen brain-dump
+      // modal is what the user asked for.
+      minHeight: 36,
+      maxHeight: 130,
+      paddingTop: 8,
+      paddingBottom: 8,
+      lineHeight: 20,
+      textAlignVertical: 'top',
+    },
+    capturePillSendGlyph: {
+      fontFamily: fonts.interSemi,
+      fontSize: 18,
+      lineHeight: 20,
+    },
+    capturePillSubmit: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    capturePillSubmitGlyph: {
+      fontFamily: fonts.interSemi,
+      fontSize: 18,
+      lineHeight: 20,
+    },
+    capturePillExpand: {
+      width: 36,
+      height: 36,
+      // Rounded SQUARE per the mockup — the mic beside it is a
+      // bare inline icon (no button chrome), so the expand's own
+      // rounded-rect shape doesn't clash with anything. Reads as
+      // "here's your open-fullscreen affordance", distinct from
+      // the mic tap.
+      borderRadius: 12,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    // Bare inline mic — chromeless (matches the mockup). Same 36×36
+    // hitbox as the expand button so tap targets are consistent,
+    // but no border/background: it reads as a plain icon that
+    // colors up when recording (pulse dot) or transcribing (…).
+    capturePillMic: {
+      width: 36,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    capturePillMicDot: {
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+    },
+    capturePillMicTranscribing: {
+      fontFamily: fonts.interSemi,
+      fontSize: 18,
+      color: C.boneDim,
+      lineHeight: 20,
     },
 
     // ── Guided follow-up ──

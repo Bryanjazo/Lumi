@@ -18,7 +18,8 @@ import { fonts } from '../constants/fonts';
 import { useUserStore } from '../store/userStore';
 import { useAccent } from '../lib/theme';
 import { skins, type Skin } from '../constants/skins';
-import { lunaSource, type LunaMood } from '../lib/luna-source';
+import { type LunaMood } from '../lib/luna-source';
+import { skinPreview } from '../lib/skin-preview';
 
 // ── Palette (matches profile screen) ───────────────────────────────
 const C = {
@@ -34,20 +35,24 @@ const C = {
 
 const NAME_MAX = 30;
 
-// ── Mini Luna avatar — same animated cat as the rest of the app via
-// the shared `lunaSource()` helper. `primary` / `secondary` are
-// accepted for API compat with existing callers but ignored. ──
+// ── Mini Luna avatar — colored per-skin preview PNG so the picker
+// shows real color variation instead of the same tan cat with a
+// different label. `skinId` picks the recolored still-frame; the
+// animated GIF path only kicks in for the 'default' / 'original'
+// case (which uses the base sprite anyway). primary / secondary
+// stay in the signature for API compat with older callers. ──
 const MiniLuna = ({
   size = 56,
-  mood = 'idle',
+  skinId,
 }: {
   size?: number;
   primary?: string;
   secondary?: string;
   mood?: LunaMood;
+  skinId?: string;
 }) => (
   <Image
-    source={lunaSource(mood)}
+    source={skinPreview(skinId)}
     style={{ width: size, height: size }}
     resizeMode="contain"
   />
@@ -88,9 +93,19 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
   }, [visible, currentName, currentAvatar]);
 
   const trimmed = draftName.trim();
+  const nameChanged = trimmed !== currentName.trim();
+  const avatarChanged = draftAvatar !== currentAvatar;
   const nameValid = trimmed.length >= 1 && trimmed.length <= NAME_MAX;
-  const changed =
-    (trimmed && trimmed !== currentName) || draftAvatar !== currentAvatar;
+  // Save is enabled when EITHER an avatar swap is pending OR a
+  // name change is pending AND that name is valid. Empty name with
+  // only avatar changing must NOT block — user shouldn't be forced
+  // to type a name they already have (or don't want to set) just to
+  // pick a different cat. Previous logic gated on `nameValid` for
+  // every save, which is why the button read as broken from the
+  // avatar picker.
+  const canSave =
+    avatarChanged || (nameChanged && nameValid);
+  const changed = nameChanged || avatarChanged;
 
   const options: AvatarOption[] = [
     {
@@ -114,10 +129,13 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
   ];
 
   const save = () => {
-    if (!nameValid || !changed) return;
+    if (!canSave) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (trimmed !== currentName) setName(trimmed);
-    if (draftAvatar !== currentAvatar) setAvatar(draftAvatar);
+    // Only push a name update when the user actually changed it AND
+    // the new value is valid — an empty draft with a valid stored
+    // name shouldn't wipe the stored name.
+    if (nameChanged && nameValid) setName(trimmed);
+    if (avatarChanged) setAvatar(draftAvatar);
     onClose();
   };
 
@@ -142,14 +160,14 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
               <Text style={styles.title}>Edit profile</Text>
               <Pressable
                 onPress={save}
-                disabled={!nameValid || !changed}
+                disabled={!canSave}
                 hitSlop={12}
               >
                 <Text
                   style={[
                     styles.action,
                     {
-                      color: nameValid && changed ? accent.fg : C.mute,
+                      color: canSave ? accent.fg : C.mute,
                       fontFamily: fonts.interSemi,
                     },
                   ]}
@@ -210,11 +228,7 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
                       ]}
                     >
                       <View style={styles.avatarSprite}>
-                        <MiniLuna
-                          size={48}
-                          primary={opt.primary}
-                          secondary={opt.secondary}
-                        />
+                        <MiniLuna size={48} skinId={opt.id} />
                       </View>
                       <Text
                         style={[

@@ -1,15 +1,31 @@
-// LumiMoodWidget — a single small-size iOS home-screen widget that
-// shows the user's cat's current mood + how many tasks they've done
-// today. Reads from a shared App Group (group.app.lumi.ios) that
-// the React Native side writes to via @bacons/apple-targets's
-// ExtensionStorage. Refreshes hourly on its own and is reloaded
-// explicitly by the app whenever the mood or completion count changes.
+// Widget extension entry point — hosts BOTH the home-screen widget
+// (LumiMoodWidget) and the per-task Live Activity (LumiTaskLiveActivity)
+// via a WidgetBundle. Widget Extensions on iOS 16.1+ can host
+// ActivityConfiguration alongside StaticConfiguration in the same
+// bundle, so no second target is needed.
 
 import WidgetKit
 import SwiftUI
+import ActivityKit
 
-// ── Shared App Group keys ─────────────────────────────────────────
-// Keep these in sync with lib/widget.ts on the JS side.
+// ═════════════════════════════════════════════════════════════════════
+// BUNDLE — registers every widget + live activity this extension owns
+// ═════════════════════════════════════════════════════════════════════
+
+@main
+struct LumiWidgetBundle: WidgetBundle {
+    var body: some Widget {
+        LumiMoodWidget()
+        if #available(iOS 16.1, *) {
+            LumiTaskLiveActivity()
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// 1 · HOME-SCREEN WIDGET — Lumi's mood + tasks done today
+// ═════════════════════════════════════════════════════════════════════
+
 private enum SharedKey {
     static let mood = "mood"               // "idle" | "happy" | "sad" | "sleep"
     static let petName = "petName"         // User-renameable cat name
@@ -17,16 +33,12 @@ private enum SharedKey {
     static let suite = "group.app.lumi.ios"
 }
 
-// ── Timeline entry ────────────────────────────────────────────────
-
 struct LumiMoodEntry: TimelineEntry {
     let date: Date
     let mood: String
     let petName: String
     let completedToday: Int
 }
-
-// ── Provider — reads the App Group on every snapshot ──────────────
 
 struct LumiMoodProvider: TimelineProvider {
     func placeholder(in context: Context) -> LumiMoodEntry {
@@ -38,7 +50,7 @@ struct LumiMoodProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<LumiMoodEntry>) -> Void) {
-        // Hourly refresh as a safety net — the main app calls
+        // Hourly safety-net refresh — the app calls
         // WidgetCenter.shared.reloadAllTimelines() on real mood
         // changes, so this background tick mostly catches drift
         // (sleep window roll, completion count reset at midnight).
@@ -60,8 +72,6 @@ struct LumiMoodProvider: TimelineProvider {
         )
     }
 }
-
-// ── View ──────────────────────────────────────────────────────────
 
 struct LumiMoodWidgetView: View {
     var entry: LumiMoodProvider.Entry
@@ -87,9 +97,6 @@ struct LumiMoodWidgetView: View {
     }
 }
 
-// ── Widget ────────────────────────────────────────────────────────
-
-@main
 struct LumiMoodWidget: Widget {
     let kind = "LumiMoodWidget"
 
@@ -100,5 +107,217 @@ struct LumiMoodWidget: Widget {
         .configurationDisplayName("Lumi")
         .description("Your cat's mood and how many tasks you've done today.")
         .supportedFamilies([.systemSmall])
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// 2 · LIVE ACTIVITY — per-task focus session for the Dynamic Island
+// ═════════════════════════════════════════════════════════════════════
+
+// ── Static Luna sprite ─────────────────────────────────────────────
+//
+// Simplified per user — iOS Live Activity animation constraints are
+// severe enough (TimelineView(.periodic) gets throttled to render-once,
+// state-driven pushes burn ActivityKit budget) that a still,
+// well-composed sprite reads better than a chunky 1fps animation. The
+// cat "rests" through the focus session; motion lives in the app.
+//
+// Fixed to the sleeping sprite regardless of the mood param — this is
+// the Live Activity's "curled up while you focus" pose. mood + elapsed
+// kept in the signature so callers don't need to know the widget's
+// internal choice; future per-mood behavior can hook in without
+// touching every render site.
+@available(iOS 16.1, *)
+struct LunaSpriteView: View {
+    let mood: String
+    let size: CGFloat
+    let elapsedSeconds: Int
+
+    var body: some View {
+        Image("luna-sleep")
+            .resizable()
+            .interpolation(.none)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size, height: size)
+    }
+}
+
+// Helper — builds a Date range for Text(timerInterval:) from the
+// session's elapsed + duration. Reconstructs the original startedAt
+// from now - elapsed so the timer counts down against real wall time.
+@available(iOS 16.1, *)
+private func sessionRange(elapsed: Int, duration: Int) -> ClosedRange<Date> {
+    let start = Date().addingTimeInterval(-Double(elapsed))
+    let end = start.addingTimeInterval(Double(duration))
+    return start...end
+}
+
+@available(iOS 16.1, *)
+struct LumiTaskLiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: LumiTaskAttributes.self) { context in
+            // ── LOCK SCREEN / BANNER ──
+            // Renders on the lock screen + as a banner on Android-
+            // style notifications on older iPhones (iPhone < 14 Pro
+            // that don't have a Dynamic Island).
+            LockScreenView(
+                state: context.state,
+                attributes: context.attributes
+            )
+        } dynamicIsland: { context in
+            DynamicIsland {
+                // ── EXPANDED (long-pressed pill) ──
+                DynamicIslandExpandedRegion(.leading) {
+                    HStack(spacing: 8) {
+                        LunaSpriteView(
+                            mood: context.state.mood,
+                            size: 32,
+                            elapsedSeconds: context.state.elapsedSeconds
+                        )
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(context.attributes.petName)
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundColor(Color(red: 0.92, green: 0.88, blue: 0.79))
+                            Text(moodWord(for: context.state.mood))
+                                .font(.system(size: 9))
+                                .foregroundColor(Color(red: 0.69, green: 0.64, blue: 0.55))
+                        }
+                    }
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    // Text(timerInterval:) is iOS's built-in
+                    // self-updating countdown — refreshes every
+                    // second natively without needing our JS-side
+                    // updateTaskActivity ping. Reads smoothly
+                    // instead of jumping 5 seconds at a time
+                    // between our own ticks.
+                    Text(
+                        timerInterval: sessionRange(
+                            elapsed: context.state.elapsedSeconds,
+                            duration: context.attributes.durationSeconds
+                        ),
+                        countsDown: true
+                    )
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .foregroundColor(Color(red: 0.88, green: 0.48, blue: 0.31))
+                    .monospacedDigit()
+                    .multilineTextAlignment(.trailing)
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(context.attributes.taskTitle)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Color(red: 0.92, green: 0.88, blue: 0.79))
+                            .lineLimit(1)
+                        ProgressView(
+                            value: progress(
+                                context.state.elapsedSeconds,
+                                context.attributes.durationSeconds
+                            )
+                        )
+                        .tint(Color(red: 0.88, green: 0.48, blue: 0.31))
+                    }
+                }
+            } compactLeading: {
+                // ── COMPACT LEADING (left of camera) ──
+                // 24pt is the practical max for a compact-leading
+                // icon before iOS clips it. Bumped from 20 → 24 per
+                // user ("make it the biggest it can be").
+                LunaSpriteView(
+                    mood: context.state.mood,
+                    size: 24,
+                    elapsedSeconds: context.state.elapsedSeconds
+                )
+            } compactTrailing: {
+                // ── COMPACT TRAILING (right of camera) ──
+                // Native iOS timer interval — auto-refreshes every
+                // second, no ContentState ping needed. Smooth
+                // countdown instead of 5-second jumps.
+                Text(
+                    timerInterval: sessionRange(
+                        elapsed: context.state.elapsedSeconds,
+                        duration: context.attributes.durationSeconds
+                    ),
+                    countsDown: true
+                )
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(Color(red: 0.88, green: 0.48, blue: 0.31))
+                .monospacedDigit()
+            } minimal: {
+                // ── MINIMAL (multiple activities competing) ──
+                // Minimal slot is smaller than compact leading —
+                // 22pt is the practical max here.
+                LunaSpriteView(
+                    mood: context.state.mood,
+                    size: 22,
+                    elapsedSeconds: context.state.elapsedSeconds
+                )
+            }
+        }
+    }
+}
+
+@available(iOS 16.1, *)
+struct LockScreenView: View {
+    let state: LumiTaskAttributes.ContentState
+    let attributes: LumiTaskAttributes
+
+    var body: some View {
+        HStack(spacing: 14) {
+            LunaSpriteView(
+                mood: state.mood,
+                size: 52,
+                elapsedSeconds: state.elapsedSeconds
+            )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(attributes.taskTitle)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color(red: 0.92, green: 0.88, blue: 0.79))
+                    .lineLimit(1)
+                ProgressView(
+                    value: progress(
+                        state.elapsedSeconds,
+                        attributes.durationSeconds
+                    )
+                )
+                .tint(Color(red: 0.88, green: 0.48, blue: 0.31))
+            }
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(
+                    timerInterval: sessionRange(
+                        elapsed: state.elapsedSeconds,
+                        duration: attributes.durationSeconds
+                    ),
+                    countsDown: true
+                )
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .foregroundColor(Color(red: 0.88, green: 0.48, blue: 0.31))
+                .monospacedDigit()
+                Text("left")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color(red: 0.43, green: 0.40, blue: 0.35))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .activityBackgroundTint(Color(red: 0.078, green: 0.055, blue: 0.047))
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────
+
+@available(iOS 16.1, *)
+private func progress(_ elapsed: Int, _ total: Int) -> Double {
+    guard total > 0 else { return 0 }
+    return min(1.0, Double(elapsed) / Double(total))
+}
+
+@available(iOS 16.1, *)
+private func moodWord(for mood: String) -> String {
+    switch mood {
+    case "happy": return "happy"
+    case "sad": return "watching"
+    case "sleep": return "resting"
+    default: return "with you"
     }
 }

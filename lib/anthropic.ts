@@ -227,6 +227,40 @@ For EACH distinct task in the input, return an object with these fields:
 
   - title:         a short, clean imperative — max 6 words, no period. Strip filler ("um", "I should", "remember to", "don't forget to", "maybe"). Strip time/date words. Strip first-person framing — "I forgot to call mom" → "Call mom", "I need to email Jenny" → "Email Jenny". Keep proper nouns, numbers, the action verb + object. Banned words: just, should, try.
 
+                    CRITICAL — split "about X" / "for X" / "regarding X" / "re: X"
+                    out of the title and into the NOTE. The title is the
+                    ACTION + WHO/WHERE; the topic belongs in the note. The
+                    title gets shorter AND the note carries the why. This
+                    applies even when the title is already under 6 words.
+                      "Call mom about doctor appointment"
+                          → title: "Call mom"
+                            note:  "About doctor appointment"
+                      "Email Sarah about the Q3 report"
+                          → title: "Email Sarah"
+                            note:  "About the Q3 report"
+                      "Text dad re: this weekend"
+                          → title: "Text dad"
+                            note:  "Re: this weekend"
+                      "Meeting with David for pricing review"
+                          → title: "Meeting with David"
+                            note:  "For pricing review"
+                      "Pick up the prescription for grandma"
+                          → title: "Pick up prescription"
+                            note:  "For grandma"
+                    SAME RULE for em-dash / comma context appended to an action:
+                      "Get the vase — the ceramic one she liked"
+                          → title: "Get the vase"
+                            note:  "The ceramic one she liked"
+                      "Email Sarah, she's waiting"
+                          → title: "Email Sarah"
+                            note:  "She's waiting"
+                    EXCEPTION — keep the topic in the title when the action
+                    is meaningless without it ("doctor appointment", "tax
+                    return", "rent payment" are atomic noun phrases that
+                    READ as the task itself).
+                      "Schedule a doctor appointment"  → title: "Schedule doctor appointment" (no note — "schedule" alone is too vague)
+                      "Pay rent"                       → title: "Pay rent" (no note — "pay" alone is too vague)
+
   - importance:    "high" | "medium" | "low" — by COGNITIVE/EMOTIONAL LOAD, not keywords.
                     high   = demanding focus, high-stakes, aversive — "the hard thing"
                              examples: "Tax audit", "Performance review", "Hard
@@ -302,36 +336,58 @@ For EACH distinct task in the input, return an object with these fields:
 Rules:
 - NEVER invent a date or time the user didn't imply. Leave when fields empty if unsure.
 - ISO dates are LOCAL to the today reference provided.
-- Splitting (CRITICAL — over-splitting is the most common failure mode):
-    Split ONLY when the user describes TWO SEPARATE ACTIONS connected by "and" with
-    NO shared verb or subject.
-        "Call mom AND pay rent"                 → 2 tasks   (two unrelated actions)
-        "Email Sarah AND book the flight"       → 2 tasks   (two unrelated actions)
+- Splitting (CRITICAL — split every real action, but don't invent extras):
+    SPLIT when the input contains MULTIPLE SEPARATE ACTIONS. All of these
+    are split signals; treat each equally:
+      • "and" between two verb phrases:
+          "Call mom AND pay rent"                     → 2 tasks
+          "Email Sarah AND book the flight"           → 2 tasks
+      • COMMAS between action fragments — EACH fragment starts with a verb
+        (or is a familiar chore noun like "gas", "dishes", "groceries"):
+          "finish the deck, reply to Sam, book dentist, tidy the desk"
+                                                       → 4 tasks
+          "call mom, groceries, dishes"               → 3 tasks
+          "email Bob, text Sarah, buy milk"           → 3 tasks
+        A comma-list with NO "and" is still a list — the missing connector
+        word is just how people type when they're brain-dumping. Extract
+        every fragment; don't collapse them into one task.
+      • Period or newline between sentences:
+          "Pay rent. Buy milk. Clean the sink."       → 3 tasks
+      • "then" / "oh and also" / "and then":
+          "Get gas then groceries then home"          → 2 tasks (skip "go home")
+
     DO NOT split when:
       • "and" connects two TOPICS / SUBJECTS of the SAME action:
-        "Speak with David about price AND deadline"        → 1 task, note: "price and deadline"
-        "Talk to mom about car AND insurance"              → 1 task, note: "car and insurance"
-        "Update the doc with pricing AND timeline"         → 1 task, note: "pricing and timeline"
-      • "and" connects DESCRIPTORS or DETAILS of one action:
-        "Buy milk, eggs, and bread"                        → 1 task ("Buy groceries"), note: "milk, eggs, bread"
-        "Send David the contract and the brief"            → 1 task, note: "contract and brief"
-      • The second item is CLEARLY CONTEXT, not its own action ("deadline", "price",
-        "details", "the rest" — these are nouns describing the first task, not
-        verbs commanding a new one).
-      • The second item is a THING TO DO DURING the first (the first is an event /
-        anchor, the second is a conversational/mental "while I'm there" reminder).
-        Signal phrases on the second item: "remind me to", "remind myself to",
-        "don't forget to", "ask about/for", "bring up", "mention", "while I'm
-        there", "make sure to":
-        "Go to work at 5 AND remind myself to ask for a raise"   → 1 task ("Go to work"),
-                                                                    note: "Ask for a raise"
-        "Dinner with mom AND don't forget to bring up the dentist" → 1 task ("Dinner with mom"),
-                                                                    note: "Bring up the dentist"
-        "Doctor at 9 AND ask about my back"                      → 1 task ("Doctor at 9"),
-                                                                    note: "Ask about back"
+          "Speak with David about price AND deadline" → 1 task, note: "price and deadline"
+          "Talk to mom about car AND insurance"       → 1 task, note: "car and insurance"
+      • "and" or "," connects DESCRIPTORS or DETAILS of one action:
+          "Buy milk, eggs, and bread"                 → 1 task ("Buy groceries"), note: "milk, eggs, bread"
+          "Send David the contract and the brief"     → 1 task, note: "contract and brief"
+      • A comma sets off an APPOSITIVE (a name / role / descriptor for the
+        subject of the same action):
+          "Email Bob, the manager, about the deadline" → 1 task ("Email Bob"),
+                                                          note: "The manager — about deadline"
+          "Talk to David, my mentor, tomorrow"         → 1 task, note: "My mentor"
+        Signal: the fragment after the comma is a NOUN PHRASE describing
+        someone/something in the previous fragment, NOT a new verb.
+      • The second item is CLEARLY CONTEXT, not its own action ("deadline",
+        "price", "details", "the rest" — nouns describing the first task).
+      • The second item is a THING TO DO DURING the first (the first is an
+        event / anchor, the second is a "while I'm there" reminder).
+        Signal phrases: "remind me to", "remind myself to", "don't forget
+        to", "ask about/for", "bring up", "mention", "while I'm there",
+        "make sure to":
+          "Go to work at 5 AND remind myself to ask for a raise"
+                                                      → 1 task ("Go to work"), note: "Ask for a raise"
+          "Dinner with mom, don't forget to bring up the dentist"
+                                                      → 1 task ("Dinner with mom"), note: "Bring up the dentist"
+          "Doctor at 9 AND ask about my back"         → 1 task ("Doctor at 9"), note: "Ask about back"
         The reminder is NOT its own schedulable event — it lives inside the first.
-    Quick check: would each piece, on its own, be a complete task someone could
-    DO? If not, it belongs in the note of the first task.
+
+    Quick check for EACH fragment: does it start with a VERB or is it a
+    complete task noun that someone could DO on its own? If yes → own task.
+    Is it a noun-phrase describing something in the previous fragment? If
+    yes → belongs in the previous task's note.
 
 - If the input is a single short phrase with no real action ("the report"), still return one task with the cleaned title.
 
@@ -355,6 +411,52 @@ ADHD-specific edge cases (READ CAREFULLY — these come up constantly):
   dentist hasnt been done in months and i should probably finally clean the garage"
   → Extract 3 tasks. Each "oh and also" / "and" between separate verbs is a NEW
   task. Don't lose any.
+
+- BARE COMMA-LIST (very common ADHD pattern): a list of actions separated by
+  ONLY commas — no "and", no "then". Extract EVERY one; don't be conservative
+  because the connector word is missing.
+    "finish the pitch deck this morning, reply to Sam about the timeline by
+     noon, book the dentist, edit this week's podcast at 4pm, send the client
+     invoice by 5pm, tidy the desk"
+        → 6 tasks (Finish pitch deck / Reply to Sam / Book dentist / Edit
+          podcast / Send client invoice / Tidy desk), each with the when +
+          notes it implies.
+    "call mom, pick up prescription, gas, dishes"
+        → 4 tasks (single-word fragments like "gas" and "dishes" ARE tasks in
+          this context — the pattern is what tells you).
+    Signal: each fragment starts with a verb (or is a familiar chore noun)
+    → separate task. If EVERY fragment looks action-like, split them all.
+
+- COMMA-AS-PUNCTUATION vs COMMA-AS-SEPARATOR: judge by what the comma sets off.
+    APPOSITIVE / TOPIC (comma as punctuation) → keep as one task:
+      "Email Bob, the manager, about the deadline"
+          → 1 task ("Email Bob"), note: "The manager — about deadline"
+      "Talk to David, my mentor, tomorrow"
+          → 1 task ("Talk to David"), note: "My mentor"
+      "Send Sarah the file, the one from last week"
+          → 1 task ("Send Sarah the file"), note: "The one from last week"
+    LIST OF ACTIONS (comma as separator) → split:
+      "Email Bob, call Sarah, text mom"
+          → 3 tasks
+      "Groceries, laundry, gym"
+          → 3 tasks
+    Quick check: does the fragment AFTER the comma start with a verb OR is
+    it a standalone chore noun? → separate task. Is it a noun-phrase describing
+    the previous item (a name, a role, a modifier)? → punctuation, keep as note.
+
+- CASUAL CHATTER + REAL TASKS: users vent while they capture. Extract ONLY the
+  actionable parts; drop the pure venting.
+    "man today sucks, gotta finish that report by 5pm otherwise the boss
+     will kill me"
+        → 1 task ("Finish report"), when.time: "17:00", importance: high
+    "ugh so tired but I still need to send the invoice"
+        → 1 task ("Send invoice"), importance: medium
+    "I'm so stressed about the presentation, need to prep slides, also
+     groceries"
+        → 2 tasks: "Prep slides" (importance: high — dread + presentation
+          weight), "Buy groceries" (importance: medium)
+    Signal: strip clauses that are pure feeling ("man today sucks", "ugh",
+    "so stressed") — they're context, not tasks. Keep the ACTION clauses.
 
 - OVERWHELM PILE: "I have so much to do today — A, B, C, D, E" → Extract every
   named task. The overwhelm feeling is real; reflect it by returning ALL of them
@@ -539,7 +641,14 @@ export const llmUnderstand = async (
     const text = await callMessages({
       kind: 'title_clean',
       system: UNDERSTAND_SYSTEM,
-      maxTokens: 600,
+      // Was 600 — too tight for long brain-dumps. Each task's JSON
+      // is ~100-150 tokens (title + importance + energyDemand +
+      // when + note + hasDeadline). A 13-task comma-dump needs
+      // ~1600+ tokens; at 600 the response truncated mid-object,
+      // the JSON parse failed, and llmUnderstand returned null.
+      // 3000 supports ~20 tasks comfortably — well above what a
+      // realistic single-capture dump ever contains.
+      maxTokens: 3000,
       messages: [
         {
           role: 'user',
@@ -551,6 +660,15 @@ export const llmUnderstand = async (
     if (!parsed || !Array.isArray(parsed.tasks)) return null;
     // Sanitize each task — coerce shape so a misbehaving model
     // doesn't blow up the caller. Drop tasks without a title.
+    // NOTE — an empty tasks array is a LEGITIMATE success (the LLM
+    // correctly extracted "nothing to do" from a question like
+    // "when do I have time tomorrow?" or a pure emoji "😩😩").
+    // We return `{ tasks: [] }` in that case, NOT null. Callers who
+    // want "empty means do nothing" can check `.tasks.length === 0`.
+    // Returning null here would conflate real errors (JSON parse
+    // failure, network) with valid empty extraction — the benchmark
+    // fails on both, and Home's upgrade path wipes the deterministic
+    // preview unnecessarily.
     const tasks = parsed.tasks
       .map((t): UnderstoodTask | null => {
         if (!t || typeof t.title !== 'string' || t.title.trim().length === 0) {
@@ -635,7 +753,6 @@ export const llmUnderstand = async (
         return cleaned;
       })
       .filter((t): t is UnderstoodTask => t != null);
-    if (tasks.length === 0) return null;
     return { tasks };
   } catch {
     return null;

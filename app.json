@@ -3,23 +3,28 @@
     "name": "Lumi",
     "slug": "lumi",
     "scheme": "lumi",
-    "version": "1.1.25",
+    "version": "1.1.31",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.lumi.ios",
+      "appleTeamId": "LX2URYLQQ7",
       "usesAppleSignIn": true,
-      "buildNumber": "37",
+      "buildNumber": "45",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Lumi uses your microphone so you can speak your check-ins instead of typing.",
         "NSSpeechRecognitionUsageDescription": "Lumi transcribes your voice to text on this device so Luna can respond.",
         "NSPhotoLibraryUsageDescription": "Lumi can use a photo from your library as your profile avatar.",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSSupportsLiveActivities": true,
+        "NSSupportsLiveActivitiesFrequentUpdates": true
       },
       "entitlements": {
-        "com.apple.security.application-groups": ["group.app.lumi.ios"]
+        "com.apple.security.application-groups": [
+          "group.app.lumi.ios"
+        ]
       }
     },
     "android": {

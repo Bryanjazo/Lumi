@@ -32,7 +32,7 @@ import { useRouter } from 'expo-router';
 import Svg, { Circle, Rect } from 'react-native-svg';
 
 import { fonts } from '../../constants/fonts';
-import { lunaSource } from '../../lib/luna-source';
+import { lunaSource, useLunaSkin } from '../../lib/luna-source';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
 import {
   useUserStore,
@@ -303,9 +303,10 @@ const Luna = ({
   mood?: 'idle' | 'happy' | 'sad' | 'sleep';
 }) => {
   const ambient = useAmbientLunaMood();
+  const lunaSkin = useLunaSkin();
   return (
     <Image
-      source={lunaSource(mood ?? ambient)}
+      source={lunaSource(mood ?? ambient, lunaSkin)}
       style={{ width: size, height: size }}
       resizeMode="contain"
     />

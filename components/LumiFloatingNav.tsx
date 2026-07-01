@@ -64,14 +64,19 @@ const hexA = (hex: string, a: number): string => {
 
 // ── Icon set ───────────────────────────────────────────────────────
 // Ported verbatim from the mockup's Icon() function. Active uses void
-// color (dark on the ember pill); inactive uses boneDim. Capture is
-// FILLED when active (extra emphasis on the sparkle). Time gets a
-// filled node circle when active.
+// color (dark on the ember pill); inactive uses boneDim. Time gets
+// a filled node circle when active. Focus is a bullseye — three
+// concentric circles that hint at the ember hearth without pulling
+// in the whole visual.
 
-type IconKind = 'Home' | 'Untangle' | 'Time' | 'Capture' | 'Me';
+type IconKind = 'Home' | 'Untangle' | 'Time' | 'Focus' | 'Me';
 
 const Icon = ({ k, active }: { k: IconKind; active: boolean }) => {
-  const c = active ? C.void : C.boneDim;
+  // Outline-style highlight: active icon uses the ember stroke
+  // instead of void — the sliding highlight below is a transparent
+  // pill with an ember border, so the icon has to be readable in
+  // ember on the void background (not the old dark-on-ember pattern).
+  const c = active ? C.ember : C.boneDim;
   const common = {
     width: 23,
     height: 23,
@@ -108,10 +113,12 @@ const Icon = ({ k, active }: { k: IconKind; active: boolean }) => {
           <Path d="M12 16.4h4.2" opacity={0.6} />
         </Svg>
       );
-    case 'Capture':
+    case 'Focus':
       return (
-        <Svg {...common} fill={active ? c : 'none'}>
-          <Path d="M12 4 13.3 10.7 20 12 13.3 13.3 12 20 10.7 13.3 4 12 10.7 10.7Z" />
+        <Svg {...common}>
+          <Circle cx={12} cy={12} r={8} />
+          <Circle cx={12} cy={12} r={4.2} />
+          <Circle cx={12} cy={12} r={0.6} fill={c} stroke="none" />
         </Svg>
       );
     case 'Me':
@@ -153,7 +160,7 @@ const ROUTE_TO_ICON: Record<string, IconKind> = {
   index: 'Home',
   checkin: 'Untangle',
   time: 'Time',
-  capture: 'Capture',
+  focus: 'Focus',
   me: 'Me',
 };
 
@@ -278,26 +285,34 @@ export default function LumiFloatingNav({
                     width: slotWidth,
                     height: '100%',
                     transform: [{ translateX }],
-                    paddingHorizontal: 3,
+                    alignItems: 'center',
+                    justifyContent: 'flex-start',
+                    // Positions the box's top edge 6px into the
+                    // cell so it wraps the icon (which starts at
+                    // y=9 with the cell paddingVertical: 9). Box
+                    // is 28 tall → box y=6-34; label starts at
+                    // y=9+23+4=36 → clean 2px gap below the box.
+                    paddingTop: 6,
                   },
                 ]}
               >
                 <View
                   style={{
-                    flex: 1,
-                    borderRadius: dock
-                      ? HIGHLIGHT_RADIUS_DOCK
-                      : HIGHLIGHT_RADIUS_PILL,
-                    // Solid ember fill — the mockup uses a top→bottom
-                    // gradient but RN's no-deps path is a single fill.
-                    // The shadow + inner hairline below sell the depth.
-                    backgroundColor: C.ember,
+                    // Short + wide box per user — 40 wide, 28 tall
+                    // (was 40×40 square, felt elongated vertically).
+                    // Wraps just the icon at a snug height so the
+                    // label sits clearly below in the cell's normal
+                    // paddingVertical: 9 layout.
+                    width: 40,
+                    height: 28,
+                    borderRadius: 10,
+                    backgroundColor: hexA(C.ember, 0.16),
+                    borderWidth: 1,
+                    borderColor: hexA(C.ember, 0.5),
                     shadowColor: C.ember,
-                    shadowOpacity: 0.45,
-                    shadowRadius: 16,
-                    shadowOffset: { width: 0, height: 6 },
-                    borderTopWidth: 1,
-                    borderTopColor: hexA('#FFFFFF', 0.3),
+                    shadowOpacity: 0.32,
+                    shadowRadius: 14,
+                    shadowOffset: { width: 0, height: 4 },
                   }}
                 />
               </Animated.View>
@@ -354,7 +369,10 @@ export default function LumiFloatingNav({
                       style={[
                         styles.label,
                         {
-                          color: focused ? C.void : C.mute,
+                          // Ember label on the active tab (matches the
+                          // ember icon + border) instead of the old
+                          // void-on-ember dark label. Idle stays mute.
+                          color: focused ? C.ember : C.mute,
                           fontFamily: focused
                             ? fonts.interSemi
                             : fonts.inter,
@@ -415,8 +433,13 @@ const styles = StyleSheet.create({
   cell: {
     flex: 1,
     alignItems: 'center',
+    // Back to the compact original — user asked for the nav to
+    // return to its previous height ("the way the nav was was
+    // perfect"). Only the outlined icon box was supposed to
+    // shrink; the whole cell doesn't need to grow to accommodate
+    // it. Cell total ≈ 57px, matches pre-outline nav.
     paddingVertical: 9,
-    gap: 3,
+    gap: 4,
   },
   label: {
     fontSize: 9.5,

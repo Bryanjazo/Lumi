@@ -31,7 +31,7 @@ import * as Haptics from 'expo-haptics';
 import Svg, { Path } from 'react-native-svg';
 import { fonts } from '../constants/fonts';
 import { timeColors as C } from '../constants/colors';
-import { lunaSource } from '../lib/luna-source';
+import { lunaSource, useLunaSkin } from '../lib/luna-source';
 import { useSession } from '../lib/auth';
 import { useAccessStatus, PRICING } from '../lib/subscription';
 import { useUserStore } from '../store/userStore';
@@ -73,6 +73,7 @@ export default function Paywall() {
   const access = useAccessStatus(session);
   const petName = useUserStore((s) => s.petName);
   const insets = useSafeAreaInsets();
+  const lunaSkin = useLunaSkin();
 
   const [selected, setSelected] = useState<'annual' | 'monthly'>('annual');
   const [purchasing, setPurchasing] = useState(false);
@@ -240,7 +241,7 @@ export default function Paywall() {
           {/* ── Status card ── */}
           <View style={styles.statusCard}>
             <Image
-              source={lunaSource('idle')}
+              source={lunaSource('idle', lunaSkin)}
               style={styles.statusLuna}
             />
             <View

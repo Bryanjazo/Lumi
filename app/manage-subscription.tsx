@@ -33,7 +33,7 @@ import { fonts } from '../constants/fonts';
 import { useUserStore } from '../store/userStore';
 import { useSession } from '../lib/auth';
 import { useAccessStatus, PRICING } from '../lib/subscription';
-import { lunaSource } from '../lib/luna-source';
+import { lunaSource, useLunaSkin } from '../lib/luna-source';
 import {
   purchaseTier,
   restorePurchases,
@@ -100,6 +100,7 @@ export default function ManageSubscriptionScreen() {
   const access = useAccessStatus(session);
   const tier = useUserStore((s) => s.subscriptionTier);
   const periodEnd = useUserStore((s) => s.subscriptionCurrentPeriodEnd);
+  const lunaSkin = useLunaSkin();
 
   const [selected, setSelected] = useState<'annual' | 'monthly'>('annual');
   const [purchasing, setPurchasing] = useState(false);
@@ -268,7 +269,7 @@ export default function ManageSubscriptionScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.statusCard}>
-            <Image source={lunaSource('idle')} style={styles.statusLuna} />
+            <Image source={lunaSource('idle', lunaSkin)} style={styles.statusLuna} />
             <View
               style={[
                 styles.statusPill,
