@@ -349,7 +349,7 @@ function PickStep({
             <Text style={styles.rowChev}>›</Text>
           </Pressable>
 
-          {dayQuests.length > 6 && (
+          {dayQuests.length > 3 && (
             <View style={styles.searchRow}>
               <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
                 <Circle
