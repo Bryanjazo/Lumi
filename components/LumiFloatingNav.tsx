@@ -287,11 +287,11 @@ export default function LumiFloatingNav({
                     transform: [{ translateX }],
                     alignItems: 'center',
                     justifyContent: 'flex-start',
-                    // paddingTop bumped 4 → 9 in sync with the
-                    // cell's own paddingTop bump below — keeps the
-                    // outline centered on the icon after both shift
-                    // downward inside the cell.
-                    paddingTop: 9,
+                    // Kept in sync with the cell's paddingTop below
+                    // (17 - 5 for the box's own extra top space
+                    // around the icon = 12). Keeps the outline
+                    // centered on the icon as content sank down.
+                    paddingTop: 12,
                   },
                 ]}
               >
@@ -430,14 +430,14 @@ const styles = StyleSheet.create({
   cell: {
     flex: 1,
     alignItems: 'center',
-    // Asymmetric vertical padding: content sinks toward the
-    // bottom of the cell so the outline + icon aren't riding
-    // against the top edge with a big gap of empty space below
-    // the label. Top → bottom padding delta was 0 (paddingVertical:
-    // 9); shifting content down ~5px so the box sits closer to
-    // the vertical center visually.
-    paddingTop: 14,
-    paddingBottom: 4,
+    // Asymmetric vertical padding: content sits low in the cell so
+    // there's a proper "sit on the shelf" feel for the outlined
+    // box instead of it floating high with empty space beneath the
+    // label. paddingBottom tightened further per user ("still looks
+    // elongated below") — 4 → 1 puts the label nearly on the cell's
+    // bottom edge, the box sinks to match.
+    paddingTop: 17,
+    paddingBottom: 1,
     gap: 14,
   },
   label: {
