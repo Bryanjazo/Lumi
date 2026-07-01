@@ -37,6 +37,14 @@ module.exports = {
     'luna-happy': './assets/luna-happy.png',
     'luna-sad': './assets/luna-sad.png',
     'luna-sleep': './assets/luna-sleep.png',
+    // 4-frame licking cycle extracted from luna-lick.gif — Live
+    // Activities can't render animated GIFs, so the widget cycles
+    // through these PNGs via a TimelineView.periodic schedule
+    // during focus sessions (see LunaSpriteView in index.swift).
+    'luna-lick-1': './assets/luna-lick-1.png',
+    'luna-lick-2': './assets/luna-lick-2.png',
+    'luna-lick-3': './assets/luna-lick-3.png',
+    'luna-lick-4': './assets/luna-lick-4.png',
   },
   // Widget tint when iOS renders in dimmed / standby modes.
   colors: {

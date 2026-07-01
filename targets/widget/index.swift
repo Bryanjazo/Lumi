@@ -114,53 +114,46 @@ struct LumiMoodWidget: Widget {
 // 2 · LIVE ACTIVITY — per-task focus session for the Dynamic Island
 // ═════════════════════════════════════════════════════════════════════
 
-// ── Animated Luna sprite ──────────────────────────────────────────────
-// iOS Live Activities do NOT support continuous animations on raster
-// images — Apple restricts `.repeatForever` / `TimelineView(.animation)`
-// in the Live Activity render context to save battery. A previous
-// attempt used @State + repeatForever; iOS optimized it away after the
-// first render and the cat sat frozen.
+// ── Animated Luna sprite (licking cycle) ─────────────────────────────
 //
-// What Live Activities DO support: SwiftUI transitions triggered when
-// the ActivityAttributes.ContentState changes. The JS side ticks
-// `elapsedSeconds` every 5 seconds via updateTaskActivity, so we can
-// drive the cat's transform off that value — each tick interpolates
-// the scale + offset via `withAnimation`, giving a real breath (not
-// smooth 60fps, but honest motion instead of a frozen sprite).
+// The Focus session cat LICKS in the Dynamic Island — same body-double
+// behavior the JS side uses on Home / Me / Focus. Since WidgetKit's
+// Image can't render animated GIFs, we extracted 4 PNG frames from
+// luna-lick.gif into the asset catalog (luna-lick-1..4) and cycle
+// them here via `TimelineView(.periodic)` — the ONE timeline
+// schedule iOS still respects inside a Live Activity. (`.animation`
+// is blocked; `.repeatForever` on transforms is silently optimized
+// away; `.periodic` still fires the closure on the interval we ask
+// for, subject to iOS throttling.)
 //
-// The 5-second cadence matches Apple's guidance for Live Activity
-// update frequency (more frequent burns the ActivityKit budget and
-// gets throttled), so we're using the same channel that keeps the
-// countdown accurate to also drive the visual life.
+// Refresh interval is 0.35s → full 4-frame cycle every ~1.4s. If
+// iOS throttles us further under load, the cat still cycles just
+// more slowly — never fully static.
+//
+// The `mood` param is unused for the sprite name (we always show
+// the licking cat during a focus session) but kept in the signature
+// so callers don't need to know the widget's internal choice; if we
+// later add per-mood behavior we won't have to touch every call site.
 @available(iOS 16.1, *)
 struct LunaSpriteView: View {
     let mood: String
     let size: CGFloat
     let elapsedSeconds: Int
-    // Amplitude scales up at smaller sizes so motion stays readable
-    // at 18px in the minimal slot.
-    var amplitude: CGFloat { size < 24 ? 0.10 : 0.07 }
-    var bobMax: CGFloat { size < 24 ? 0.6 : 1.2 }
 
     var body: some View {
-        // Two-phase breath: even ticks scale up + bob up, odd ticks
-        // relax back down. Each ContentState update animates between
-        // these two states via the .animation modifier below.
-        let phase = (elapsedSeconds / 5) % 2  // 0 or 1
-        let scale = phase == 0 ? 1.0 + amplitude : 1.0 - amplitude * 0.5
-        let bob = phase == 0 ? -bobMax : bobMax
+        TimelineView(
+            .periodic(from: Date(), by: 0.35)
+        ) { context in
+            // Frame index from the timeline date — ticks 0.35s apart,
+            // 4 frames total. Modulo keeps it in range.
+            let bucket = Int(context.date.timeIntervalSinceReferenceDate / 0.35)
+            let frame = (bucket % 4) + 1  // 1...4
 
-        return Image("luna-\(mood)")
-            .resizable()
-            .interpolation(.none)
-            .frame(width: size, height: size)
-            .scaleEffect(scale)
-            .offset(y: bob)
-            // Animation triggered by ContentState changes — iOS DOES
-            // permit these in Live Activities. Duration matches the
-            // ~5s tick cadence so the breath eases naturally between
-            // updates instead of snapping.
-            .animation(.easeInOut(duration: 2.5), value: elapsedSeconds)
+            Image("luna-lick-\(frame)")
+                .resizable()
+                .interpolation(.none)
+                .frame(width: size, height: size)
+        }
     }
 }
 
