@@ -3558,10 +3558,10 @@ const makeStyles = (accent: Accent) =>
       position: 'absolute',
       left: 14,
       right: 14,
-      // Tuned +30 up from the previous "just above nav" spot —
-      // user wanted the pill higher than that landed. Sits with a
-      // clear gap between pill bottom and nav top.
-      bottom: FLOATING_NAV_CLEARANCE + 18,
+      // +10 above the "just above nav" spot — user landed on this
+      // after trying +30 (too high) and -12 (too low). Sits with a
+      // small breathing gap between pill bottom and nav top.
+      bottom: FLOATING_NAV_CLEARANCE - 2,
       zIndex: 30,
     },
     capturePillInner: {

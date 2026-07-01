@@ -72,7 +72,11 @@ const hexA = (hex: string, a: number): string => {
 type IconKind = 'Home' | 'Untangle' | 'Time' | 'Focus' | 'Me';
 
 const Icon = ({ k, active }: { k: IconKind; active: boolean }) => {
-  const c = active ? C.void : C.boneDim;
+  // Outline-style highlight: active icon uses the ember stroke
+  // instead of void — the sliding highlight below is a transparent
+  // pill with an ember border, so the icon has to be readable in
+  // ember on the void background (not the old dark-on-ember pattern).
+  const c = active ? C.ember : C.boneDim;
   const common = {
     width: 23,
     height: 23,
@@ -291,16 +295,19 @@ export default function LumiFloatingNav({
                     borderRadius: dock
                       ? HIGHLIGHT_RADIUS_DOCK
                       : HIGHLIGHT_RADIUS_PILL,
-                    // Solid ember fill — the mockup uses a top→bottom
-                    // gradient but RN's no-deps path is a single fill.
-                    // The shadow + inner hairline below sell the depth.
-                    backgroundColor: C.ember,
+                    // Outline highlight — transparent interior + ember
+                    // border + a subtle ember glow around it. The icon
+                    // + label render on top in ember (not void), so
+                    // the visual weight comes from the border ring, not
+                    // a filled pill. Reads calmer against the frosted
+                    // nav glass than the old solid ember pill did.
+                    backgroundColor: hexA(C.ember, 0.08),
+                    borderWidth: 1,
+                    borderColor: hexA(C.ember, 0.55),
                     shadowColor: C.ember,
-                    shadowOpacity: 0.45,
-                    shadowRadius: 16,
-                    shadowOffset: { width: 0, height: 6 },
-                    borderTopWidth: 1,
-                    borderTopColor: hexA('#FFFFFF', 0.3),
+                    shadowOpacity: 0.28,
+                    shadowRadius: 14,
+                    shadowOffset: { width: 0, height: 4 },
                   }}
                 />
               </Animated.View>
@@ -357,7 +364,10 @@ export default function LumiFloatingNav({
                       style={[
                         styles.label,
                         {
-                          color: focused ? C.void : C.mute,
+                          // Ember label on the active tab (matches the
+                          // ember icon + border) instead of the old
+                          // void-on-ember dark label. Idle stays mute.
+                          color: focused ? C.ember : C.mute,
                           fontFamily: focused
                             ? fonts.interSemi
                             : fonts.inter,
