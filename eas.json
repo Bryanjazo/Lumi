@@ -7,11 +7,13 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "autoIncrement": true
+      "autoIncrement": true,
+      "channel": "development"
     },
     "preview": {
       "distribution": "internal",
-      "autoIncrement": true
+      "autoIncrement": true,
+      "channel": "preview"
     },
     "production": {
       "autoIncrement": true,
@@ -21,7 +23,8 @@
         "EXPO_PUBLIC_REVENUECAT_IOS_KEY": "appl_OidSboFwOHNeqxUTyrvBHdXwsWn",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "921718778396-2t8dk6if8bsso710gm55n1p7ccko1de3.apps.googleusercontent.com",
         "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "921718778396-9anbj3agm6i6qon3j7pr3ln8nbgv8j8h.apps.googleusercontent.com"
-      }
+      },
+      "channel": "production"
     }
   },
   "submit": {

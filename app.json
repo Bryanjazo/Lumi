@@ -23,6 +23,7 @@
       },
       "entitlements": {
         "com.apple.security.application-groups": [
+          "group.app.lumi.ios",
           "group.app.lumi.ios"
         ]
       }
@@ -30,7 +31,12 @@
     "android": {
       "package": "com.lumi.app",
       "permissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#141210",
@@ -90,9 +96,32 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "ec38684c-3245-47a5-b0fe-ac3f0f14bce3"
+        "projectId": "ec38684c-3245-47a5-b0fe-ac3f0f14bce3",
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "bundleIdentifier": "app.lumi.ios.lumi-mood",
+                  "targetName": "lumimood",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.app.lumi.ios"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
       }
     },
-    "owner": "bryanjazo88"
+    "owner": "bryanjazo88",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/ec38684c-3245-47a5-b0fe-ac3f0f14bce3"
+    }
   }
 }
