@@ -10,13 +10,17 @@
 // gradient hot-color (glow → ember → emberDk as the block cools).
 // Callers pass `frac = remain / total`, so the hearth burns down.
 //
-// Sparks are intentionally omitted from this iteration — the design
-// mockup uses a rAF-driven particle system on Canvas. Layering that
-// on top of an already-animated Svg + breathing halo turns into a
-// visible perf tax on iOS. If we add them later, likely as a small
-// Animated.View pool with pooled positions.
+// Ambient life (per lumi-home-capture-4.jsx, "life, not strobe"):
+//   - a slow conic sheen sweeping the well
+//   - ambient motes orbiting slowly inside the well
+//   - sparks drifting up from the hearth while running
+// The mockup drives these with a rAF canvas particle system; here
+// they're small pools of native-driver Animated.Views (fixed per-
+// mount random params, looped) so nothing re-renders per frame and
+// the SVG stays static. Exactly the approach the earlier perf note
+// on this file called for.
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { View, Animated, Easing } from 'react-native';
 import Svg, {
   Circle,
@@ -43,6 +47,249 @@ const hexA = (hex: string, a: number): string => {
 };
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+// ── Conic sheen — a soft band of light sweeping the well ─────────────
+// The mockup rotates a linear gradient across the clipped well (~12.5s
+// per revolution). Here: a gradient-filled disc inside a continuously
+// rotating Animated.View. Alpha is whisper-quiet (0.05) so it reads as
+// "the coals shift" rather than a radar sweep. Dimmer when paused.
+const WellSheen = ({ size, running }: { size: number; running: boolean }) => {
+  const d = size * 0.68; // well interior (r = 0.34 · size)
+  const spin = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 12_500,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [spin]);
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        width: d,
+        height: d,
+        opacity: running ? 1 : 0.4,
+        transform: [{ rotate }],
+      }}
+    >
+      <Svg width={d} height={d} viewBox={`0 0 ${d} ${d}`}>
+        <Defs>
+          <LinearGradient id="wellSheen" x1="0" y1="0" x2="1" y2="0">
+            <Stop offset="0" stopColor="#F4C98A" stopOpacity={0.05} />
+            <Stop offset="0.5" stopColor="#F4C98A" stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Circle cx={d / 2} cy={d / 2} r={d / 2} fill="url(#wellSheen)" />
+      </Svg>
+    </Animated.View>
+  );
+};
+
+// ── Ambient motes — slow orbiting embers inside the well ─────────────
+// Nine motes on three counter-rotating rings (60–200s per orbit in the
+// mockup — glacial on purpose). Each mote twinkles on its own offset
+// so the field never pulses in unison. Rotation + opacity only, all
+// native driver.
+const MOTE_RINGS = [
+  { duration: 95_000, dir: 1 },
+  { duration: 150_000, dir: -1 },
+  { duration: 210_000, dir: 1 },
+] as const;
+
+const MoteRing = ({
+  size,
+  running,
+  ring,
+}: {
+  size: number;
+  running: boolean;
+  ring: number;
+}) => {
+  const { duration, dir } = MOTE_RINGS[ring];
+  // Fixed per-mount layout — three motes per ring at pseudo-random
+  // angle / radius / size, like the mockup's seeded field.
+  const motes = useMemo(
+    () =>
+      Array.from({ length: 3 }, (_, i) => ({
+        angle: Math.random() * Math.PI * 2 + (i * Math.PI * 2) / 3,
+        rad: size * (0.1 + Math.random() * 0.17),
+        r: 0.7 + Math.random() * 1.3,
+        delay: Math.random() * 3500,
+      })),
+    [size],
+  );
+  const spin = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [spin, duration]);
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: dir === 1 ? ['0deg', '360deg'] : ['360deg', '0deg'],
+  });
+  const d = size * 0.68;
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        width: d,
+        height: d,
+        opacity: running ? 1 : 0.5,
+        transform: [{ rotate }],
+      }}
+    >
+      {motes.map((m, i) => (
+        <Mote
+          key={i}
+          x={d / 2 + Math.cos(m.angle) * m.rad - m.r}
+          y={d / 2 + Math.sin(m.angle) * m.rad - m.r}
+          r={m.r}
+          delay={m.delay}
+        />
+      ))}
+    </Animated.View>
+  );
+};
+
+const Mote = ({
+  x,
+  y,
+  r,
+  delay,
+}: {
+  x: number;
+  y: number;
+  r: number;
+  delay: number;
+}) => {
+  const tw = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(tw, {
+          toValue: 1,
+          duration: 3500,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(tw, {
+          toValue: 0,
+          duration: 3500,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [tw, delay]);
+  const opacity = tw.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.06, 0.2],
+  });
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        left: x,
+        top: y,
+        width: r * 2,
+        height: r * 2,
+        borderRadius: r,
+        backgroundColor: C.glow,
+        opacity,
+      }}
+    />
+  );
+};
+
+// ── Rising sparks — the hearth breathes out embers while running ─────
+// A pool of six sparks, each with fixed per-mount random params
+// (offset / drift / rise / duration / stagger) looping on one shared
+// progress value: rise, fade in fast, gutter out. Only mounted while
+// the session is running, matching the mockup (paused hearth = still).
+const Spark = ({ size, index }: { size: number; index: number }) => {
+  // Per-mount random flight plan. Fixed params + varied durations
+  // across the pool read organic at these alphas — no per-cycle
+  // re-randomization (which would force re-renders) needed.
+  const plan = useMemo(
+    () => ({
+      x: size / 2 + (Math.random() - 0.5) * size * 0.28,
+      y: size / 2 + size * 0.06,
+      drift: (Math.random() - 0.5) * size * 0.08,
+      rise: size * (0.16 + Math.random() * 0.1),
+      duration: 3800 + Math.random() * 2200,
+      delay: index * 900 + Math.random() * 700,
+      r: 0.6 + Math.random() * 1.2,
+    }),
+    [size, index],
+  );
+  const p = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(plan.delay),
+        Animated.timing(p, {
+          toValue: 1,
+          duration: plan.duration,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [p, plan]);
+  const translateY = p.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -plan.rise],
+  });
+  const translateX = p.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, plan.drift],
+  });
+  const opacity = p.interpolate({
+    inputRange: [0, 0.12, 0.7, 1],
+    outputRange: [0, 0.55, 0.28, 0],
+  });
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: plan.x - plan.r,
+        top: plan.y - plan.r,
+        width: plan.r * 2,
+        height: plan.r * 2,
+        borderRadius: plan.r,
+        backgroundColor: C.glow,
+        opacity,
+        transform: [{ translateY }, { translateX }],
+      }}
+    />
+  );
+};
 
 export interface EmberHearthProps {
   /** remain / total — 1 at start, 0 at end. Drives arc + core heat. */
@@ -71,10 +318,12 @@ export function EmberHearth({ frac, running, size = 272 }: EmberHearthProps) {
     clampedFrac > 0.6 ? C.glow : clampedFrac > 0.3 ? C.ember : C.emberDk;
 
   // Breathing pulse — Animated.Value looped between 0 and 1. Slower
-  // when paused so the visual matches the state.
+  // when paused so the visual matches the state. Period matches the
+  // mockup's "slow ~10s breath" (sin·0.62 running / sin·0.4 paused)
+  // — a resting heartbeat, not a strobe.
   const breath = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    const dur = running ? 3200 : 5000;
+    const dur = running ? 10_000 : 15_600;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(breath, {
@@ -218,6 +467,9 @@ export function EmberHearth({ frac, running, size = 272 }: EmberHearthProps) {
         <Circle cx={dotX} cy={dotY} r={3.4} fill="#FFF6E4" />
       </Svg>
 
+      {/* Conic sheen — sits over the well, under the core. */}
+      <WellSheen size={size} running={running} />
+
       {/* Central hearth — layered on top via absolute so we can
          animate scale + opacity independently of the SVG (which
          doesn't play well with cheap Animated updates). Uses View
@@ -275,6 +527,22 @@ export function EmberHearth({ frac, running, size = 272 }: EmberHearthProps) {
           />
         </Svg>
       </Animated.View>
+
+      {/* Ambient motes — orbiting slowly inside the well, over the
+         core glow so they read as embers drifting in the light. */}
+      {MOTE_RINGS.map((_, i) => (
+        <MoteRing key={i} size={size} running={running} ring={i} />
+      ))}
+
+      {/* Sparks — only while running. Mount/unmount (vs opacity 0)
+         so a paused hearth spends zero cycles on them. */}
+      {running && (
+        <View pointerEvents="none" style={{ position: 'absolute', width: size, height: size }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Spark key={i} size={size} index={i} />
+          ))}
+        </View>
+      )}
     </View>
   );
 }

@@ -1701,6 +1701,11 @@ const styles = StyleSheet.create({
     color: C.bone,
     letterSpacing: -1.5,
     lineHeight: 64,
+    // Ember glow behind the digits (mockup: 0 2px 22px ember@45%) —
+    // matches LumiFocusCard's ringMMSS so both timers feel hearth-lit.
+    textShadowColor: hexA(C.ember, 0.45),
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 22,
   },
   hearthSub: {
     fontFamily: fonts.inter,

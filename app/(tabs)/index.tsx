@@ -79,6 +79,8 @@ import {
 import { useVoice } from '../../lib/voice';
 import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
+import { TwinkleMotes } from '../../components/TwinkleMotes';
+import { DayThread } from '../../components/DayThread';
 import { useDeleteConfirm } from '../../components/TaskDeleteWrap';
 import { HabitScheduleSheet } from '../../components/HabitScheduleSheet';
 import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
@@ -1405,6 +1407,54 @@ export default function Home() {
 
   const heroSuggestion: Suggestion | null = suggestions[0] ?? null;
 
+  // ── Header readout — one italic dusk line that frames the day ────
+  // Per the lumi-home-capture-4 mock, but with honest numbers (the
+  // mock hardcoded "nothing urgent"; we don't claim that). Hidden in
+  // the all-done / empty states — those cards already speak.
+  const windowPhrase =
+    cw === sharpWindow
+      ? 'your peak window is open now'
+      : `your ${effectiveWindows[cw].label.toLowerCase()} window is open now`;
+  const readout =
+    allDone || totallyEmpty
+      ? null
+      : doneToday > 0
+        ? `${doneToday === 1 ? 'One' : doneToday} down already — ${candidates.length} to go, and ${windowPhrase}.`
+        : `${candidates.length} thing${candidates.length === 1 ? '' : 's'} on today — ${windowPhrase}.`;
+
+  // ── Day-thread data — the whole day as one quiet line ────────────
+  // Done dots use REAL completion stamps (the mockup faked spacing);
+  // upcoming dots sit at their anchored time, or their window's start
+  // when the task is windowed.
+  const threadDone = useMemo(
+    () =>
+      doneTodayList
+        .filter((q) => q.completedAt)
+        .map((q) => {
+          const d = new Date(q.completedAt as string);
+          return { min: d.getHours() * 60 + d.getMinutes(), color: C.lichen };
+        }),
+    [doneTodayList],
+  );
+  const threadUpcoming = useMemo(
+    () =>
+      todayQuests
+        .filter((q) => !q.completed && q.window !== 'someday')
+        .map((q) => {
+          const min =
+            q.scheduledHour != null
+              ? q.scheduledHour * 60 + (q.scheduledMinute ?? 0)
+              : effectiveWindows[q.window].start != null
+                ? (effectiveWindows[q.window].start as number) * 60
+                : null;
+          return min != null
+            ? { min, color: WINDOWS[q.window].color }
+            : null;
+        })
+        .filter((d): d is { min: number; color: string } => d != null),
+    [todayQuests, effectiveWindows],
+  );
+
   // ── Actions ──────────────────────────────────────────────────────
   const showToast = (text: string) => {
     setToast(text);
@@ -2460,6 +2510,17 @@ export default function Home() {
         cy={0.05}
         style={styles.ambientGlow}
       />
+      {/* Twinkling motes — four tiny fireflies around the header,
+         staggered so they never pulse in unison. Positions + delays
+         from lumi-home-capture-4.jsx. Pure ambience (no touches). */}
+      <TwinkleMotes
+        motes={[
+          { x: 66, y: 96, r: 3, color: C.glow, delay: 0 },
+          { x: 318, y: 156, r: 2.5, color: C.dusk, delay: 0.7 },
+          { x: 236, y: 64, r: 2, color: C.ember, delay: 1.3 },
+          { x: 38, y: 220, r: 2, color: C.dusk, delay: 1.9 },
+        ]}
+      />
 
       {toast && (
         <View style={styles.toast}>
@@ -2491,6 +2552,9 @@ export default function Home() {
             <Text style={styles.greeting}>
               {greeting(now.getHours() + now.getMinutes() / 60)}.
             </Text>
+            {readout && (
+              <Text style={styles.headerReadout}>{readout}</Text>
+            )}
           </View>
           {/* The Luna nook IS the profile entry on Home — tap to
               open profile/settings. No separate profile icon up here
@@ -2561,8 +2625,9 @@ export default function Home() {
           </Pressable>
         </View>
 
-        {/* ── Quiet "today" line — streak · progress · done/total · +xp ──
-            Companion-mode gates:
+        {/* ── The day, as one thread — streak · DayThread · done · +xp ──
+            (Replaces the old progress-segment row per the
+            lumi-home-capture-4 mock.) Companion-mode gates:
               showStreak → streak chip (kept in Minimal, off in Focused)
               showXp     → "+N xp" tint (kept in Full only) */}
         <View style={styles.todayLine}>
@@ -2572,19 +2637,15 @@ export default function Home() {
               <Text style={styles.streakNum}>{streak}</Text>
             </View>
           )}
-          <View style={styles.progressRow}>
-            {Array.from({ length: Math.max(totalToday, 1) }).map((_, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.progressSeg,
-                  i < doneToday && { backgroundColor: accent.fg },
-                ]}
-              />
-            ))}
-          </View>
+          <DayThread
+            nowMin={now.getHours() * 60 + now.getMinutes()}
+            wakeMin={anchors.wake}
+            sleepMin={anchors.sleep}
+            done={threadDone}
+            upcoming={threadUpcoming}
+          />
           <Text style={styles.todayCount}>
-            {doneToday}/{totalToday}
+            {doneToday} done
             {companion.showXp && (
               <>
                 {' · '}
@@ -3262,12 +3323,15 @@ const makeStyles = (accent: Accent) =>
   StyleSheet.create({
     safe: { flex: 1, backgroundColor: C.void },
     // SoftGlow handles the fade — this style is just the position+size.
+    // Sized to the mockup's wash (radial 135%×52% at 82% 2%): wide
+    // enough to bleed past mid-screen so the page reads "lit from the
+    // corner", not "sticker in the corner".
     ambientGlow: {
       position: 'absolute',
       top: 0,
       right: 0,
-      width: 360,
-      height: 360,
+      width: 460,
+      height: 420,
     },
     scroll: {
       paddingHorizontal: 22,
@@ -3411,6 +3475,16 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: -0.7,
       lineHeight: 32,
     },
+    headerReadout: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 14,
+      color: C.dusk,
+      marginTop: 7,
+      lineHeight: 21,
+      letterSpacing: -0.1,
+      maxWidth: 250,
+    },
     lunaNook: {
       width: 78,
       height: 78,
@@ -3449,18 +3523,6 @@ const makeStyles = (accent: Accent) =>
       fontFamily: fonts.interMed,
       fontSize: 12.5,
       color: C.boneDim,
-    },
-    progressRow: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-    },
-    progressSeg: {
-      flex: 1,
-      height: 3,
-      borderRadius: 2,
-      backgroundColor: C.hair,
     },
     todayCount: {
       fontFamily: fonts.inter,
