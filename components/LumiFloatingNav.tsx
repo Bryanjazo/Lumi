@@ -285,22 +285,26 @@ export default function LumiFloatingNav({
                     width: slotWidth,
                     height: '100%',
                     transform: [{ translateX }],
-                    paddingHorizontal: 3,
+                    // Center a small fixed-size box horizontally in
+                    // the slot, pin it to the top so it wraps only
+                    // the icon (the label sits below in the cell,
+                    // outside the outline). Matches the mockup —
+                    // outline reads as "around the icon", not "the
+                    // whole cell".
+                    alignItems: 'center',
+                    justifyContent: 'flex-start',
+                    paddingTop: 4,
                   },
                 ]}
               >
                 <View
                   style={{
-                    flex: 1,
-                    borderRadius: dock
-                      ? HIGHLIGHT_RADIUS_DOCK
-                      : HIGHLIGHT_RADIUS_PILL,
-                    // Outline highlight — transparent interior + ember
-                    // border + a subtle ember glow around it. The icon
-                    // + label render on top in ember (not void), so
-                    // the visual weight comes from the border ring, not
-                    // a filled pill. Reads calmer against the frosted
-                    // nav glass than the old solid ember pill did.
+                    // Tight box hugging the icon (~23px) with even
+                    // padding on all sides. Rounded square (not full
+                    // pill) matches the mockup outline shape.
+                    width: 46,
+                    height: 42,
+                    borderRadius: 12,
                     backgroundColor: hexA(C.ember, 0.08),
                     borderWidth: 1,
                     borderColor: hexA(C.ember, 0.55),
