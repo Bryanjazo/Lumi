@@ -84,7 +84,6 @@ import { HabitScheduleSheet } from '../../components/HabitScheduleSheet';
 import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
 import { EditQuestSheet } from '../../components/EditQuestSheet';
 import { MicIcon } from '../../components/MicIcon';
-import { MicButton } from '../../components/MicButton';
 import {
   useCorrectionsStore,
   summarizeCorrections,
@@ -2917,11 +2916,34 @@ export default function Home() {
               </Pressable>
             ) : (
               <>
-                <MicButton
-                  size="small"
-                  showError={false}
-                  onTranscribed={handleTranscribed}
-                />
+                {/* Bare inline mic — mockup uses a chromeless icon,
+                   not a bordered button. Uses the same handleMic
+                   flow the old inline capture used, so voice
+                   recording state (pulse dot / transcribing ellipsis)
+                   colors and behavior are consistent app-wide. */}
+                <Pressable
+                  onPress={handleMic}
+                  hitSlop={10}
+                  style={styles.capturePillMic}
+                  accessibilityLabel="Voice capture"
+                >
+                  {voice.state === 'transcribing' ? (
+                    <Text style={styles.capturePillMicTranscribing}>…</Text>
+                  ) : voice.state === 'recording' ? (
+                    <View
+                      style={[
+                        styles.capturePillMicDot,
+                        { backgroundColor: accent.fg },
+                      ]}
+                    />
+                  ) : (
+                    <MicIcon size={20} color={C.boneDim} />
+                  )}
+                </Pressable>
+                {/* Expand — rounded SQUARE with corners icon, ember
+                   bordered and tinted. Rounded square is intentional
+                   here (matches the mockup); the mic beside it is a
+                   bare icon so shape symmetry isn't required. */}
                 <Pressable
                   onPress={() => {
                     Haptics.selectionAsync();
@@ -2937,7 +2959,7 @@ export default function Home() {
                   hitSlop={6}
                   accessibilityLabel="Open full brain-dump"
                 >
-                  <Svg width={16} height={16} viewBox="0 0 24 24">
+                  <Svg width={18} height={18} viewBox="0 0 24 24">
                     <Path
                       d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"
                       stroke={accent.fg}
@@ -3080,12 +3102,12 @@ const makeStyles = (accent: Accent) =>
     scroll: {
       paddingHorizontal: 22,
       paddingTop: 26,
-      // Clearance for the floating glass nav + the always-visible
-      // capture pill that sits on top of it. Nav (~120) + pill
-      // (~52 tall, anchored ~32 above the nav's clearance line)
-      // together own the bottom ~170px, so the last card doesn't
-      // get eaten by either surface.
-      paddingBottom: FLOATING_NAV_CLEARANCE + 68,
+      // Clearance for the floating glass nav + the pill that hovers
+      // above it. Nav owns FLOATING_NAV_CLEARANCE from the bottom;
+      // the pill sits at bottom: FLOATING_NAV_CLEARANCE + 8 and is
+      // ~56 tall, so the last card shouldn't be able to scroll into
+      // the pill zone either (total reserved = ~184).
+      paddingBottom: FLOATING_NAV_CLEARANCE + 72,
     },
 
     // ── Toast ──
@@ -3536,8 +3558,13 @@ const makeStyles = (accent: Accent) =>
       position: 'absolute',
       left: 14,
       right: 14,
-      // Sit just above the nav pill with a small breathing gap.
-      bottom: FLOATING_NAV_CLEARANCE - 32,
+      // Sit CLEARLY ABOVE the nav's clearance zone (which is
+      // FLOATING_NAV_CLEARANCE tall from the bottom). Anything less
+      // than that puts the pill INSIDE the nav's real estate and
+      // it reads as overlapping / getting cut off by the frosted
+      // glass. +8 gives a small breathing gap between pill bottom
+      // and nav top.
+      bottom: FLOATING_NAV_CLEARANCE + 8,
       zIndex: 30,
     },
     capturePillInner: {
@@ -3607,15 +3634,38 @@ const makeStyles = (accent: Accent) =>
     capturePillExpand: {
       width: 36,
       height: 36,
-      // MicButton internally renders as a border-radius: 18 pill
-      // (fully rounded). Matching that here keeps the two right-
-      // side icons visually consistent — a rounded-square expand
-      // next to a fully-rounded mic reads as a shape mismatch.
-      borderRadius: 18,
+      // Rounded SQUARE per the mockup — the mic beside it is a
+      // bare inline icon (no button chrome), so the expand's own
+      // rounded-rect shape doesn't clash with anything. Reads as
+      // "here's your open-fullscreen affordance", distinct from
+      // the mic tap.
+      borderRadius: 12,
       borderWidth: 1,
       alignItems: 'center',
       justifyContent: 'center',
       flexShrink: 0,
+    },
+    // Bare inline mic — chromeless (matches the mockup). Same 36×36
+    // hitbox as the expand button so tap targets are consistent,
+    // but no border/background: it reads as a plain icon that
+    // colors up when recording (pulse dot) or transcribing (…).
+    capturePillMic: {
+      width: 36,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    capturePillMicDot: {
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+    },
+    capturePillMicTranscribing: {
+      fontFamily: fonts.interSemi,
+      fontSize: 18,
+      color: C.boneDim,
+      lineHeight: 20,
     },
 
     // ── Guided follow-up ──
