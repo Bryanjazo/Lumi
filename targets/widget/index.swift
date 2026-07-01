@@ -141,25 +141,39 @@ struct LunaSpriteView: View {
     let elapsedSeconds: Int
 
     var body: some View {
-        // Frame from elapsedSeconds — every tick (5s) the frame
-        // rotates. State-driven cycling is what iOS actually
-        // respects in Live Activities; TimelineView(.periodic) was
-        // returning an empty view in the compactLeading slot on
-        // the previous attempt (the cat disappeared entirely).
-        // With 4 frames this loops the licking pose every 20s.
-        let frame = (elapsedSeconds / 5) % 4 + 1  // 1...4
-
-        // Wrapped in a Group so if the named image is missing from
-        // the asset catalog (build didn't pick up the new PNGs
-        // yet) SwiftUI still lays out the frame — better than a
-        // silently-empty compact slot.
-        Group {
+        // TimelineView(.periodic) runs the same self-refresh loop
+        // iOS uses for widgets — Live Activities support it
+        // (unlike .animation). At 0.5s intervals the closure fires
+        // ~2fps → full 4-frame cycle every 2s → visibly licking.
+        // Frame index derived from the timeline date so it doesn't
+        // depend on ContentState pings; iOS may throttle the
+        // interval under load but at worst degrades to 1-2fps,
+        // never fully static.
+        //
+        // Previous attempt's empty-cat bug was ASSET-related, not
+        // TimelineView-related: the luna-lick-{1..4}.imageset
+        // folders weren't in the widget's Assets.xcassets yet (see
+        // the imageset commit). With assets present, TimelineView
+        // works fine in every DI slot.
+        TimelineView(.periodic(from: Date(), by: 0.5)) { context in
+            let bucket = Int(context.date.timeIntervalSince1970 * 2)
+            let frame = (bucket % 4) + 1  // 1...4
             Image("luna-lick-\(frame)")
                 .resizable()
                 .interpolation(.none)
+                .frame(width: size, height: size)
         }
-        .frame(width: size, height: size)
     }
+}
+
+// Helper — builds a Date range for Text(timerInterval:) from the
+// session's elapsed + duration. Reconstructs the original startedAt
+// from now - elapsed so the timer counts down against real wall time.
+@available(iOS 16.1, *)
+private func sessionRange(elapsed: Int, duration: Int) -> ClosedRange<Date> {
+    let start = Date().addingTimeInterval(-Double(elapsed))
+    let end = start.addingTimeInterval(Double(duration))
+    return start...end
 }
 
 @available(iOS 16.1, *)
@@ -195,13 +209,23 @@ struct LumiTaskLiveActivity: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(formatRemaining(
-                        context.state.elapsedSeconds,
-                        context.attributes.durationSeconds
-                    ))
+                    // Text(timerInterval:) is iOS's built-in
+                    // self-updating countdown — refreshes every
+                    // second natively without needing our JS-side
+                    // updateTaskActivity ping. Reads smoothly
+                    // instead of jumping 5 seconds at a time
+                    // between our own ticks.
+                    Text(
+                        timerInterval: sessionRange(
+                            elapsed: context.state.elapsedSeconds,
+                            duration: context.attributes.durationSeconds
+                        ),
+                        countsDown: true
+                    )
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                     .foregroundColor(Color(red: 0.88, green: 0.48, blue: 0.31))
                     .monospacedDigit()
+                    .multilineTextAlignment(.trailing)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -227,10 +251,16 @@ struct LumiTaskLiveActivity: Widget {
                 )
             } compactTrailing: {
                 // ── COMPACT TRAILING (right of camera) ──
-                Text(formatRemaining(
-                    context.state.elapsedSeconds,
-                    context.attributes.durationSeconds
-                ))
+                // Native iOS timer interval — auto-refreshes every
+                // second, no ContentState ping needed. Smooth
+                // countdown instead of 5-second jumps.
+                Text(
+                    timerInterval: sessionRange(
+                        elapsed: context.state.elapsedSeconds,
+                        duration: context.attributes.durationSeconds
+                    ),
+                    countsDown: true
+                )
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundColor(Color(red: 0.88, green: 0.48, blue: 0.31))
                 .monospacedDigit()
@@ -272,10 +302,13 @@ struct LockScreenView: View {
                 .tint(Color(red: 0.88, green: 0.48, blue: 0.31))
             }
             VStack(alignment: .trailing, spacing: 2) {
-                Text(formatRemaining(
-                    state.elapsedSeconds,
-                    attributes.durationSeconds
-                ))
+                Text(
+                    timerInterval: sessionRange(
+                        elapsed: state.elapsedSeconds,
+                        duration: attributes.durationSeconds
+                    ),
+                    countsDown: true
+                )
                 .font(.system(size: 18, weight: .semibold, design: .rounded))
                 .foregroundColor(Color(red: 0.88, green: 0.48, blue: 0.31))
                 .monospacedDigit()
