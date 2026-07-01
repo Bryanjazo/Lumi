@@ -174,9 +174,26 @@ export function LumiFocusCard({
       : 'card';
 
   // ── Duration picker (card mode) ──────────────────────────────────
+  //
+  // Priority chain for the default focus length:
+  //   1. LLM-extracted duration (respect what the user said or the
+  //      model inferred — e.g. "30-min call" → 30).
+  //   2. Scheduled tasks with no duration → 45 (they tend to be
+  //      meetings / calls that carry more weight).
+  //   3. Otherwise fall back by importance tier — the "how long
+  //      should I focus?" answer is really "how big is this?":
+  //         high   (Trial)  → 60  — a real deep-work block
+  //         medium (Task)   → 30  — a solid chunk, not overwhelming
+  //         low    (Whim)   → 15  — quick win, low activation cost
+  //      Reads as: Lumi's suggestion matches the shape of the task
+  //      instead of always defaulting to a generic 25.
   const defaultMins = useMemo(() => {
-    return quest.durationMinutes ?? (quest.scheduledHour != null ? 45 : 25);
-  }, [quest.durationMinutes, quest.scheduledHour]);
+    if (quest.durationMinutes) return quest.durationMinutes;
+    if (quest.scheduledHour != null) return 45;
+    if (quest.importance === 'high') return 60;
+    if (quest.importance === 'low') return 15;
+    return 30;
+  }, [quest.durationMinutes, quest.scheduledHour, quest.importance]);
   const [mins, setMins] = useState(defaultMins);
   const [pickerOpen, setPickerOpen] = useState(false);
   // Reset the chosen minutes when the underlying quest changes so the

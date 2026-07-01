@@ -1321,12 +1321,21 @@ export default function Home() {
   const candidates = useMemo(() => {
     const open = todayQuests.filter((q) => !q.completed);
     return [...open].sort((a, b) => {
+      // IMPORTANCE first — a Trial (high) always trumps a Task
+      // (medium) or a Whim (low) regardless of window. This is what
+      // "Lumi suggests" is FOR: surfacing the biggest thing so the
+      // user doesn't waste their sharpest attention on a whim.
+      // (Previously window won; a medium task in the current window
+      // hid a high-tier task waiting in the next one — hence a
+      // dentist appointment surfacing over the overdue invoice.)
+      const rankDiff =
+        IMPORTANCE[b.importance].rank - IMPORTANCE[a.importance].rank;
+      if (rankDiff !== 0) return rankDiff;
+      // Same tier → prefer the current window (still doable now),
+      // then the sooner windows via the ordered list.
       const wa = order.indexOf(a.window);
       const wb = order.indexOf(b.window);
-      if (wa !== wb) return wa - wb;
-      return (
-        IMPORTANCE[b.importance].rank - IMPORTANCE[a.importance].rank
-      );
+      return wa - wb;
     });
   }, [todayQuests, order]);
   const allDone = candidates.length === 0 && todayQuests.length > 0;
