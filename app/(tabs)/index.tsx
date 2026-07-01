@@ -3558,12 +3558,10 @@ const makeStyles = (accent: Accent) =>
       position: 'absolute',
       left: 14,
       right: 14,
-      // Halfway between "overlapping the nav" (bottom ~= 88, too
-      // low) and "hovering way above" (bottom ~= 128, too high per
-      // user). This spot lets the pill sit just above the nav's
-      // top edge with a subtle gap — the nav's own gradient/glass
-      // still shows through underneath.
-      bottom: FLOATING_NAV_CLEARANCE - 12,
+      // Tuned +30 up from the previous "just above nav" spot —
+      // user wanted the pill higher than that landed. Sits with a
+      // clear gap between pill bottom and nav top.
+      bottom: FLOATING_NAV_CLEARANCE + 18,
       zIndex: 30,
     },
     capturePillInner: {
