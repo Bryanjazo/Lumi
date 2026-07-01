@@ -2647,7 +2647,15 @@ export default function Home() {
               ambientMood={ambientMood}
               xpReward={hero.xpReward}
               onMarkItDone={() => completeQuest(hero)}
-              onOpenPicker={() => setFocusPickerOpen(true)}
+              onOpenPicker={
+                // "Focus on another task →" only makes sense when
+                // there IS another task to switch to. If the hero
+                // is the day's only incomplete quest, drop the
+                // link entirely so it doesn't dangle.
+                candidates.length > 1
+                  ? () => setFocusPickerOpen(true)
+                  : undefined
+              }
               onSwap={
                 candidates.length > 1
                   ? () => setSwap((s) => s + 1)
