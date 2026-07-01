@@ -287,22 +287,25 @@ export default function LumiFloatingNav({
                     transform: [{ translateX }],
                     alignItems: 'center',
                     justifyContent: 'flex-start',
-                    // Kept in sync with the cell's paddingTop below
-                    // (17 - 5 for the box's own extra top space
-                    // around the icon = 12). Keeps the outline
-                    // centered on the icon as content sank down.
-                    paddingTop: 12,
+                    // Positions the box's top edge 6px into the
+                    // cell so it wraps the icon (which starts at
+                    // y=9 with the cell paddingVertical: 9). Box
+                    // is 28 tall → box y=6-34; label starts at
+                    // y=9+23+4=36 → clean 2px gap below the box.
+                    paddingTop: 6,
                   },
                 ]}
               >
                 <View
                   style={{
-                    // Even width + height (square, not squished
-                    // rectangle) per user. Cell gap bumped below to
-                    // give the label room to sit outside the box.
+                    // Short + wide box per user — 40 wide, 28 tall
+                    // (was 40×40 square, felt elongated vertically).
+                    // Wraps just the icon at a snug height so the
+                    // label sits clearly below in the cell's normal
+                    // paddingVertical: 9 layout.
                     width: 40,
-                    height: 40,
-                    borderRadius: 11,
+                    height: 28,
+                    borderRadius: 10,
                     backgroundColor: hexA(C.ember, 0.16),
                     borderWidth: 1,
                     borderColor: hexA(C.ember, 0.5),
@@ -430,15 +433,13 @@ const styles = StyleSheet.create({
   cell: {
     flex: 1,
     alignItems: 'center',
-    // Asymmetric vertical padding: content sits low in the cell so
-    // there's a proper "sit on the shelf" feel for the outlined
-    // box instead of it floating high with empty space beneath the
-    // label. paddingBottom tightened further per user ("still looks
-    // elongated below") — 4 → 1 puts the label nearly on the cell's
-    // bottom edge, the box sinks to match.
-    paddingTop: 17,
-    paddingBottom: 1,
-    gap: 14,
+    // Back to the compact original — user asked for the nav to
+    // return to its previous height ("the way the nav was was
+    // perfect"). Only the outlined icon box was supposed to
+    // shrink; the whole cell doesn't need to grow to accommodate
+    // it. Cell total ≈ 57px, matches pre-outline nav.
+    paddingVertical: 9,
+    gap: 4,
   },
   label: {
     fontSize: 9.5,
