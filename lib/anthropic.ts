@@ -641,7 +641,14 @@ export const llmUnderstand = async (
     const text = await callMessages({
       kind: 'title_clean',
       system: UNDERSTAND_SYSTEM,
-      maxTokens: 600,
+      // Was 600 — too tight for long brain-dumps. Each task's JSON
+      // is ~100-150 tokens (title + importance + energyDemand +
+      // when + note + hasDeadline). A 13-task comma-dump needs
+      // ~1600+ tokens; at 600 the response truncated mid-object,
+      // the JSON parse failed, and llmUnderstand returned null.
+      // 3000 supports ~20 tasks comfortably — well above what a
+      // realistic single-capture dump ever contains.
+      maxTokens: 3000,
       messages: [
         {
           role: 'user',
