@@ -32,7 +32,19 @@ import {
   Animated,
   Easing,
 } from 'react-native';
-import Svg, { Circle } from 'react-native-svg';
+import Svg, {
+  Circle,
+  Defs,
+  G,
+  LinearGradient,
+  Path,
+  RadialGradient,
+  Rect,
+  Stop,
+} from 'react-native-svg';
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+const AnimatedPath = Animated.createAnimatedComponent(Path);
 import * as Haptics from 'expo-haptics';
 
 import { fonts } from '../constants/fonts';
@@ -233,6 +245,63 @@ export function LumiFocusCard({
     return () => loop.stop();
   }, [mode, halo]);
 
+  // ── Done-mode celebration ────────────────────────────────────────
+  // Three layered anims fire when the user lands on the done state:
+  //   1) Sun rays rotate slowly behind the medallion (20s loop)
+  //   2) Ring draws in via strokeDashoffset (700ms out-cubic)
+  //   3) Checkmark draws in after the ring settles (starts 500ms
+  //      in, 420ms out-ease)
+  // Native driver stays true for the rays' rotation transform but
+  // false for the SVG strokeDashoffset animations (SVG props don't
+  // support the native driver).
+  const raysRot = useRef(new Animated.Value(0)).current;
+  const ringDraw = useRef(new Animated.Value(1)).current;
+  const checkDraw = useRef(new Animated.Value(1)).current;
+  const DONE_RING_R = 40;
+  const DONE_RING_CIRC = 2 * Math.PI * DONE_RING_R;
+  const DONE_CHECK_LEN = 50;
+  useEffect(() => {
+    if (mode !== 'done') return;
+    ringDraw.setValue(1);
+    checkDraw.setValue(1);
+    Animated.sequence([
+      Animated.timing(ringDraw, {
+        toValue: 0,
+        duration: 700,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }),
+      Animated.timing(checkDraw, {
+        toValue: 0,
+        duration: 420,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: false,
+      }),
+    ]).start();
+    const raysLoop = Animated.loop(
+      Animated.timing(raysRot, {
+        toValue: 1,
+        duration: 20000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    raysLoop.start();
+    return () => raysLoop.stop();
+  }, [mode, raysRot, ringDraw, checkDraw]);
+  const ringDashOffset = ringDraw.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, DONE_RING_CIRC],
+  });
+  const checkDashOffset = checkDraw.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, DONE_CHECK_LEN],
+  });
+  const raysRotationStr = raysRot.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
   // ── Derived values ──────────────────────────────────────────────
   const total = currentFocus?.durationSec ?? mins * 60;
   const remain = mode === 'focus' ? selectRemainingSeconds(currentFocus) : 0;
@@ -305,6 +374,54 @@ export function LumiFocusCard({
       <Shell glow>
         <View style={styles.doneWrap}>
           <View style={styles.doneRingWrap}>
+            {/* Rotating sun rays — 14 vertical gradient bars in a
+               group, wrapped Animated.View rotates the whole SVG
+               slowly (20s cycle) so the rays sweep behind the
+               medallion. Native driver on the rotation. */}
+            <Animated.View
+              style={[
+                styles.doneRays,
+                { transform: [{ rotate: raysRotationStr }] },
+              ]}
+              pointerEvents="none"
+            >
+              <Svg width={168} height={168} viewBox="0 0 168 168">
+                <Defs>
+                  <LinearGradient
+                    id="doneRayGrad"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <Stop offset="0" stopColor={C.glow} stopOpacity={0} />
+                    <Stop offset="0.5" stopColor={C.glow} stopOpacity={0.16} />
+                    <Stop offset="1" stopColor={C.glow} stopOpacity={0} />
+                  </LinearGradient>
+                </Defs>
+                {Array.from({ length: 14 }).map((_, i) => {
+                  const angle = (i / 14) * 360;
+                  return (
+                    <G
+                      key={i}
+                      rotation={angle}
+                      originX={84}
+                      originY={84}
+                    >
+                      <Rect
+                        x={82.5}
+                        y={22}
+                        width={3}
+                        height={56}
+                        fill="url(#doneRayGrad)"
+                      />
+                    </G>
+                  );
+                })}
+              </Svg>
+            </Animated.View>
+
+            {/* Breathing halo — behind the medallion, ember→transparent */}
             <Animated.View
               style={[
                 styles.doneRingHalo,
@@ -325,31 +442,63 @@ export function LumiFocusCard({
               ]}
               pointerEvents="none"
             />
+
+            {/* Medallion — radial fill + gradient ring + drawn check.
+               Ring + check both animate in via strokeDashoffset when
+               the done state mounts. */}
             <Svg width={150} height={150} viewBox="0 0 150 150">
+              <Defs>
+                <LinearGradient
+                  id="doneMedalRing"
+                  x1="0"
+                  y1="0"
+                  x2="1"
+                  y2="1"
+                >
+                  <Stop offset="0" stopColor={C.ember} />
+                  <Stop offset="1" stopColor={C.glow} />
+                </LinearGradient>
+                <RadialGradient
+                  id="doneMedalFill"
+                  cx="50%"
+                  cy="42%"
+                  r="60%"
+                  fx="50%"
+                  fy="42%"
+                >
+                  <Stop offset="0" stopColor={C.glow} stopOpacity={0.22} />
+                  <Stop offset="1" stopColor={C.ember} stopOpacity={0.04} />
+                </RadialGradient>
+              </Defs>
               <Circle
                 cx={75}
                 cy={75}
-                r={64}
-                fill="none"
-                stroke={hexA(C.glow, 0.25)}
-                strokeWidth={3}
+                r={DONE_RING_R}
+                fill="url(#doneMedalFill)"
               />
-              <Circle
+              <AnimatedCircle
                 cx={75}
                 cy={75}
-                r={64}
+                r={DONE_RING_R}
                 fill="none"
-                stroke={C.glow}
-                strokeWidth={6}
+                stroke="url(#doneMedalRing)"
+                strokeWidth={4.5}
                 strokeLinecap="round"
-                strokeDasharray={`${2 * Math.PI * 64}`}
-                strokeDashoffset={0}
+                strokeDasharray={`${DONE_RING_CIRC}`}
+                strokeDashoffset={ringDashOffset}
                 transform="rotate(-90 75 75)"
               />
+              <AnimatedPath
+                d="M60 76 L71 87 L92 63"
+                fill="none"
+                stroke="#FFF3D6"
+                strokeWidth={5.4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeDasharray={`${DONE_CHECK_LEN}`}
+                strokeDashoffset={checkDashOffset}
+              />
             </Svg>
-            <View style={styles.doneCheckMount}>
-              <Text style={styles.doneCheckGlyph}>✓</Text>
-            </View>
           </View>
           <Text style={styles.doneEyebrow}>{doneMins} minutes of focus</Text>
           <Text style={styles.doneTitle}>That&apos;s the hard part done.</Text>
@@ -996,21 +1145,28 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   doneRingWrap: {
-    width: 150,
-    height: 150,
+    width: 168,
+    height: 168,
     marginBottom: 18,
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  doneRays: {
+    position: 'absolute',
+    width: 168,
+    height: 168,
+    top: 0,
+    left: 0,
+  },
   doneRingHalo: {
     position: 'absolute',
-    top: -18,
-    left: -18,
-    right: -18,
-    bottom: -18,
+    top: -6,
+    left: -6,
+    right: -6,
+    bottom: -6,
     borderRadius: 90,
-    backgroundColor: hexA(C.glow, 0.28),
+    backgroundColor: hexA(C.glow, 0.14),
   },
   doneCheckMount: {
     position: 'absolute',
