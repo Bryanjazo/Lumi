@@ -141,24 +141,22 @@ struct LunaSpriteView: View {
     let elapsedSeconds: Int
 
     var body: some View {
-        // All 20 frames from the source GIF, cycling at the GIF's
-        // native ~10fps rhythm (0.1s interval). iOS may throttle
-        // .periodic under load — worst case we degrade to fewer
-        // effective updates per second and the animation just plays
-        // slower, never fully static.
+        // Frame driven directly by state.elapsedSeconds so every JS
+        // tick (now 1 second, see lib/focusSession.ts TICK_MS) the
+        // widget re-renders with the next sprite. iOS runs
+        // ContentState-driven re-renders reliably; the earlier
+        // TimelineView(.periodic) approach worked once at first
+        // render and then got throttled to "never" by the Live
+        // Activity budget.
         //
-        // 20 frames × 0.1s = 2s full cycle, matching what the JS
-        // side plays for the licking beat everywhere else in the
-        // app — the Dynamic Island cat is now visually synced with
-        // Luna's licking on Home / Me / Focus tab.
-        TimelineView(.periodic(from: Date(), by: 0.1)) { context in
-            let bucket = Int(context.date.timeIntervalSince1970 * 10)
-            let frame = (bucket % 20) + 1  // 1...20
-            Image("luna-lick-\(frame)")
-                .resizable()
-                .interpolation(.none)
-                .frame(width: size, height: size)
-        }
+        // 20 frames × 1s ticks = 20-second full cycle. Not as
+        // buttery as the source GIF but visibly animating instead
+        // of frozen; matches the constraint iOS actually enforces.
+        let frame = (elapsedSeconds % 20) + 1  // 1...20
+        Image("luna-lick-\(frame)")
+            .resizable()
+            .interpolation(.none)
+            .frame(width: size, height: size)
     }
 }
 
