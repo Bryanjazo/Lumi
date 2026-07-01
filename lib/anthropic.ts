@@ -336,36 +336,58 @@ For EACH distinct task in the input, return an object with these fields:
 Rules:
 - NEVER invent a date or time the user didn't imply. Leave when fields empty if unsure.
 - ISO dates are LOCAL to the today reference provided.
-- Splitting (CRITICAL — over-splitting is the most common failure mode):
-    Split ONLY when the user describes TWO SEPARATE ACTIONS connected by "and" with
-    NO shared verb or subject.
-        "Call mom AND pay rent"                 → 2 tasks   (two unrelated actions)
-        "Email Sarah AND book the flight"       → 2 tasks   (two unrelated actions)
+- Splitting (CRITICAL — split every real action, but don't invent extras):
+    SPLIT when the input contains MULTIPLE SEPARATE ACTIONS. All of these
+    are split signals; treat each equally:
+      • "and" between two verb phrases:
+          "Call mom AND pay rent"                     → 2 tasks
+          "Email Sarah AND book the flight"           → 2 tasks
+      • COMMAS between action fragments — EACH fragment starts with a verb
+        (or is a familiar chore noun like "gas", "dishes", "groceries"):
+          "finish the deck, reply to Sam, book dentist, tidy the desk"
+                                                       → 4 tasks
+          "call mom, groceries, dishes"               → 3 tasks
+          "email Bob, text Sarah, buy milk"           → 3 tasks
+        A comma-list with NO "and" is still a list — the missing connector
+        word is just how people type when they're brain-dumping. Extract
+        every fragment; don't collapse them into one task.
+      • Period or newline between sentences:
+          "Pay rent. Buy milk. Clean the sink."       → 3 tasks
+      • "then" / "oh and also" / "and then":
+          "Get gas then groceries then home"          → 2 tasks (skip "go home")
+
     DO NOT split when:
       • "and" connects two TOPICS / SUBJECTS of the SAME action:
-        "Speak with David about price AND deadline"        → 1 task, note: "price and deadline"
-        "Talk to mom about car AND insurance"              → 1 task, note: "car and insurance"
-        "Update the doc with pricing AND timeline"         → 1 task, note: "pricing and timeline"
-      • "and" connects DESCRIPTORS or DETAILS of one action:
-        "Buy milk, eggs, and bread"                        → 1 task ("Buy groceries"), note: "milk, eggs, bread"
-        "Send David the contract and the brief"            → 1 task, note: "contract and brief"
-      • The second item is CLEARLY CONTEXT, not its own action ("deadline", "price",
-        "details", "the rest" — these are nouns describing the first task, not
-        verbs commanding a new one).
-      • The second item is a THING TO DO DURING the first (the first is an event /
-        anchor, the second is a conversational/mental "while I'm there" reminder).
-        Signal phrases on the second item: "remind me to", "remind myself to",
-        "don't forget to", "ask about/for", "bring up", "mention", "while I'm
-        there", "make sure to":
-        "Go to work at 5 AND remind myself to ask for a raise"   → 1 task ("Go to work"),
-                                                                    note: "Ask for a raise"
-        "Dinner with mom AND don't forget to bring up the dentist" → 1 task ("Dinner with mom"),
-                                                                    note: "Bring up the dentist"
-        "Doctor at 9 AND ask about my back"                      → 1 task ("Doctor at 9"),
-                                                                    note: "Ask about back"
+          "Speak with David about price AND deadline" → 1 task, note: "price and deadline"
+          "Talk to mom about car AND insurance"       → 1 task, note: "car and insurance"
+      • "and" or "," connects DESCRIPTORS or DETAILS of one action:
+          "Buy milk, eggs, and bread"                 → 1 task ("Buy groceries"), note: "milk, eggs, bread"
+          "Send David the contract and the brief"     → 1 task, note: "contract and brief"
+      • A comma sets off an APPOSITIVE (a name / role / descriptor for the
+        subject of the same action):
+          "Email Bob, the manager, about the deadline" → 1 task ("Email Bob"),
+                                                          note: "The manager — about deadline"
+          "Talk to David, my mentor, tomorrow"         → 1 task, note: "My mentor"
+        Signal: the fragment after the comma is a NOUN PHRASE describing
+        someone/something in the previous fragment, NOT a new verb.
+      • The second item is CLEARLY CONTEXT, not its own action ("deadline",
+        "price", "details", "the rest" — nouns describing the first task).
+      • The second item is a THING TO DO DURING the first (the first is an
+        event / anchor, the second is a "while I'm there" reminder).
+        Signal phrases: "remind me to", "remind myself to", "don't forget
+        to", "ask about/for", "bring up", "mention", "while I'm there",
+        "make sure to":
+          "Go to work at 5 AND remind myself to ask for a raise"
+                                                      → 1 task ("Go to work"), note: "Ask for a raise"
+          "Dinner with mom, don't forget to bring up the dentist"
+                                                      → 1 task ("Dinner with mom"), note: "Bring up the dentist"
+          "Doctor at 9 AND ask about my back"         → 1 task ("Doctor at 9"), note: "Ask about back"
         The reminder is NOT its own schedulable event — it lives inside the first.
-    Quick check: would each piece, on its own, be a complete task someone could
-    DO? If not, it belongs in the note of the first task.
+
+    Quick check for EACH fragment: does it start with a VERB or is it a
+    complete task noun that someone could DO on its own? If yes → own task.
+    Is it a noun-phrase describing something in the previous fragment? If
+    yes → belongs in the previous task's note.
 
 - If the input is a single short phrase with no real action ("the report"), still return one task with the cleaned title.
 
