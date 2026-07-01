@@ -100,10 +100,9 @@ import {
   LumiSuggestCard,
   type SuggestAcceptOptions,
 } from '../../components/LumiSuggestCard';
-import {
-  useFocusSession,
-  isLiveActivityAvailable,
-} from '../../lib/focusSession';
+import { LumiFocusCard } from '../../components/LumiFocusCard';
+import { FocusTaskPickerModal } from '../../components/FocusTaskPickerModal';
+import { useFocusSession } from '../../lib/focusSession';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -1100,15 +1099,10 @@ export default function Home() {
   // The nook cat updates as the user's state changes.
   const ambientMood = useAmbientLunaMood();
 
-  // Focus session — drives the per-task Dynamic Island Live Activity.
-  // currentFocus is non-null while the user is in a session; starting
-  // one calls into ActivityKit via the lumi-live-activity native
-  // module and the system pill shows up on iPhone 14 Pro+.
-  const currentFocus = useFocusSession((s) => s.current);
-  const startFocus = useFocusSession((s) => s.start);
-  const endFocus = useFocusSession((s) => s.end);
-  const focusAvailable = isLiveActivityAvailable();
-  // Pet name for the Live Activity label.
+  // Focus session — the LumiFocusCard component owns the full
+  // lifecycle (start / pause / resume / end) via useFocusSession
+  // internally. Home only needs the pet name for the Live Activity
+  // label, which it passes down to the card.
   const focusPetName = useUserStore((s) => s.petName);
   // Transient "celebration" override — when the user completes a
   // quest, the nook cat flips to 'happy' for ~30s then springs back
@@ -1201,6 +1195,12 @@ export default function Home() {
   const [now, setNow] = useState(() => new Date());
   const [swap, setSwap] = useState(0);
   const [cheer, setCheer] = useState(0);
+  // Focus-picker modal — opens from the LumiFocusCard's "Focus on
+  // another task →" link and shows a full-height sheet of today's
+  // incomplete quests. Tapping a quest starts a focus session on it
+  // (the timer then renders inside the modal via a nested
+  // LumiFocusCard bound to the picked quest).
+  const [focusPickerOpen, setFocusPickerOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
   const [capText, setCapText] = useState('');
   const [moreOpen, setMoreOpen] = useState(false);
@@ -1407,10 +1407,12 @@ export default function Home() {
     // If a focus session is running ON THIS quest, end it cleanly
     // so the Dynamic Island pill clears immediately (otherwise it
     // lingers until its full duration ticks out, which feels broken
-    // after the user already marked the task done).
+    // after the user already marked the task done). Reason is
+    // 'cancelled' — the user gets their celebration from the manual
+    // completion path, not from the focus-card's done screen.
     const fs = useFocusSession.getState();
     if (fs.current?.questId === q.id) {
-      void fs.end({ reason: 'completed' });
+      void fs.end({ reason: 'cancelled' });
     }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -2453,164 +2455,79 @@ export default function Home() {
           </View>
         ) : hero ? (
           <View ref={heroRef as never} style={styles.heroWrap}>
-            <View
-              style={[
-                styles.heroCard,
-                {
-                  borderColor: hexA(IMPORTANCE[hero.importance].color, 0.35),
-                },
-              ]}
-            >
-              {/* Header — cleaned up per the v2 spec: just "LUMI
-                 SUGGESTS" + the ⋯ menu. The time pill + window pill
-                 are gone (window moves into the meta row below). */}
-              <View style={styles.heroHeader}>
-                <Text style={[styles.heroEyebrowGlyph, { color: C.dusk }]}>
-                  ✦
-                </Text>
-                <Text style={styles.heroEyebrow}>Lumi suggests</Text>
-                <View style={{ flex: 1 }} />
-              </View>
-              <HeroOverflowMenu quest={hero} onEdit={setEditingQuest} />
-              <Text style={styles.heroTitle}>{hero.title}</Text>
-              {/* YOUR COMMENT pins above the description (only
-                 rendered when present). */}
-              {hero.comment && (
-                <HeroComment
-                  comment={hero.comment}
+            <LumiFocusCard
+              quest={hero}
+              petName={focusPetName}
+              ambientMood={ambientMood}
+              xpReward={hero.xpReward}
+              onMarkItDone={() => completeQuest(hero)}
+              onOpenPicker={() => setFocusPickerOpen(true)}
+              onSwap={
+                candidates.length > 1
+                  ? () => setSwap((s) => s + 1)
+                  : undefined
+              }
+              swapAvailable={candidates.length > 1}
+              onFocusStart={triggerLick}
+              headerRight={
+                <HeroOverflowMenu quest={hero} onEdit={setEditingQuest} />
+              }
+              aboveTitleSlot={
+                hero.comment ? (
+                  <HeroComment
+                    comment={hero.comment}
+                    accentColor={accent.fg}
+                  />
+                ) : null
+              }
+              descriptionSlot={
+                <HeroDescription
+                  text={
+                    hero.note ??
+                    whyLine(
+                      hero,
+                      hero.window === cw,
+                      effectiveWindows[hero.window].label,
+                    )
+                  }
                   accentColor={accent.fg}
                 />
-              )}
-              {/* Description — LLM-extracted note, falling back to
-                 the deterministic why-line. Self-measuring: clamps
-                 to 3 lines with `more` / `less` when the text
-                 actually overflows, so long descriptions don't blow
-                 out the hero card height. */}
-              <HeroDescription
-                text={
-                  hero.note ??
-                  whyLine(
-                    hero,
-                    hero.window === cw,
-                    effectiveWindows[hero.window].label,
-                  )
-                }
-                accentColor={accent.fg}
-              />
-              {/* Meta row — sigil + tier · window · +xp. Window
-                 moved here from the header so it's part of the
-                 compact context line, not a competing top-right
-                 element. */}
-              <View style={styles.heroMeta}>
-                <Text
-                  style={[
-                    styles.heroTierLabel,
-                    { color: IMPORTANCE[hero.importance].color },
-                  ]}
-                >
-                  <Text style={styles.heroTierSigil}>
-                    {IMPORTANCE[hero.importance].sigil}
-                  </Text>{' '}
-                  {IMPORTANCE[hero.importance].label}
-                </Text>
-                <View style={styles.metaDot} />
-                <Text
-                  style={[
-                    styles.heroWindowMeta,
-                    { color: WINDOWS[hero.window].color },
-                  ]}
-                >
-                  {WINDOWS[hero.window].glyph}{' '}
-                  {effectiveWindows[hero.window].label}
-                </Text>
-                <View style={styles.metaDot} />
-                <Text style={styles.heroXp}>
-                  <Text style={styles.heroXpNum}>+{hero.xpReward}</Text> xp
-                </Text>
-              </View>
-              <View style={styles.markDoneWrap}>
-                <Pressable
-                  onPress={() => completeQuest(hero)}
-                  style={({ pressed }) => [
-                    styles.markDoneBtn,
-                    { backgroundColor: accent.fg },
-                    pressed && { opacity: 0.86 },
-                  ]}
-                >
-                  <View style={styles.markDoneCheck}>
-                    <Text style={styles.markDoneCheckGlyph}>✓</Text>
-                  </View>
-                  <Text style={styles.markDoneText}>Mark it done</Text>
-                </Pressable>
-                {floater && (
-                  <View style={styles.floaterMount}>
-                    <XpFloater amount={floater.amount} color={floater.color} />
-                  </View>
-                )}
-              </View>
-              {/* Start / Stop focus — only when ActivityKit is
-                 available (iOS 16.1+, allowed in Settings). When a
-                 session is already running for THIS quest, the
-                 button flips to "End focus"; for another quest,
-                 hidden so users can't accidentally hijack. */}
-              {focusAvailable && (() => {
-                const ownThisSession = currentFocus?.questId === hero.id;
-                if (currentFocus && !ownThisSession) return null;
-                const durMin =
-                  hero.durationMinutes ?? (hero.scheduledHour != null ? 45 : 25);
-                return (
-                  <Pressable
-                    onPress={() => {
-                      Haptics.selectionAsync();
-                      if (ownThisSession) {
-                        void endFocus({ reason: 'cancelled' });
-                      } else {
-                        // Quick grooming beat as the focus session
-                        // starts — reads as the cat settling in to
-                        // work alongside the user, then returns to
-                        // ambient mood while the timer runs.
-                        triggerLick();
-                        void startFocus({
-                          questId: hero.id,
-                          taskTitle: hero.title,
-                          petName: focusPetName,
-                          durationSec: durMin * 60,
-                          mood: ambientMood,
-                        });
-                      }
-                    }}
+              }
+              metaSlot={
+                <View style={styles.heroMeta}>
+                  <Text
                     style={[
-                      styles.focusBtn,
-                      ownThisSession && styles.focusBtnActive,
+                      styles.heroTierLabel,
+                      { color: IMPORTANCE[hero.importance].color },
                     ]}
                   >
-                    <Text
-                      style={[
-                        styles.focusBtnText,
-                        ownThisSession && { color: C.ember },
-                      ]}
-                    >
-                      {ownThisSession
-                        ? '◼ End focus'
-                        : `▶ Start ${durMin}-min focus`}
-                    </Text>
-                  </Pressable>
-                );
-              })()}
-              {candidates.length > 1 && (
-                <Pressable
-                  onPress={() => {
-                    Haptics.selectionAsync();
-                    setSwap((s) => s + 1);
-                  }}
-                  hitSlop={10}
-                >
-                  <Text style={styles.swapText}>
-                    not feeling it? → show me another
+                    <Text style={styles.heroTierSigil}>
+                      {IMPORTANCE[hero.importance].sigil}
+                    </Text>{' '}
+                    {IMPORTANCE[hero.importance].label}
                   </Text>
-                </Pressable>
-              )}
-            </View>
+                  <View style={styles.metaDot} />
+                  <Text
+                    style={[
+                      styles.heroWindowMeta,
+                      { color: WINDOWS[hero.window].color },
+                    ]}
+                  >
+                    {WINDOWS[hero.window].glyph}{' '}
+                    {effectiveWindows[hero.window].label}
+                  </Text>
+                  <View style={styles.metaDot} />
+                  <Text style={styles.heroXp}>
+                    <Text style={styles.heroXpNum}>+{hero.xpReward}</Text> xp
+                  </Text>
+                </View>
+              }
+            />
+            {floater && (
+              <View style={styles.floaterMount}>
+                <XpFloater amount={floater.amount} color={floater.color} />
+              </View>
+            )}
           </View>
         ) : null}
 
@@ -3087,6 +3004,22 @@ export default function Home() {
             setQuestComment(editingQuest.id, comment);
           }
         }}
+      />
+
+      {/* Focus task-picker modal — opens from the LumiFocusCard's
+          "Focus on another task →" link. Shows today's incomplete
+          quests; picking one starts a session on it and the modal
+          swaps its body to the same LumiFocusCard bound to the
+          chosen quest. Closing the modal doesn't cancel the session
+          (the timer keeps ticking in the Dynamic Island). */}
+      <FocusTaskPickerModal
+        visible={focusPickerOpen}
+        onClose={() => setFocusPickerOpen(false)}
+        quests={todayQuests.filter((q) => !q.completed)}
+        petName={focusPetName}
+        ambientMood={ambientMood}
+        onCompleteQuest={(q) => completeQuest(q)}
+        onFocusStart={triggerLick}
       />
     </SafeAreaView>
   );
