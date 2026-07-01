@@ -307,18 +307,6 @@ struct LockScreenView: View {
 // ── Helpers ───────────────────────────────────────────────────────────
 
 @available(iOS 16.1, *)
-private func formatRemaining(_ elapsed: Int, _ total: Int) -> String {
-    let remaining = max(0, total - elapsed)
-    let m = remaining / 60
-    let s = remaining % 60
-    if m >= 60 {
-        let h = m / 60
-        return String(format: "%d:%02d", h, m % 60)
-    }
-    return String(format: "%d:%02d", m, s)
-}
-
-@available(iOS 16.1, *)
 private func progress(_ elapsed: Int, _ total: Int) -> Double {
     guard total > 0 else { return 0 }
     return min(1.0, Double(elapsed) / Double(total))
