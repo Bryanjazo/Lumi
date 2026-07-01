@@ -32,16 +32,10 @@ import {
   Animated,
   Easing,
 } from 'react-native';
-import Svg, {
-  Circle,
-  Defs,
-  LinearGradient,
-  Stop,
-  Line,
-} from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 
 import { fonts } from '../constants/fonts';
+import { EmberHearth } from './EmberHearth';
 import {
   useFocusSession,
   selectElapsedSeconds,
@@ -424,98 +418,12 @@ export function LumiFocusCard({
           </Pressable>
         </View>
 
-        {/* The living ring */}
+        {/* The living hearth — shared component with the Focus tab.
+           EmberHearth handles the well depth, ticks, gradient arc,
+           comet head, and the breathing core. LumiFocusCard just
+           overlays the MM:SS readout on top. */}
         <View style={styles.ringWrap}>
-          {/* Breathing halo — only while running */}
-          <Animated.View
-            style={[
-              styles.ringHalo,
-              {
-                opacity: isPaused
-                  ? 0.28
-                  : halo.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.55, 1],
-                    }),
-                transform: [
-                  {
-                    scale: isPaused
-                      ? 1
-                      : halo.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [1, 1.06],
-                        }),
-                  },
-                ],
-              },
-            ]}
-            pointerEvents="none"
-          />
-          <Svg
-            width={RING_SIZE}
-            height={RING_SIZE}
-            viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
-          >
-            <Defs>
-              <LinearGradient id="fcRing" x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0" stopColor={C.glow} />
-                <Stop offset="1" stopColor={C.ember} />
-              </LinearGradient>
-            </Defs>
-            {/* Tick marks — 60 total, every 5th is longer */}
-            {Array.from({ length: 60 }).map((_, i) => {
-              const a = (i / 60) * 2 * Math.PI - Math.PI / 2;
-              const big = i % 5 === 0;
-              const r1 = big ? 118 : 121;
-              const r2 = 124;
-              return (
-                <Line
-                  key={i}
-                  x1={RING_CENTER + Math.cos(a) * r1}
-                  y1={RING_CENTER + Math.sin(a) * r1}
-                  x2={RING_CENTER + Math.cos(a) * r2}
-                  y2={RING_CENTER + Math.sin(a) * r2}
-                  stroke={hexA(C.bone, big ? 0.22 : 0.1)}
-                  strokeWidth={big ? 2 : 1}
-                />
-              );
-            })}
-            {/* Track */}
-            <Circle
-              cx={RING_CENTER}
-              cy={RING_CENTER}
-              r={RING_R}
-              fill="none"
-              stroke={hexA(C.bone, 0.08)}
-              strokeWidth={10}
-            />
-            {/* Depleting progress */}
-            <Circle
-              cx={RING_CENTER}
-              cy={RING_CENTER}
-              r={RING_R}
-              fill="none"
-              stroke="url(#fcRing)"
-              strokeWidth={10}
-              strokeLinecap="round"
-              strokeDasharray={`${RING_CIRC}`}
-              strokeDashoffset={RING_CIRC * (1 - frac)}
-              transform={`rotate(-90 ${RING_CENTER} ${RING_CENTER})`}
-            />
-            {/* Leading dot — sits on the ring at the current fraction */}
-            {(() => {
-              const a = frac * 2 * Math.PI - Math.PI / 2;
-              return (
-                <Circle
-                  cx={RING_CENTER + Math.cos(a) * RING_R}
-                  cy={RING_CENTER + Math.sin(a) * RING_R}
-                  r={6}
-                  fill={C.glow}
-                />
-              );
-            })()}
-          </Svg>
-          {/* Center readout */}
+          <EmberHearth frac={frac} running={!isPaused} size={RING_SIZE} />
           <View style={styles.ringReadout} pointerEvents="none">
             <Text style={styles.ringMMSS}>
               {pad(mm)}:{pad(ss)}

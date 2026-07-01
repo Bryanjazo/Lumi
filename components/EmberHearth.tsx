@@ -122,11 +122,12 @@ export function EmberHearth({ frac, running, size = 272 }: EmberHearthProps) {
         justifyContent: 'center',
       }}
     >
-      {/* Base SVG — ticks + track + progress arc + leading dot */}
+      {/* Base SVG — well + ticks + track + progress arc + leading dot */}
       <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <Defs>
           <LinearGradient id="hearthRing" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={C.ember} />
+            <Stop offset="0" stopColor="#9C4E2E" />
+            <Stop offset="0.55" stopColor={C.ember} />
             <Stop offset="1" stopColor={C.glow} />
           </LinearGradient>
           <RadialGradient
@@ -137,10 +138,28 @@ export function EmberHearth({ frac, running, size = 272 }: EmberHearthProps) {
             fx="50%"
             fy="50%"
           >
-            <Stop offset="0" stopColor={C.glow} stopOpacity={0.9} />
+            <Stop offset="0" stopColor={C.glow} stopOpacity={0.95} />
             <Stop offset="1" stopColor={C.glow} stopOpacity={0} />
           </RadialGradient>
+          {/* Deep warm well — gives the inside of the ring real
+             depth vs the flat/transparent look. Reads as a hearth
+             sunken into the card, not a decal painted on top. */}
+          <RadialGradient
+            id="hearthWell"
+            cx="50%"
+            cy="50%"
+            r="50%"
+            fx="50%"
+            fy="50%"
+          >
+            <Stop offset="0" stopColor="#2B2019" stopOpacity={1} />
+            <Stop offset="0.6" stopColor="#1C1512" stopOpacity={1} />
+            <Stop offset="1" stopColor="#120E0C" stopOpacity={0} />
+          </RadialGradient>
         </Defs>
+
+        {/* Well — sits under everything, gives depth. */}
+        <Circle cx={cx} cy={cy} r={size * 0.415} fill="url(#hearthWell)" />
 
         {/* Minute ticks — lit as long as the fraction hasn't crossed
            them yet. Major ticks every 5. */}
@@ -192,9 +211,11 @@ export function EmberHearth({ frac, running, size = 272 }: EmberHearthProps) {
           transform={`rotate(-90 ${cx} ${cy})`}
         />
 
-        {/* Leading dot — soft halo + hard core, riding the arc head. */}
-        <Circle cx={dotX} cy={dotY} r={15} fill="url(#hearthDot)" />
-        <Circle cx={dotX} cy={dotY} r={3.2} fill="#FFF6E4" />
+        {/* Comet head — soft halo + bright core, riding the arc
+           head. Halo is larger + brighter than a plain dot per the
+           mockup ("comet head" not "pin"). */}
+        <Circle cx={dotX} cy={dotY} r={17} fill="url(#hearthDot)" />
+        <Circle cx={dotX} cy={dotY} r={3.4} fill="#FFF6E4" />
       </Svg>
 
       {/* Central hearth — layered on top via absolute so we can
