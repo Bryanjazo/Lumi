@@ -306,6 +306,22 @@ function PickStep({
         </View>
         {view === 'day' && (
           <View style={styles.dayNavRow}>
+            {/* "Today" jump — only appears when the picker is on
+               a day other than today. Ember-tinted so it reads as
+               the "get me back" affordance without competing with
+               the ‹ › arrows. */}
+            {!sameDay(date, today) && (
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setDate(today);
+                }}
+                style={styles.dayNavTodayBtn}
+                hitSlop={6}
+              >
+                <Text style={styles.dayNavTodayText}>Today</Text>
+              </Pressable>
+            )}
             <Pressable
               onPress={() => setDate(addDays(date, -1))}
               style={styles.dayNavBtn}
@@ -1138,6 +1154,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: C.boneDim,
     lineHeight: 18,
+  },
+  dayNavTodayBtn: {
+    height: 32,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: hexA(C.ember, 0.45),
+    backgroundColor: hexA(C.ember, 0.1),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayNavTodayText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 12.5,
+    color: C.ember,
+    letterSpacing: 0.1,
   },
   dayHeadRow: {
     flexDirection: 'row',
