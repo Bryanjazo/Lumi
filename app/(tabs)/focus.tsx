@@ -1709,7 +1709,12 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   sessionCatMount: {
-    marginTop: -6,
+    // Push the cat DOWN from the hearth's bottom edge — was
+    // marginTop: -6 which pulled it up INTO the hearth's glow
+    // ring, reading as "cat is stuck to the clock". Positive top
+    // margin gives visible breathing room between the ring and
+    // Luna.
+    marginTop: 24,
     marginBottom: 8,
   },
   sessionCat: {
