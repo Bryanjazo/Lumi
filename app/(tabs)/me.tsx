@@ -704,31 +704,53 @@ const Room = ({
          If luna-walk.gif isn't bundled (old EAS build + new JS),
          onError flips walkAssetFailed and we render the emotion
          sprite during the walk too — cat is visible, just sliding. */}
-      {/* The walking + lick sprites get upscaled ~1.35× because
-         the source GIFs (48×45 for walk, similar margin on lick)
-         have more whitespace around the cat than the sitting
-         sprites — without compensation they read visibly smaller
-         when the loop swaps in. transformOrigin pins the scale to
-         '50% 100%' (center-bottom) so the cat grows UPWARD and
-         its feet stay planted on the rug instead of sinking
-         through it. Wrapper has overflow visible by default, so
-         the bigger image renders fine even when it overflows the
-         64px box on the top and sides. */}
-      <Image
-        source={lunaSource(activeSprite)}
-        onError={() => {
-          if (isWalking) setWalkAssetFailed(true);
-        }}
-        style={[
-          { width: '100%', height: '100%' },
-          (activeSprite === 'walk' || activeSprite === 'lick') && {
-            transform: [{ scale: 1.35 }],
-            transformOrigin: '50% 100%',
-          },
-        ]}
-        resizeMode="contain"
-        accessibilityLabel="Luna"
-      />
+      {/* Walking + lick sprites render in a BIGGER, bottom-anchored,
+         aspect-correct box so the cat's visual feet plant at the
+         same Y the sitting sprites plant.
+
+         Why aspect-correct: the walk GIF is 48×45 (wider than tall).
+         With resizeMode="contain" inside a square box, the renderer
+         centers the image vertically and leaves empty padding above
+         AND below the cat — which lifts the feet off the rug. By
+         sizing the box at 48:45 we let contain fill the box edge-
+         to-edge, planting the cat's bottom row of pixels exactly at
+         box bottom. The lick GIF is 32×32 (square); inside the same
+         48:45 box, contain still aligns its bottom edge to box
+         bottom (just with small horizontal margins), so the planting
+         math works for both sprites.
+
+         The bigger box (1.35× the wrapper width) gives the user the
+         "bit bigger" cat they asked for; the negative `left` offset
+         keeps it horizontally centered on the wrapper's vertical
+         axis. The bottom: 0 anchor is what keeps walking/sitting
+         transitions seamless. */}
+      {activeSprite === 'walk' || activeSprite === 'lick' ? (
+        <Image
+          source={lunaSource(activeSprite)}
+          onError={() => {
+            if (isWalking) setWalkAssetFailed(true);
+          }}
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: -((GIF_SIZE * 1.35 - GIF_SIZE) / 2),
+            width: GIF_SIZE * 1.35,
+            height: GIF_SIZE * 1.35 * (45 / 48),
+          }}
+          resizeMode="contain"
+          accessibilityLabel="Luna"
+        />
+      ) : (
+        <Image
+          source={lunaSource(activeSprite)}
+          onError={() => {
+            if (isWalking) setWalkAssetFailed(true);
+          }}
+          style={{ width: '100%', height: '100%' }}
+          resizeMode="contain"
+          accessibilityLabel="Luna"
+        />
+      )}
     </Animated.View>
     </View>
   );
