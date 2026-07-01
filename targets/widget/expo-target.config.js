@@ -37,14 +37,32 @@ module.exports = {
     'luna-happy': './assets/luna-happy.png',
     'luna-sad': './assets/luna-sad.png',
     'luna-sleep': './assets/luna-sleep.png',
-    // 4-frame licking cycle extracted from luna-lick.gif — Live
-    // Activities can't render animated GIFs, so the widget cycles
-    // through these PNGs via a TimelineView.periodic schedule
-    // during focus sessions (see LunaSpriteView in index.swift).
+    // Full 20-frame licking cycle extracted from luna-lick.gif —
+    // Live Activities can't render animated GIFs, so the widget
+    // cycles through these PNGs via TimelineView.periodic during
+    // focus sessions (see LunaSpriteView in index.swift). 20
+    // frames × ~10fps = ~2s cycle, matching the source GIF's
+    // native rhythm.
     'luna-lick-1': './assets/luna-lick-1.png',
     'luna-lick-2': './assets/luna-lick-2.png',
     'luna-lick-3': './assets/luna-lick-3.png',
     'luna-lick-4': './assets/luna-lick-4.png',
+    'luna-lick-5': './assets/luna-lick-5.png',
+    'luna-lick-6': './assets/luna-lick-6.png',
+    'luna-lick-7': './assets/luna-lick-7.png',
+    'luna-lick-8': './assets/luna-lick-8.png',
+    'luna-lick-9': './assets/luna-lick-9.png',
+    'luna-lick-10': './assets/luna-lick-10.png',
+    'luna-lick-11': './assets/luna-lick-11.png',
+    'luna-lick-12': './assets/luna-lick-12.png',
+    'luna-lick-13': './assets/luna-lick-13.png',
+    'luna-lick-14': './assets/luna-lick-14.png',
+    'luna-lick-15': './assets/luna-lick-15.png',
+    'luna-lick-16': './assets/luna-lick-16.png',
+    'luna-lick-17': './assets/luna-lick-17.png',
+    'luna-lick-18': './assets/luna-lick-18.png',
+    'luna-lick-19': './assets/luna-lick-19.png',
+    'luna-lick-20': './assets/luna-lick-20.png',
   },
   // Widget tint when iOS renders in dimmed / standby modes.
   colors: {

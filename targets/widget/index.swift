@@ -141,23 +141,19 @@ struct LunaSpriteView: View {
     let elapsedSeconds: Int
 
     var body: some View {
-        // TimelineView(.periodic) runs the same self-refresh loop
-        // iOS uses for widgets — Live Activities support it
-        // (unlike .animation). At 0.5s intervals the closure fires
-        // ~2fps → full 4-frame cycle every 2s → visibly licking.
-        // Frame index derived from the timeline date so it doesn't
-        // depend on ContentState pings; iOS may throttle the
-        // interval under load but at worst degrades to 1-2fps,
-        // never fully static.
+        // All 20 frames from the source GIF, cycling at the GIF's
+        // native ~10fps rhythm (0.1s interval). iOS may throttle
+        // .periodic under load — worst case we degrade to fewer
+        // effective updates per second and the animation just plays
+        // slower, never fully static.
         //
-        // Previous attempt's empty-cat bug was ASSET-related, not
-        // TimelineView-related: the luna-lick-{1..4}.imageset
-        // folders weren't in the widget's Assets.xcassets yet (see
-        // the imageset commit). With assets present, TimelineView
-        // works fine in every DI slot.
-        TimelineView(.periodic(from: Date(), by: 0.5)) { context in
-            let bucket = Int(context.date.timeIntervalSince1970 * 2)
-            let frame = (bucket % 4) + 1  // 1...4
+        // 20 frames × 0.1s = 2s full cycle, matching what the JS
+        // side plays for the licking beat everywhere else in the
+        // app — the Dynamic Island cat is now visually synced with
+        // Luna's licking on Home / Me / Focus tab.
+        TimelineView(.periodic(from: Date(), by: 0.1)) { context in
+            let bucket = Int(context.date.timeIntervalSince1970 * 10)
+            let frame = (bucket % 20) + 1  // 1...20
             Image("luna-lick-\(frame)")
                 .resizable()
                 .interpolation(.none)
