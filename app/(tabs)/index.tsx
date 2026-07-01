@@ -103,6 +103,7 @@ import {
 } from '../../components/LumiSuggestCard';
 import { LumiFocusCard } from '../../components/LumiFocusCard';
 import { FocusTaskPickerModal } from '../../components/FocusTaskPickerModal';
+import { HomeCaptureModal } from '../../components/HomeCaptureModal';
 import { useFocusSession } from '../../lib/focusSession';
 
 // ═════════════════════════════════════════════════════════════════════
@@ -2586,118 +2587,13 @@ export default function Home() {
           </View>
         ) : null}
 
-        {/* ── Capture — expanded state only ──
-            The one-line closed capture that used to live inline was
-            promoted to a floating pill anchored above the nav (see
-            HomeCapturePill render below). What stays inline is the
-            expanded brain-dump surface — the tall textarea + Tuck /
-            Cancel affordance — which the user reaches by tapping the
-            pill's expand icon OR by starting a voice dump that
-            couldn't be parsed deterministically. */}
-        {capOpen && (
-          <View
-            style={[styles.captureOpen, { borderColor: accent.fg }]}
-          >
-            {/* Multiline input — grows from a one-liner up to a tall
-                ~12-line frame, then scrolls internally past that.
-                We use minHeight + maxHeight (not a tracked explicit
-                height) because RN iOS multiline auto-grows reliably
-                with that style pattern; the earlier
-                onContentSizeChange path silently failed to grow on
-                iOS once it hit the clamp. Submit via the "Tuck it
-                away" button — Return adds a newline, which is what
-                the user wants when brain-dumping. */}
-            <TextInput
-              autoFocus
-              value={capText}
-              onChangeText={setCapText}
-              placeholder="dump anything — calls, errands, half-thoughts. messy is fine, I'll sort it."
-              placeholderTextColor={C.mute}
-              style={styles.captureInput}
-              multiline
-              textAlignVertical="top"
-              scrollEnabled
-              editable={voice.state !== 'transcribing'}
-              // Auto-cancel when the user taps outside an empty input.
-              // onBlur fires when iOS pulls focus to anything else,
-              // so this gives a "tap-anywhere-to-dismiss" feel for
-              // empty drafts without disturbing in-progress dumps.
-              // Voice-recording state pauses this — the user's mid-
-              // recording, focus naturally bounces.
-              onBlur={() => {
-                if (
-                  !capText.trim() &&
-                  voice.state !== 'recording' &&
-                  voice.state !== 'transcribing'
-                ) {
-                  setCapOpen(false);
-                }
-              }}
-            />
-            {capText.trim().length > 80 && (
-              <Text style={styles.captureCount}>
-                {capText.trim().split(/\s+/).length} words
-              </Text>
-            )}
-            <View style={styles.captureActions}>
-              <Pressable
-                onPress={handleMic}
-                hitSlop={6}
-                style={[
-                  styles.captureMicBtn,
-                  voice.state === 'recording' && {
-                    backgroundColor: accent.fg,
-                  },
-                ]}
-              >
-                {voice.state === 'transcribing' ? (
-                  <Text style={styles.captureMic}>…</Text>
-                ) : (
-                  <MicIcon
-                    size={16}
-                    color={voice.state === 'recording' ? C.void : C.mute}
-                  />
-                )}
-              </Pressable>
-              <View style={{ flex: 1 }} />
-              <Pressable
-                onPress={() => {
-                  setCapOpen(false);
-                  setCapText('');
-                  if (voice.state === 'recording') {
-                    voice.cancel();
-                  }
-                }}
-                style={styles.captureCancel}
-              >
-                <Text style={styles.captureCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={sendCapture}
-                disabled={!capText.trim()}
-                style={[
-                  styles.captureSend,
-                  capText.trim()
-                    ? { backgroundColor: accent.dk }
-                    : {
-                        backgroundColor: 'transparent',
-                        borderWidth: 1,
-                        borderColor: C.hair,
-                      },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.captureSendText,
-                    { color: capText.trim() ? C.bone : C.mute },
-                  ]}
-                >
-                  Tuck it away
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
+        {/* The expanded brain-dump surface no longer renders inline
+            in the scroll — it was popping up somewhere mid-page
+            depending on scroll position and reading as buggy. It's
+            now a proper slide-from-bottom sheet (HomeCaptureModal),
+            rendered at the end of the SafeAreaView so it composes
+            with the other modals. The pill's expand button still
+            just toggles capOpen; the modal takes over from there. */}
 
 
         {/* ── Lumi suggests — preview after brain-dump. Sequential
@@ -3140,6 +3036,28 @@ export default function Home() {
         ambientMood={ambientMood}
         onCompleteQuest={(q) => completeQuest(q)}
         onFocusStart={triggerLick}
+      />
+
+      {/* Brain-dump sheet — slides up from the bottom, taking over
+          the screen with a big Fraunces prompt + a proper multiline
+          textarea + the real MicButton + a "Make sense of it →"
+          submit. Opens when the user taps the floating pill's
+          expand button, or when handleTranscribed can't parse a
+          voice transcript deterministically and defers to review. */}
+      <HomeCaptureModal
+        visible={capOpen}
+        onClose={() => {
+          setCapOpen(false);
+          setCapText('');
+          if (voice.state === 'recording') {
+            void voice.cancel();
+          }
+        }}
+        capText={capText}
+        setCapText={setCapText}
+        onSubmit={sendCapture}
+        onTranscribed={handleTranscribed}
+        submitting={aiPending}
       />
     </SafeAreaView>
   );

@@ -1614,11 +1614,17 @@ const styles = StyleSheet.create({
   },
 
   // ── Session step ──
+  // justifyContent centers the whole timer stack vertically so the
+  // cat + hearth sit in the visible middle instead of pinned to the
+  // top (which read as "content jammed against the notch"). Kept
+  // paddingTop light so the eyebrow + task title still get a small
+  // top offset from safe-area top.
   sessionWrap: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 28,
-    paddingTop: 24,
+    paddingTop: 16,
     paddingBottom: FLOATING_NAV_CLEARANCE + 20,
   },
   sessionEyebrow: {
