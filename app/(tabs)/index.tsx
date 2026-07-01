@@ -1629,6 +1629,11 @@ export default function Home() {
     };
     const result = await llmUnderstand(rawText, ctx);
     if (!result) return;
+    // LLM correctly returned 0 tasks (question / emoji / venting).
+    // Keep the deterministic preview instead of wiping it — the
+    // user typed SOMETHING that parseSmartCapture caught, so we
+    // shouldn't silently clear it just because the LLM disagreed.
+    if (result.tasks.length === 0) return;
 
     setPreviewTasks((cur) => {
       if (!cur) return cur;

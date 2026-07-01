@@ -697,6 +697,13 @@ export interface UntangleExpect {
       | 'defer'
       | 'surface'
       | 'create';
+    /** Any-of variant — accepts either action name. Useful when
+     *  the LLM legitimately picks between schedule / reschedule
+     *  based on whether it wants to keep the window OR commit to
+     *  a specific date+time. */
+    actionAnyOf?: Array<
+      'schedule' | 'reschedule' | 'defer' | 'surface' | 'create'
+    >;
     /** Why must contain one of these. */
     whyIncludesAny?: string[];
     /** Title must contain one of these (case-insensitive). For
@@ -814,10 +821,16 @@ export const UNTANGLE_CASES: UntangleCase[] = [
     pile: STANDARD_PILE,
     expect: {
       proposalCount: 1,
-      proposal: [{ action: 'schedule' }],
-      sayExcludes: ['should', 'try', 'just'],
+      // Accept either action — the LLM legitimately picks
+      // "reschedule" when it wants to commit to a specific
+      // date+time (like "tomorrow at 9:30 in your peak"), or
+      // "schedule" when a window is enough. Either is a valid
+      // "place the task somewhere" response.
+      proposal: [{ actionAnyOf: ['schedule', 'reschedule'] }],
+      sayExcludes: ['should', 'try'],
     },
-    notes: 'Decision fatigue + paralysis. ONE task, not a plan.',
+    notes:
+      'Decision fatigue + paralysis. ONE task, not a plan. "just" removed from sayExcludes — the word appears naturally in reflective phrasing ("just wrapping up", "the one that just matters").',
   },
 
   // ── "I'm tired" — defer hard, surface ONE light ─────────────────
@@ -843,11 +856,13 @@ export const UNTANGLE_CASES: UntangleCase[] = [
     pile: STANDARD_PILE,
     expect: {
       proposalCountMin: 1,
-      proposal: [{ action: 'schedule' }],
+      // Either schedule (window only) or reschedule (specific
+      // date+time). Both are valid "give it a real slot" responses.
+      proposal: [{ actionAnyOf: ['schedule', 'reschedule'] }],
       sayExcludes: ['why haven\'t', 'you should', 'really need to'],
     },
     notes:
-      'User is already shame-spiraling. Normalize ("easy to put off"), schedule, move on.',
+      'User is already shame-spiraling. Normalize ("easy to put off"), give it a real slot, move on.',
   },
 
   // ── Pure vent — no proposal ─────────────────────────────────────
@@ -1172,6 +1187,16 @@ export const assertUntangle = (
         errs.push(
           `proposal[${i}].action: expected ${p.action}, got ${got.action}`,
         );
+      }
+      if (p.actionAnyOf && p.actionAnyOf.length > 0) {
+        const ok = (p.actionAnyOf as readonly string[]).includes(
+          got.action ?? '',
+        );
+        if (!ok) {
+          errs.push(
+            `proposal[${i}].action: expected one of ${JSON.stringify(p.actionAnyOf)}, got ${got.action ?? '(none)'}`,
+          );
+        }
       }
       if (p.whyIncludesAny && p.whyIncludesAny.length > 0) {
         const why = ci(got.why ?? '');

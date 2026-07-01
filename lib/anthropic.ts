@@ -631,6 +631,15 @@ export const llmUnderstand = async (
     if (!parsed || !Array.isArray(parsed.tasks)) return null;
     // Sanitize each task — coerce shape so a misbehaving model
     // doesn't blow up the caller. Drop tasks without a title.
+    // NOTE — an empty tasks array is a LEGITIMATE success (the LLM
+    // correctly extracted "nothing to do" from a question like
+    // "when do I have time tomorrow?" or a pure emoji "😩😩").
+    // We return `{ tasks: [] }` in that case, NOT null. Callers who
+    // want "empty means do nothing" can check `.tasks.length === 0`.
+    // Returning null here would conflate real errors (JSON parse
+    // failure, network) with valid empty extraction — the benchmark
+    // fails on both, and Home's upgrade path wipes the deterministic
+    // preview unnecessarily.
     const tasks = parsed.tasks
       .map((t): UnderstoodTask | null => {
         if (!t || typeof t.title !== 'string' || t.title.trim().length === 0) {
@@ -715,7 +724,6 @@ export const llmUnderstand = async (
         return cleaned;
       })
       .filter((t): t is UnderstoodTask => t != null);
-    if (tasks.length === 0) return null;
     return { tasks };
   } catch {
     return null;
