@@ -39,6 +39,7 @@ import { DayRibbon } from '../components/DayRibbon';
 import { fonts } from '../constants/fonts';
 import { skins } from '../constants/skins';
 import { lunaSource, type LunaMood } from '../lib/luna-source';
+import { skinPreview } from '../lib/skin-preview';
 import { useAmbientLunaMood } from '../lib/luna-mood';
 import {
   useUserStore,
@@ -125,9 +126,9 @@ const fmtTime = (m: number): string => {
 // ─────────────────────────────────────────────────────────────────────
 const SkinLuna = ({
   size = 70,
-  skinId: _skinId = 'default',
+  skinId = 'default',
   animate: _animate = false,
-  mood = 'idle',
+  mood: _mood = 'idle',
 }: {
   size?: number;
   skinId?: string;
@@ -135,7 +136,7 @@ const SkinLuna = ({
   mood?: LunaMood;
 }) => (
   <Image
-    source={lunaSource(mood)}
+    source={skinPreview(skinId)}
     style={{ width: size, height: size }}
     resizeMode="contain"
   />

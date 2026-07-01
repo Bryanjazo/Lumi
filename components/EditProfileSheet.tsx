@@ -18,7 +18,8 @@ import { fonts } from '../constants/fonts';
 import { useUserStore } from '../store/userStore';
 import { useAccent } from '../lib/theme';
 import { skins, type Skin } from '../constants/skins';
-import { lunaSource, type LunaMood } from '../lib/luna-source';
+import { type LunaMood } from '../lib/luna-source';
+import { skinPreview } from '../lib/skin-preview';
 
 // ── Palette (matches profile screen) ───────────────────────────────
 const C = {
@@ -34,20 +35,24 @@ const C = {
 
 const NAME_MAX = 30;
 
-// ── Mini Luna avatar — same animated cat as the rest of the app via
-// the shared `lunaSource()` helper. `primary` / `secondary` are
-// accepted for API compat with existing callers but ignored. ──
+// ── Mini Luna avatar — colored per-skin preview PNG so the picker
+// shows real color variation instead of the same tan cat with a
+// different label. `skinId` picks the recolored still-frame; the
+// animated GIF path only kicks in for the 'default' / 'original'
+// case (which uses the base sprite anyway). primary / secondary
+// stay in the signature for API compat with older callers. ──
 const MiniLuna = ({
   size = 56,
-  mood = 'idle',
+  skinId,
 }: {
   size?: number;
   primary?: string;
   secondary?: string;
   mood?: LunaMood;
+  skinId?: string;
 }) => (
   <Image
-    source={lunaSource(mood)}
+    source={skinPreview(skinId)}
     style={{ width: size, height: size }}
     resizeMode="contain"
   />
@@ -210,11 +215,7 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
                       ]}
                     >
                       <View style={styles.avatarSprite}>
-                        <MiniLuna
-                          size={48}
-                          primary={opt.primary}
-                          secondary={opt.secondary}
-                        />
+                        <MiniLuna size={48} skinId={opt.id} />
                       </View>
                       <Text
                         style={[
