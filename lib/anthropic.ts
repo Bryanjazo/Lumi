@@ -390,6 +390,52 @@ ADHD-specific edge cases (READ CAREFULLY — these come up constantly):
   → Extract 3 tasks. Each "oh and also" / "and" between separate verbs is a NEW
   task. Don't lose any.
 
+- BARE COMMA-LIST (very common ADHD pattern): a list of actions separated by
+  ONLY commas — no "and", no "then". Extract EVERY one; don't be conservative
+  because the connector word is missing.
+    "finish the pitch deck this morning, reply to Sam about the timeline by
+     noon, book the dentist, edit this week's podcast at 4pm, send the client
+     invoice by 5pm, tidy the desk"
+        → 6 tasks (Finish pitch deck / Reply to Sam / Book dentist / Edit
+          podcast / Send client invoice / Tidy desk), each with the when +
+          notes it implies.
+    "call mom, pick up prescription, gas, dishes"
+        → 4 tasks (single-word fragments like "gas" and "dishes" ARE tasks in
+          this context — the pattern is what tells you).
+    Signal: each fragment starts with a verb (or is a familiar chore noun)
+    → separate task. If EVERY fragment looks action-like, split them all.
+
+- COMMA-AS-PUNCTUATION vs COMMA-AS-SEPARATOR: judge by what the comma sets off.
+    APPOSITIVE / TOPIC (comma as punctuation) → keep as one task:
+      "Email Bob, the manager, about the deadline"
+          → 1 task ("Email Bob"), note: "The manager — about deadline"
+      "Talk to David, my mentor, tomorrow"
+          → 1 task ("Talk to David"), note: "My mentor"
+      "Send Sarah the file, the one from last week"
+          → 1 task ("Send Sarah the file"), note: "The one from last week"
+    LIST OF ACTIONS (comma as separator) → split:
+      "Email Bob, call Sarah, text mom"
+          → 3 tasks
+      "Groceries, laundry, gym"
+          → 3 tasks
+    Quick check: does the fragment AFTER the comma start with a verb OR is
+    it a standalone chore noun? → separate task. Is it a noun-phrase describing
+    the previous item (a name, a role, a modifier)? → punctuation, keep as note.
+
+- CASUAL CHATTER + REAL TASKS: users vent while they capture. Extract ONLY the
+  actionable parts; drop the pure venting.
+    "man today sucks, gotta finish that report by 5pm otherwise the boss
+     will kill me"
+        → 1 task ("Finish report"), when.time: "17:00", importance: high
+    "ugh so tired but I still need to send the invoice"
+        → 1 task ("Send invoice"), importance: medium
+    "I'm so stressed about the presentation, need to prep slides, also
+     groceries"
+        → 2 tasks: "Prep slides" (importance: high — dread + presentation
+          weight), "Buy groceries" (importance: medium)
+    Signal: strip clauses that are pure feeling ("man today sucks", "ugh",
+    "so stressed") — they're context, not tasks. Keep the ACTION clauses.
+
 - OVERWHELM PILE: "I have so much to do today — A, B, C, D, E" → Extract every
   named task. The overwhelm feeling is real; reflect it by returning ALL of them
   (the app handles the "let's focus" surface separately).
