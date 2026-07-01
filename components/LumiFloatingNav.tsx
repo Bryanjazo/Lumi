@@ -64,11 +64,12 @@ const hexA = (hex: string, a: number): string => {
 
 // ── Icon set ───────────────────────────────────────────────────────
 // Ported verbatim from the mockup's Icon() function. Active uses void
-// color (dark on the ember pill); inactive uses boneDim. Capture is
-// FILLED when active (extra emphasis on the sparkle). Time gets a
-// filled node circle when active.
+// color (dark on the ember pill); inactive uses boneDim. Time gets
+// a filled node circle when active. Focus is a bullseye — three
+// concentric circles that hint at the ember hearth without pulling
+// in the whole visual.
 
-type IconKind = 'Home' | 'Untangle' | 'Time' | 'Capture' | 'Me';
+type IconKind = 'Home' | 'Untangle' | 'Time' | 'Focus' | 'Me';
 
 const Icon = ({ k, active }: { k: IconKind; active: boolean }) => {
   const c = active ? C.void : C.boneDim;
@@ -108,10 +109,12 @@ const Icon = ({ k, active }: { k: IconKind; active: boolean }) => {
           <Path d="M12 16.4h4.2" opacity={0.6} />
         </Svg>
       );
-    case 'Capture':
+    case 'Focus':
       return (
-        <Svg {...common} fill={active ? c : 'none'}>
-          <Path d="M12 4 13.3 10.7 20 12 13.3 13.3 12 20 10.7 13.3 4 12 10.7 10.7Z" />
+        <Svg {...common}>
+          <Circle cx={12} cy={12} r={8} />
+          <Circle cx={12} cy={12} r={4.2} />
+          <Circle cx={12} cy={12} r={0.6} fill={c} stroke="none" />
         </Svg>
       );
     case 'Me':
@@ -153,7 +156,7 @@ const ROUTE_TO_ICON: Record<string, IconKind> = {
   index: 'Home',
   checkin: 'Untangle',
   time: 'Time',
-  capture: 'Capture',
+  focus: 'Focus',
   me: 'Me',
 };
 
