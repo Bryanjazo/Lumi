@@ -661,168 +661,6 @@ const HeroOverflowMenu = ({
   );
 };
 
-// (Legacy wrapper retained for the very few callers that still want
-// a standalone × — kept as no-op alias in case future hero variants
-// need just the delete. New code should use HeroOverflowMenu.)
-const HeroDeleteBtn = ({ id, title }: { id: string; title: string }) => {
-  const confirm = useDeleteConfirm(id, title);
-  return (
-    <Pressable
-      onPress={confirm}
-      hitSlop={12}
-      style={{
-        position: 'absolute',
-        top: 12,
-        right: 12,
-        width: 26,
-        height: 26,
-        borderRadius: 13,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        borderWidth: 1,
-        borderColor: 'rgba(176,163,139,0.28)',
-        zIndex: 5,
-      }}
-    >
-      <Text
-        style={{
-          color: '#B0A38B',
-          fontSize: 14,
-          lineHeight: 16,
-          marginTop: -1,
-        }}
-      >
-        ×
-      </Text>
-    </Pressable>
-  );
-};
-
-/** Legacy floating × button (used by the hero card + history rows).
- *  In the "Then, when you're ready" list this was replaced by the
- *  pill-style RestDeletePill below so the row's right-side actions
- *  read as a consistent row of affordances. */
-const RestDeleteBtn = ({ id, title }: { id: string; title: string }) => {
-  const confirm = useDeleteConfirm(id, title);
-  return (
-    <Pressable
-      onPress={(e) => {
-        // Don't let the outer row's "complete this" press fire too.
-        e.stopPropagation();
-        confirm();
-      }}
-      hitSlop={10}
-      style={{
-        marginLeft: 6,
-        width: 22,
-        height: 22,
-        borderRadius: 11,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(255,255,255,0.04)',
-        borderWidth: 1,
-        borderColor: 'rgba(176,163,139,0.22)',
-      }}
-    >
-      <Text
-        style={{
-          color: '#6E655A',
-          fontSize: 12,
-          lineHeight: 14,
-          marginTop: -1,
-        }}
-      >
-        ×
-      </Text>
-    </Pressable>
-  );
-};
-
-/** Delete pill — used in the rest row's meta line. Styled to match
- *  the Edit pill (same border / padding / typography) so the two
- *  right-side actions read as a single consistent group. */
-const RestDeletePill = ({ id, title }: { id: string; title: string }) => {
-  const confirm = useDeleteConfirm(id, title);
-  return (
-    <Pressable
-      onPress={(e) => {
-        e.stopPropagation();
-        confirm();
-      }}
-      hitSlop={6}
-      accessibilityRole="button"
-      accessibilityLabel="Delete task"
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-        borderWidth: 1,
-        borderColor: 'rgba(176,163,139,0.22)',
-        borderRadius: 100,
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        marginLeft: 6,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: fonts.inter,
-          fontSize: 12,
-          color: '#B0A38B',
-          lineHeight: 14,
-          marginTop: -1,
-        }}
-      >
-        ×
-      </Text>
-      <Text
-        style={{
-          fontFamily: fonts.interSemi,
-          fontSize: 11,
-          color: '#B0A38B',
-          letterSpacing: -0.1,
-        }}
-      >
-        Delete
-      </Text>
-    </Pressable>
-  );
-};
-
-/**
- * RestNote — note row in the "Then, when you're ready" list.
- *
- * Renders the note clamped to 2 lines and shows a `more` / `less`
- * toggle ONLY when the underlying text actually overflows. Detection
- * is via onTextLayout: first render is unclamped, the layout reports
- * how many lines the full text needs; if > 2, we flip an overflow
- * flag, the next render clamps, and the toggle appears. The user
- * doesn't perceive the pre-clamp frame because React Native paints
- * after both render passes settle.
- */
-// Inline style constants for the rest-note since the makeStyles
-// factory lives inside the screen component closure. Mirrors the
-// values in `restNote` / `restNoteToggle` / `restNoteToggleHit`.
-const REST_NOTE_TEXT = {
-  fontFamily: fonts.fraunces,
-  fontStyle: 'italic' as const,
-  fontSize: 12.5,
-  color: C.mute,
-  marginTop: 3,
-  lineHeight: 18,
-};
-const REST_NOTE_TOGGLE_HIT = {
-  alignSelf: 'flex-start' as const,
-  paddingTop: 2,
-  paddingBottom: 2,
-  marginTop: 2,
-};
-const REST_NOTE_TOGGLE_TEXT = {
-  fontFamily: fonts.interSemi,
-  fontSize: 11.5,
-};
-
 /**
  * HeroComment — boxed "YOUR COMMENT" section on the hero card.
  *
@@ -1011,48 +849,6 @@ const HeroDescription = ({
   );
 };
 
-const RestNote = ({
-  note,
-  open,
-  onToggle,
-  accentColor,
-}: {
-  note: string;
-  open: boolean;
-  onToggle: () => void;
-  accentColor: string;
-}) => {
-  const [overflowing, setOverflowing] = useState(false);
-  return (
-    <>
-      <Text
-        style={REST_NOTE_TEXT}
-        onTextLayout={(e) => {
-          if (!overflowing && e.nativeEvent.lines.length > 2) {
-            setOverflowing(true);
-          }
-        }}
-        numberOfLines={overflowing && !open ? 2 : undefined}
-      >
-        {note}
-      </Text>
-      {overflowing && (
-        <Pressable
-          onPress={onToggle}
-          hitSlop={6}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: open }}
-          style={REST_NOTE_TOGGLE_HIT}
-        >
-          <Text style={[REST_NOTE_TOGGLE_TEXT, { color: accentColor }]}>
-            {open ? 'less' : 'more'}
-          </Text>
-        </Pressable>
-      )}
-    </>
-  );
-};
-
 /** ISO completedAt → "just now" / "12 min ago" / "1 hr ago". Used in
  *  the "Done today" history list so the user sees how recently they
  *  finished each thing. Returns null if we can't read the timestamp. */
@@ -1208,14 +1004,12 @@ export default function Home() {
   const [focusPickerOpen, setFocusPickerOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
   const [capText, setCapText] = useState('');
-  const [moreOpen, setMoreOpen] = useState(false);
+  // The waiting card ("N more waiting — Lumi's holding them") —
+  // collapsed by default, same calm-first default as Done today.
+  const [waitingOpen, setWaitingOpen] = useState(false);
   // Someday → real-date sheet target. When set, the MoveBackToDateSheet
   // opens for this task.
   const [movingBack, setMovingBack] = useState<Quest | null>(null);
-  // Which row in "Then, when you're ready" has its note expanded.
-  // Inline "more / less" toggle (per lumi-home-v2 mock) so long notes
-  // are reachable without leaving the list.
-  const [openNoteId, setOpenNoteId] = useState<string | null>(null);
   // The quest currently being edited via EditQuestSheet. When set,
   // the sheet opens with the title + description fields pre-filled.
   const [editingQuest, setEditingQuest] = useState<Quest | null>(null);
@@ -1348,7 +1142,6 @@ export default function Home() {
     ? candidates[swap % candidates.length]
     : null;
   const rest = hero ? candidates.filter((q) => q.id !== hero.id) : [];
-  const visibleRest = moreOpen ? rest : rest.slice(0, 3);
 
   const totalToday = todayQuests.filter((q) => q.window !== 'someday').length;
   // Today's completed quests, freshest first — drives both the progress
@@ -1519,6 +1312,16 @@ export default function Home() {
     undoTimerRef.current = setTimeout(() => {
       setUndoState((cur) => (cur?.id === q.id ? null : cur));
     }, 6000);
+  };
+
+  /** "now" on a waiting row — surface that task as the hero
+   *  immediately. hero = candidates[swap % length], so pointing swap
+   *  at the task's index in candidates does it in one state write. */
+  const surfaceNow = (q: Quest) => {
+    const idx = candidates.findIndex((c) => c.id === q.id);
+    if (idx < 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSwap(idx);
   };
 
   /** Tap the Undo chip on the post-complete toast. Flips the task
@@ -2940,48 +2743,68 @@ export default function Home() {
           </View>
         )}
 
-        {/* ── "Then, when you're ready" — collapsed rest ── */}
+        {/* ── "N more waiting — Lumi's holding them" ─────────────────
+            The rest of the day lives INSIDE Lumi, not on a wall list
+            (per the lumi-holding mock). Collapsed pill by default;
+            expanding shows each waiting task with a complete-checkbox
+            (tier-colored), its window, and a "now" pill that surfaces
+            it as the hero immediately. Long-press a row to edit;
+            tapping "someday" on a someday row opens the move-back
+            sheet. Delete intentionally lives on the hero card only. */}
         {rest.length > 0 && (
-          <View style={styles.restSection}>
-            <Text style={styles.restEyebrow}>Then, when you&apos;re ready</Text>
-            {visibleRest.map((q) => {
-              const noteOpen = openNoteId === q.id;
-              return (
-              <View key={q.id} style={styles.restRow}>
-                {/* Checkbox — own tap target. Marks done. */}
-                <Pressable
-                  onPress={() => completeQuest(q)}
-                  hitSlop={8}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Mark done: ${q.title}`}
-                  style={styles.restCheckbox}
-                />
-                {/* Middle column — title wraps, note clamps + expand,
-                   meta row underneath. Per lumi-home-v2.jsx: text
-                   gets full row width and never competes with the
-                   trailing icons. */}
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.restTitle} numberOfLines={2}>
-                    {q.title}
-                  </Text>
-                  {q.note && (
-                    <RestNote
-                      note={q.note}
-                      open={noteOpen}
-                      onToggle={() => setOpenNoteId(noteOpen ? null : q.id)}
-                      accentColor={accent.fg}
+          <View style={styles.waitingCard}>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setWaitingOpen((o) => !o);
+              }}
+              style={styles.waitingHead}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: waitingOpen }}
+            >
+              <Text style={styles.waitingSpark}>✦</Text>
+              <Text style={styles.waitingHeadTitle}>
+                {rest.length} more waiting — Lumi&apos;s holding{' '}
+                {rest.length === 1 ? 'it' : 'them'}
+              </Text>
+              <View style={{ flex: 1 }} />
+              <Text style={styles.waitingChev}>
+                {waitingOpen ? '▴' : '▾'}
+              </Text>
+            </Pressable>
+            {waitingOpen && (
+              <>
+                {rest.map((q) => (
+                  <Pressable
+                    key={q.id}
+                    onLongPress={() => {
+                      Haptics.selectionAsync();
+                      setEditingQuest(q);
+                    }}
+                    delayLongPress={350}
+                    style={styles.waitingRow}
+                  >
+                    <Pressable
+                      onPress={() => completeQuest(q)}
+                      hitSlop={10}
+                      accessibilityRole="checkbox"
+                      accessibilityLabel={`Mark done: ${q.title}`}
+                      style={[
+                        styles.waitingCheck,
+                        { borderColor: IMPORTANCE[q.importance].color },
+                      ]}
                     />
-                  )}
-                  {/* Meta row — time · window/move-back · tier. Moved
-                     under the title so it never squeezes the text. */}
-                  <View style={styles.restMetaRow}>
-                    {fmtScheduled(q) && (
-                      <Text
-                        style={[styles.restTime, { color: accent.fg }]}
-                      >
-                        {fmtScheduled(q)}
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text numberOfLines={1} style={styles.waitingRowTitle}>
+                        {q.title}
                       </Text>
-                    )}
+                      {q.note && (
+                        <Text numberOfLines={1} style={styles.waitingNote}>
+                          {q.note}
+                        </Text>
+                      )}
+                    </View>
                     {q.window === 'someday' ? (
                       <Pressable
                         onPress={() => {
@@ -2991,67 +2814,37 @@ export default function Home() {
                         hitSlop={6}
                         accessibilityRole="button"
                         accessibilityLabel="Move back to a real day"
-                        style={styles.restMoveBackBtn}
                       >
-                        <Text style={styles.restMoveBackGlyph}>↺</Text>
+                        <Text style={[styles.waitingWindow, { color: C.mute }]}>
+                          someday
+                        </Text>
                       </Pressable>
                     ) : (
                       <Text
                         style={[
-                          styles.restWindow,
+                          styles.waitingWindow,
                           { color: WINDOWS[q.window].color },
                         ]}
                       >
-                        {WINDOWS[q.window].glyph}{' '}
-                        {effectiveWindows[q.window].label}
+                        {fmtScheduled(q) ??
+                          effectiveWindows[q.window].label.toLowerCase()}
                       </Text>
                     )}
-                    <Text
-                      style={[
-                        styles.restTier,
-                        { color: IMPORTANCE[q.importance].color },
-                      ]}
-                    >
-                      {IMPORTANCE[q.importance].sigil}
-                    </Text>
-                    {/* Edit pill — opens EditQuestSheet so the user
-                       can update the title and add / edit the
-                       description. Sits at the END of the meta
-                       row so it's always reachable regardless of
-                       how wide the time / window labels are. */}
-                    <View style={{ flex: 1 }} />
                     <Pressable
-                      onPress={() => {
-                        Haptics.selectionAsync();
-                        setEditingQuest(q);
-                      }}
+                      onPress={() => surfaceNow(q)}
                       hitSlop={6}
                       accessibilityRole="button"
-                      accessibilityLabel="Edit task"
-                      style={styles.restEditPill}
+                      accessibilityLabel={`Surface now: ${q.title}`}
+                      style={styles.nowPill}
                     >
-                      <Text style={styles.restEditGlyph}>✎</Text>
-                      <Text style={styles.restEditText}>Edit</Text>
+                      <Text style={styles.nowPillText}>now</Text>
                     </Pressable>
-                    {/* Delete pill — matches the Edit pill's style so
-                       the row's right-side actions read as a single
-                       row of affordances instead of one inline pill +
-                       one floating circle in the corner. */}
-                    <RestDeletePill id={q.id} title={q.title} />
-                  </View>
-                </View>
-              </View>
-              );
-            })}
-            {rest.length > 3 && (
-              <Pressable
-                onPress={() => setMoreOpen((o) => !o)}
-                style={styles.moreToggle}
-              >
-                <Text style={styles.moreText}>
-                  {moreOpen ? 'show less' : `+ ${rest.length - 3} more`}
+                  </Pressable>
+                ))}
+                <Text style={styles.waitingFooter}>
+                  they&apos;ll surface one at a time — no pile, promise
                 </Text>
-              </Pressable>
+              </>
             )}
           </View>
         )}
@@ -4342,61 +4135,6 @@ const makeStyles = (accent: Accent) =>
       color: C.mute,
     },
 
-    // ── Rest list ──
-    restSection: {},
-    restEyebrow: {
-      fontFamily: fonts.interSemi,
-      fontSize: 10,
-      letterSpacing: 2,
-      textTransform: 'uppercase',
-      color: C.mute,
-      marginBottom: 8,
-    },
-    restRow: {
-      flexDirection: 'row',
-      // flex-start so the checkbox + × button sit at the top
-      // of the title row instead of jumping to the middle as the
-      // content grows (long title wraps, note expands, etc.).
-      alignItems: 'flex-start',
-      gap: 13,
-      paddingVertical: 14,
-      paddingHorizontal: 2,
-      borderBottomWidth: 1,
-      borderBottomColor: hexA(C.hair, 0.7),
-    },
-    restCheckbox: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
-      borderWidth: 1.5,
-      borderColor: C.ash,
-      marginTop: 1,
-    },
-    restTitle: {
-      fontFamily: fonts.inter,
-      fontSize: 14.5,
-      color: C.boneDim,
-      letterSpacing: -0.15,
-      lineHeight: 19,
-    },
-    restNote: {
-      fontFamily: fonts.fraunces,
-      fontStyle: 'italic',
-      fontSize: 12.5,
-      color: C.mute,
-      marginTop: 3,
-      lineHeight: 18,
-    },
-    restNoteToggleHit: {
-      alignSelf: 'flex-start',
-      paddingTop: 2,
-      paddingBottom: 2,
-      marginTop: 2,
-    },
-    restNoteToggle: {
-      fontFamily: fonts.interSemi,
-      fontSize: 11.5,
-    },
     previewNote: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
@@ -4405,72 +4143,94 @@ const makeStyles = (accent: Accent) =>
       marginTop: 4,
       lineHeight: 17,
     },
-    // ── Meta row under the title (time · window · tier). Moved
-    //    below per lumi-home-v2 so titles never get squeezed. ──
-    restMetaRow: {
+
+    // ── "N more waiting — Lumi's holding them" (lumi-holding mock) ──
+    waitingCard: {
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: C.hair,
+      backgroundColor: hexA(C.void2, 0.7),
+      marginTop: 2,
+      overflow: 'hidden',
+    },
+    waitingHead: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
-      marginTop: 7,
-      flexWrap: 'wrap',
+      gap: 9,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
     },
-    restTime: {
+    waitingSpark: {
+      color: C.dusk,
+      fontSize: 12,
+    },
+    waitingHeadTitle: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 11,
+      fontSize: 15.5,
+      color: C.dusk,
       letterSpacing: -0.2,
     },
-    restWindow: {
-      fontFamily: fonts.inter,
-      fontSize: 10.5,
+    waitingChev: {
+      color: C.mute,
+      fontSize: 12,
     },
-    // ── Move-back icon button (Someday rows only) — sized to match
-    //    the delete × button so the row stays compact.
-    restMoveBackBtn: {
-      marginRight: 6,
-      width: 22,
-      height: 22,
-      borderRadius: 11,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: 'rgba(255,255,255,0.04)',
-      borderWidth: 1,
-      borderColor: 'rgba(176,163,139,0.22)',
-    },
-    restMoveBackGlyph: {
-      color: '#B0A38B',
-      fontSize: 13,
-      lineHeight: 15,
-      marginTop: -1,
-    },
-    restTier: {
-      width: 24,
-      textAlign: 'right',
-      fontSize: 8,
-      letterSpacing: -1,
-    },
-    // ── Edit pill (in meta row) ──
-    restEditPill: {
+    waitingRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 5,
-      borderWidth: 1,
-      borderColor: 'rgba(176,163,139,0.22)',
-      borderRadius: 100,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.hair, 0.7),
     },
-    restEditGlyph: {
+    waitingCheck: {
+      width: 18,
+      height: 18,
+      borderRadius: 6,
+      borderWidth: 1.5,
+      backgroundColor: hexA(C.void, 0.4),
+      flexShrink: 0,
+    },
+    waitingRowTitle: {
+      fontFamily: fonts.interMed,
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.15,
+    },
+    waitingNote: {
       fontFamily: fonts.inter,
-      fontSize: 10.5,
-      color: C.boneDim,
-      marginTop: -1,
+      fontSize: 11.5,
+      color: C.mute,
+      marginTop: 2,
     },
-    restEditText: {
+    waitingWindow: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      flexShrink: 0,
+    },
+    nowPill: {
+      borderWidth: 1,
+      borderColor: hexA(C.ember, 0.5),
+      borderRadius: 100,
+      paddingHorizontal: 13,
+      paddingVertical: 6,
+      flexShrink: 0,
+    },
+    nowPillText: {
       fontFamily: fonts.interSemi,
-      fontSize: 11,
-      color: C.boneDim,
-      letterSpacing: -0.1,
+      fontSize: 12.5,
+      color: C.ember,
+    },
+    waitingFooter: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: C.mute,
+      paddingVertical: 11,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.hair, 0.7),
     },
     moreToggle: {
       paddingVertical: 14,
