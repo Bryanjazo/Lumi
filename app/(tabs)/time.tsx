@@ -1,10 +1,19 @@
-// Lumi · Time v2.2 — "Day · Week · Month"
+// Lumi · Time v3 — "The Load Map"
 //
-// Spec: lumi-time-v2-2-spec.md (mockup: lumi-time-v2-2.jsx).
+// Spec: lumi-time-loadmap.jsx (carries v2.2's bones forward).
 // Thesis: time blindness isn't "how long till the next ping" — it's
 // losing where you are in time. v2 fixed within-a-day (the thread);
-// v2.2 fixes across-days with Day/Week/Month zoom, free date
-// navigation, and a "what's next" bar pinned across every view.
+// v2.2 fixed across-days with Day/Week/Month zoom; v3 makes the
+// zoomed views ACTIONABLE:
+//   • Load model — every task weighs by tier (◆◆◆ 3 · ◆◆ 2 · ◆ 1);
+//     a day reads open / light / full / heavy.
+//   • Week = 7 card rows surfacing their load (word + pips) with the
+//     day's tasks as chips.
+//   • Month = a warm LOAD MAP — heat shows heavy vs light days, the
+//     busiest day gets a nudge, heavy days get one-tap "Lighten".
+//   • Cross-day drag-and-drop: long-press a chip (Week) or a peek
+//     row (Month) and drop it on any day. Every move → toast + Undo.
+//   Day view keeps its own within-day drag-to-retime from v2.
 //
 // READS only — Time is a view over the shared data. Each date =
 // `userStore.anchors` (the routine bones) + that date's quests from
@@ -24,6 +33,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactElement,
 } from 'react';
 import {
   View,
@@ -33,7 +43,10 @@ import {
   Pressable,
   Modal,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -41,6 +54,7 @@ import Animated, {
   useSharedValue,
   withSpring,
   runOnJS,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
@@ -81,6 +95,31 @@ const MIN_VERTICAL_GAP = 28; // stacking guard for adjacent rows
 const UP_NEXT_GAP = 76; // the up-next card is ~67px tall; clear it
 
 const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WDF = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
+
+/** 1 → "st", 22 → "nd", 13 → "th" — for the busiest-day nudge copy. */
+const ordSuffix = (n: number): string => {
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return 'th';
+  switch (n % 10) {
+    case 1:
+      return 'st';
+    case 2:
+      return 'nd';
+    case 3:
+      return 'rd';
+    default:
+      return 'th';
+  }
+};
 const MO = [
   'January',
   'February',
@@ -158,6 +197,12 @@ const ymd = (d: Date): string => {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+};
+
+/** 'YYYY-MM-DD' → local-midnight Date (new Date(iso) would parse UTC). */
+const fromIsoLocal = (s: string): Date => {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
 };
 
 const addDays = (d: Date, n: number): Date => {
@@ -318,6 +363,119 @@ const buildItemsForDate = (
 
   items.sort((a, b) => a.min - b.min);
   return items;
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// Load model — per lumi-time-loadmap.jsx. Each task weighs by tier
+// (Trial 3 · Task 2 · Whim 1); the sum is the day's load. Words keep
+// it humane: nobody needs to know their day scores "8".
+// ═════════════════════════════════════════════════════════════════════
+const TIER_W: Record<Importance, number> = { high: 3, medium: 2, low: 1 };
+const HEAVY_LOAD = 7;
+
+const loadOf = (items: TItem[]): number =>
+  items.reduce(
+    (s, i) => (i.kind === 'quest' && i.tier ? s + TIER_W[i.tier] : s),
+    0,
+  );
+
+const loadWord = (l: number): string =>
+  l === 0 ? 'open' : l <= 3 ? 'light' : l <= 6 ? 'full' : 'heavy';
+
+/** Three little dots that read a day's load at a glance. */
+const Pips = ({ load }: { load: number }) => {
+  const n = load === 0 ? 0 : load <= 3 ? 1 : load <= 6 ? 2 : 3;
+  const col = n === 3 ? C.ember : n === 2 ? C.honey : C.lichen;
+  return (
+    <View style={{ flexDirection: 'row', gap: 3, alignItems: 'center' }}>
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: 3,
+            backgroundColor: i < n ? hexA(col, 0.9) : hexA(C.bone, 0.1),
+          }}
+        />
+      ))}
+    </View>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// Cross-day drag-and-drop — long-press a task chip (Week) or peek row
+// (Month), drag, drop on any day target.
+//
+// Architecture: the ghost's position lives in shared values (60fps on
+// the UI thread, zero re-renders); React state only holds the dragged
+// task's static info + which target is hovered (changes rarely). Drop
+// targets register their View refs; ALL rects are measured once via
+// measureInWindow at drag start — you can't scroll mid-drag (the pan
+// owns the touch), so the rects can't go stale during the gesture.
+// ═════════════════════════════════════════════════════════════════════
+interface DragTask {
+  questId: string;
+  title: string;
+  tier: Importance;
+  min: number;
+  fromIso: string;
+}
+
+interface DragCtl {
+  gx: SharedValue<number>;
+  gy: SharedValue<number>;
+  active: SharedValue<number>;
+  begin: (t: DragTask) => void;
+  hover: (x: number, y: number) => void;
+  drop: (x: number, y: number) => void;
+  cancel: () => void;
+  registerTarget: (key: string, ref: View | null) => void;
+  /** "day:YYYY-MM-DD" currently hovered, or null. */
+  overKey: string | null;
+  /** questId being dragged (chips dim themselves), or null. */
+  draggingId: string | null;
+}
+
+/** Wraps a chip/row to make it long-press-draggable. Long-press (not
+ *  plain pan) so taps and the parent ScrollView keep working. */
+const DragChip = ({
+  task,
+  ctl,
+  children,
+}: {
+  task: DragTask;
+  ctl: DragCtl;
+  children: ReactElement;
+}) => {
+  const pan = Gesture.Pan()
+    .activateAfterLongPress(220)
+    .onStart((e) => {
+      'worklet';
+      ctl.active.value = 1;
+      ctl.gx.value = e.absoluteX;
+      ctl.gy.value = e.absoluteY;
+      runOnJS(ctl.begin)(task);
+    })
+    .onUpdate((e) => {
+      'worklet';
+      ctl.gx.value = e.absoluteX;
+      ctl.gy.value = e.absoluteY;
+      runOnJS(ctl.hover)(e.absoluteX, e.absoluteY);
+    })
+    .onEnd((e) => {
+      'worklet';
+      ctl.active.value = 0;
+      runOnJS(ctl.drop)(e.absoluteX, e.absoluteY);
+    })
+    .onFinalize((_e, success) => {
+      'worklet';
+      if (!success) {
+        ctl.active.value = 0;
+        runOnJS(ctl.cancel)();
+      }
+    });
+  return <GestureDetector gesture={pan}>{children}</GestureDetector>;
 };
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1333,6 +1491,17 @@ const DayThread = ({
     return out;
   }, [items, isToday, nowMin, wakeMin]);
 
+  // "Open water ahead" — time until the next not-done item, shown by
+  // the now marker (loadmap mock). Only for real stretches (≥60m) so
+  // the label can never collide with the next row's card.
+  const openAhead = useMemo(() => {
+    if (!isToday) return null;
+    const next = items.find((i) => i.min > nowMin && !i.done);
+    if (!next) return null;
+    const gap = next.min - nowMin;
+    return gap >= 60 ? gap : null;
+  }, [items, isToday, nowMin]);
+
   const scrollRef = useRef<ScrollView>(null);
   useLayoutEffect(() => {
     const id = setTimeout(() => {
@@ -1519,6 +1688,11 @@ const DayThread = ({
             <Text style={[styles.nowMarkerLabel, { color: accent.fg }]}>
               now
             </Text>
+            {openAhead != null && (
+              <Text style={styles.openWaterLabel}>
+                {dur(openAhead)} of open water ahead
+              </Text>
+            )}
           </View>
         )}
       </View>
@@ -1527,7 +1701,9 @@ const DayThread = ({
 };
 
 // ═════════════════════════════════════════════════════════════════════
-// Week view — 7 rows, each: date + that day's quests. Tap → Day.
+// Week view — 7 card rows per lumi-time-loadmap.jsx. Each surfaces
+// its LOAD (word + pips) and the day's tasks as chips. Tap the row →
+// Day thread; long-press-drag a chip onto another row to move it.
 // ═════════════════════════════════════════════════════════════════════
 const WeekView = ({
   date,
@@ -1536,9 +1712,9 @@ const WeekView = ({
   quests,
   effective,
   onPickDate,
-  accent,
   styles,
   nowMin,
+  ctl,
 }: {
   date: Date;
   today: Date;
@@ -1546,9 +1722,9 @@ const WeekView = ({
   quests: Quest[];
   effective: ReturnType<typeof useEffectiveWindows>;
   onPickDate: (d: Date) => void;
-  accent: Accent;
   styles: ReturnType<typeof makeStyles>;
   nowMin: number;
+  ctl: DragCtl;
 }) => {
   const start = startOfWeek(date);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
@@ -1557,14 +1733,17 @@ const WeekView = ({
     <ScrollView
       style={{ flex: 1 }}
       contentContainerStyle={{
-        paddingHorizontal: 20,
+        paddingHorizontal: 18,
+        paddingTop: 2,
         paddingBottom: FLOATING_NAV_CLEARANCE,
+        gap: 8,
       }}
       showsVerticalScrollIndicator={false}
     >
-      {days.map((d, i) => {
+      {days.map((d) => {
         const isToday = sameDay(d, today);
         const past = dayOffset(d, today) < 0;
+        const dIso = ymd(d);
         const items = buildItemsForDate(
           d,
           anchors,
@@ -1574,74 +1753,126 @@ const WeekView = ({
           nowMin,
         );
         const dayQuests = items.filter((it) => it.kind === 'quest');
+        const load = loadOf(items);
+        const over = ctl.overKey === `day:${dIso}`;
         return (
-          <Pressable
-            key={i}
-            onPress={() => onPickDate(d)}
+          <View
+            key={dIso}
+            ref={(r) => ctl.registerTarget(`day:${dIso}`, r)}
+            collapsable={false}
             style={[
-              styles.weekRow,
-              i < 6 && styles.weekRowDivider,
-              past && { opacity: 0.55 },
+              styles.weekCard,
+              isToday && styles.weekCardToday,
+              past && !over && { opacity: 0.55 },
+              over && styles.weekCardOver,
             ]}
           >
-            <View style={styles.weekDateCell}>
+            <Pressable
+              onPress={() => onPickDate(d)}
+              style={styles.weekCardHead}
+              hitSlop={4}
+            >
               <Text
                 style={[
-                  styles.weekDateDow,
-                  { color: isToday ? accent.fg : C.mute },
+                  styles.weekCardDate,
+                  { color: isToday ? C.glow : C.bone },
                 ]}
               >
-                {WD[d.getDay()]}
-              </Text>
-              <Text
-                style={[
-                  styles.weekDateNum,
-                  { color: isToday ? accent.fg : C.bone },
-                ]}
-              >
-                {d.getDate()}
+                {WD[d.getDay()]} {d.getDate()}
               </Text>
               {isToday && (
-                <Text style={[styles.weekToday, { color: accent.fg }]}>
-                  TODAY
-                </Text>
+                <View style={styles.weekTodayTag}>
+                  <Text style={styles.weekTodayTagText}>today</Text>
+                </View>
               )}
-            </View>
-            <View style={{ flex: 1, minWidth: 0, paddingTop: 4, gap: 7 }}>
-              {dayQuests.length > 0 ? (
-                dayQuests.map((q, k) => (
-                  <View key={k} style={styles.weekQuestRow}>
-                    <Text style={styles.weekQuestTime}>{fmt(q.min)}</Text>
+              <View style={{ flex: 1 }} />
+              <Text
+                style={[
+                  styles.weekLoadWord,
+                  { color: load > 6 ? C.ember : C.mute },
+                ]}
+              >
+                {loadWord(load)}
+              </Text>
+              <Pips load={load} />
+            </Pressable>
+            {dayQuests.length === 0 ? (
+              <Text style={styles.weekCardEmpty}>
+                {over
+                  ? 'drop it here — plenty of room'
+                  : 'just your routine — open'}
+              </Text>
+            ) : (
+              <View style={styles.weekChipsWrap}>
+                {dayQuests.map((q, k) => {
+                  const tierCol = q.tier ? IMPORTANCE[q.tier].color : C.mute;
+                  const dragging = ctl.draggingId === q.questId;
+                  const canDrag = !q.done && !!q.questId && !q.recurring;
+                  const chip = (
                     <View
                       style={[
-                        styles.weekQuestDot,
+                        styles.weekChip,
                         {
-                          backgroundColor:
-                            q.tier && IMPORTANCE[q.tier]
-                              ? IMPORTANCE[q.tier].color
-                              : C.mute,
+                          borderColor: hexA(tierCol, q.done ? 0.2 : 0.4),
+                          opacity: dragging ? 0.3 : q.done ? 0.5 : 1,
                         },
                       ]}
-                    />
-                    <Text numberOfLines={1} style={styles.weekQuestTitle}>
-                      {q.title}
-                    </Text>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.weekEmpty}>just your routine — open</Text>
-              )}
-            </View>
-            <Text style={styles.weekChev}>›</Text>
-          </Pressable>
+                    >
+                      <Text
+                        style={[styles.weekChipSigil, { color: tierCol }]}
+                      >
+                        {q.tier ? IMPORTANCE[q.tier].sigil : '◆'}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.weekChipTitle,
+                          q.done && {
+                            color: C.mute,
+                            textDecorationLine: 'line-through',
+                          },
+                        ]}
+                      >
+                        {q.title}
+                      </Text>
+                      <Text style={styles.weekChipTime}>{fmt(q.min)}</Text>
+                    </View>
+                  );
+                  return canDrag ? (
+                    <DragChip
+                      key={q.questId ?? k}
+                      ctl={ctl}
+                      task={{
+                        questId: q.questId as string,
+                        title: q.title,
+                        tier: q.tier ?? 'medium',
+                        min: q.min,
+                        fromIso: dIso,
+                      }}
+                    >
+                      {chip}
+                    </DragChip>
+                  ) : (
+                    <View key={q.questId ?? `s${k}`}>{chip}</View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
         );
       })}
+      <Text style={styles.dragCaption}>
+        hold + drag a task onto another day to rebalance
+      </Text>
     </ScrollView>
   );
 };
 
 // ═════════════════════════════════════════════════════════════════════
-// Month view — calendar grid + density dots. Tap → Day.
+// Month view — THE LOAD MAP (lumi-time-loadmap.jsx). Heat shows heavy
+// vs light days (the warmer a cell, the fuller the day), the busiest
+// day gets a nudge, tapping a day peeks it, dragging a peek row onto
+// any cell moves the task, and heavy days offer one-tap "Lighten".
 // ═════════════════════════════════════════════════════════════════════
 const MonthView = ({
   date,
@@ -1653,6 +1884,8 @@ const MonthView = ({
   accent,
   styles,
   nowMin,
+  ctl,
+  onLighten,
 }: {
   date: Date;
   today: Date;
@@ -1663,6 +1896,8 @@ const MonthView = ({
   accent: Accent;
   styles: ReturnType<typeof makeStyles>;
   nowMin: number;
+  ctl: DragCtl;
+  onLighten: (d: Date) => void;
 }) => {
   const y = date.getFullYear();
   const m = date.getMonth();
@@ -1672,6 +1907,26 @@ const MonthView = ({
   for (let i = 0; i < lead; i++) cells.push(null);
   for (let dd = 1; dd <= dim; dd++) cells.push(new Date(y, m, dd));
   while (cells.length % 7) cells.push(null);
+
+  // Per-day load + count in one pass — drives the heat cells, the
+  // stats row, and the busiest-day nudge.
+  const dayStats = useMemo(() => {
+    const map = new Map<string, { load: number; count: number }>();
+    for (const d of cells) {
+      if (!d) continue;
+      const qs = buildItemsForDate(
+        d,
+        anchors,
+        quests,
+        effective,
+        today,
+        nowMin,
+      ).filter((i) => i.kind === 'quest');
+      map.set(ymd(d), { load: loadOf(qs), count: qs.length });
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [y, m, anchors, quests, effective, today, nowMin]);
 
   // Selected day starts on today (if today's in the viewed month) or
   // on the 1st otherwise. Tracks taps so the peek panel reflects the
@@ -1688,31 +1943,44 @@ const MonthView = ({
     setSel(inMonthDefault);
   }, [inMonthDefault]);
 
-  // Month summary — quests planned, days with plans, busiest day.
+  // Month stats — planned, days with plans, days open, busiest day.
   const summary = useMemo((): {
     monthQuests: number;
     planDays: number;
+    openDays: number;
     busiest: Date | null;
+    busiestLoad: number;
   } => {
     let monthQuests = 0;
     let planDays = 0;
+    let monthDayCount = 0;
     let busiest: Date | null = null;
-    let busiestN = 0;
+    let busiestLoad = 0;
     cells.forEach((d) => {
       if (!d) return;
-      const items = buildItemsForDate(d, anchors, quests, effective, today, nowMin);
-      const n = items.filter((i) => i.kind === 'quest').length;
-      if (n > 0) {
+      monthDayCount += 1;
+      const st = dayStats.get(ymd(d));
+      if (!st) return;
+      if (st.count > 0) {
         planDays += 1;
-        monthQuests += n;
+        monthQuests += st.count;
       }
-      if (n > busiestN) {
-        busiestN = n;
+      if (st.load > busiestLoad) {
+        busiestLoad = st.load;
         busiest = d;
       }
     });
-    return { monthQuests, planDays, busiest };
-  }, [cells, anchors, quests, effective, today, nowMin]);
+    return {
+      monthQuests,
+      planDays,
+      openDays: monthDayCount - planDays,
+      busiest,
+      busiestLoad,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayStats]);
+  // TS can't see through the forEach closure — busiest is Date | null.
+  const busiestDay: Date | null = summary.busiest;
 
   // Selected-day peek data.
   const peekItems = useMemo(
@@ -1722,6 +1990,9 @@ const MonthView = ({
         .sort((a, b) => a.min - b.min),
     [sel, anchors, quests, effective, today, nowMin],
   );
+  const selIso = ymd(sel);
+  const selLoad = loadOf(peekItems);
+  const hardCount = peekItems.filter((t) => t.tier === 'high').length;
   const selToday = sameDay(sel, today);
   const selOff = dayOffset(sel, today);
   const selLabel =
@@ -1748,54 +2019,6 @@ const MonthView = ({
       contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 24 }}
       showsVerticalScrollIndicator={false}
     >
-      {/* Month summary — three stat cards (ember/lichen/dusk). */}
-      <View style={styles.monthSummaryRow}>
-        <View
-          style={[
-            styles.monthSummaryCard,
-            {
-              backgroundColor: hexA(C.ember, 0.09),
-              borderColor: hexA(C.ember, 0.22),
-            },
-          ]}
-        >
-          <Text style={[styles.monthSummaryNum, { color: C.ember }]}>
-            {summary.monthQuests}
-          </Text>
-          <Text style={styles.monthSummaryLabel}>quests planned</Text>
-        </View>
-        <View
-          style={[
-            styles.monthSummaryCard,
-            {
-              backgroundColor: hexA(C.lichen, 0.09),
-              borderColor: hexA(C.lichen, 0.22),
-            },
-          ]}
-        >
-          <Text style={[styles.monthSummaryNum, { color: C.lichen }]}>
-            {summary.planDays}
-          </Text>
-          <Text style={styles.monthSummaryLabel}>days with plans</Text>
-        </View>
-        <View
-          style={[
-            styles.monthSummaryCard,
-            {
-              backgroundColor: hexA(C.dusk, 0.09),
-              borderColor: hexA(C.dusk, 0.22),
-            },
-          ]}
-        >
-          <Text style={[styles.monthSummaryNum, { color: C.dusk }]}>
-            {summary.busiest
-              ? `${MO[summary.busiest.getMonth()].slice(0, 3)} ${summary.busiest.getDate()}`
-              : '—'}
-          </Text>
-          <Text style={styles.monthSummaryLabel}>busiest day</Text>
-        </View>
-      </View>
-
       <View style={styles.monthHeaderRow}>
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((w, i) => (
           <Text key={i} style={styles.monthHeaderCell}>
@@ -1812,115 +2035,61 @@ const MonthView = ({
               if (!d) {
                 return <View key={ci} style={{ flex: 1, aspectRatio: 1 }} />;
               }
+              const dI = ymd(d);
               const isToday = sameDay(d, today);
               const isSelected = sameDay(d, sel);
-              const past = dayOffset(d, today) < 0;
-              const items = buildItemsForDate(
-                d,
-                anchors,
-                quests,
-                effective,
-                today,
-                nowMin,
-              );
-              const qs = items.filter((it) => it.kind === 'quest');
+              const load = dayStats.get(dI)?.load ?? 0;
+              const heavy = load >= HEAVY_LOAD;
+              const over = ctl.overKey === `day:${dI}`;
+              // Heat — the warmer a day, the fuller it is. Alpha
+              // ramps 0.08 → 0.48 with load, capped at 9.
+              const a =
+                load === 0 ? 0 : 0.08 + (Math.min(load, 9) / 9) * 0.4;
               return (
                 <Pressable
                   key={ci}
+                  ref={(r) => ctl.registerTarget(`day:${dI}`, r)}
+                  collapsable={false}
                   onPress={() => setSel(d)}
                   style={[
                     styles.monthCell,
-                    isSelected && { backgroundColor: accent.fg },
-                    isToday &&
-                      !isSelected && {
-                        backgroundColor: hexA(accent.fg, 0.1),
-                        borderColor: hexA(accent.fg, 0.45),
-                      },
-                    past && !isSelected && !isToday && { opacity: 0.4 },
+                    {
+                      backgroundColor: over
+                        ? hexA(C.ember, 0.28)
+                        : load > 0
+                          ? hexA(C.ember, a)
+                          : 'transparent',
+                      borderColor: over
+                        ? C.glow
+                        : isSelected
+                          ? C.ember
+                          : isToday
+                            ? hexA(C.glow, 0.6)
+                            : load > 0
+                              ? hexA(C.ember, 0.12 + a * 0.5)
+                              : hexA(C.hair, 0.7),
+                    },
+                    (heavy || over) && styles.monthCellGlow,
                   ]}
                 >
                   <Text
                     style={[
                       styles.monthCellNum,
                       {
-                        color: isSelected
-                          ? C.void
-                          : isToday
-                            ? accent.fg
-                            : C.bone,
+                        color: isToday
+                          ? C.glow
+                          : load >= 4
+                            ? C.bone
+                            : C.boneDim,
                       },
                     ]}
                   >
                     {d.getDate()}
                   </Text>
-                  <View style={styles.monthDotsRow}>
-                    {qs.length === 0 ? (
-                      <View
-                        style={[
-                          styles.monthDot,
-                          {
-                            width: 3,
-                            height: 3,
-                            backgroundColor: hexA(
-                              isSelected ? C.void : C.mute,
-                              0.35,
-                            ),
-                          },
-                        ]}
-                      />
-                    ) : (
-                      Array.from({ length: Math.min(3, qs.length) }).map(
-                        (_, k) => (
-                          <View
-                            key={k}
-                            style={[
-                              styles.monthDot,
-                              {
-                                // Always render the true tier color
-                                // so the day's shape stays readable.
-                                // When the cell is selected (ember
-                                // bg), warm-toned tiers (terra/ember/
-                                // honey) blend in — give them a dark
-                                // void ring so they pop against the
-                                // background without losing the tier
-                                // signal.
-                                backgroundColor: qs[k].tier
-                                  ? IMPORTANCE[qs[k].tier].color
-                                  : C.mute,
-                              },
-                              isSelected && {
-                                // Bump size + add a void ring so the
-                                // tier color reads against the ember
-                                // background. 4×4 with a 1px border
-                                // would leave a 2×2 visible core —
-                                // too small to register; 6×6 with the
-                                // same border keeps a 4×4 tier core.
-                                width: 6,
-                                height: 6,
-                                borderRadius: 3,
-                                borderWidth: 1,
-                                borderColor: C.void,
-                              },
-                            ]}
-                          />
-                        ),
-                      )
-                    )}
-                    {qs.length > 3 && (
-                      <Text
-                        style={{
-                          fontFamily: fonts.interSemi,
-                          fontSize: 9,
-                          lineHeight: 10,
-                          color: isSelected ? hexA(C.void, 0.8) : C.mute,
-                          marginLeft: 3,
-                          marginTop: -0.5,
-                        }}
-                      >
-                        +{qs.length - 3}
-                      </Text>
-                    )}
-                  </View>
+                  {heavy && <View style={styles.monthHeavyDot} />}
+                  {isToday && (
+                    <Text style={styles.monthCellTodayTag}>today</Text>
+                  )}
                 </Pressable>
               );
             })}
@@ -1928,10 +2097,28 @@ const MonthView = ({
         ))}
       </View>
 
-      {/* Selected-day peek — fills the space below the grid so the
-          month view actually does something useful even before you
-          open a thread. Date + relative label, planned count, item
-          list, and a CTA to open the day's full thread. */}
+      <Text style={styles.monthCaption}>
+        the warmer a day, the fuller it is — tap to peek, hold + drag a
+        task onto a day to move it
+      </Text>
+
+      {/* Busiest-day nudge — only when it's genuinely heavy. */}
+      {busiestDay != null && summary.busiestLoad >= HEAVY_LOAD && (
+        <Pressable
+          onPress={() => setSel(busiestDay)}
+          style={styles.monthNudge}
+        >
+          <Text style={styles.monthNudgeSpark}>✦</Text>
+          <Text style={styles.monthNudgeText}>
+            {WDF[busiestDay.getDay()]} the {busiestDay.getDate()}
+            {ordSuffix(busiestDay.getDate())} is your heaviest — tap to
+            peek, or spread it out.
+          </Text>
+        </Pressable>
+      )}
+
+      {/* Selected-day peek — compact rows you can drag straight onto
+          the grid above. Heavy days offer one-tap Lighten. */}
       <View style={styles.monthPeekCard}>
         <View style={styles.monthPeekHead}>
           <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 9 }}>
@@ -1948,43 +2135,124 @@ const MonthView = ({
               {selLabel}
             </Text>
           </View>
-          <Text style={styles.monthPeekCount}>{peekItems.length} planned</Text>
+          <Text
+            style={[
+              styles.monthPeekCount,
+              selLoad >= HEAVY_LOAD && { color: C.ember },
+            ]}
+          >
+            {peekItems.length
+              ? `${peekItems.length} planned${hardCount ? ` · ${hardCount} hard` : ''}`
+              : 'open'}
+          </Text>
         </View>
         {peekItems.length > 0 ? (
-          <View style={{ gap: 9, marginBottom: 14 }}>
-            {peekItems.map((q, k) => (
-              <View
-                key={k}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
-              >
-                <Text style={styles.monthPeekTime}>{fmt(q.min)}</Text>
+          <View style={{ gap: 6, marginBottom: 12 }}>
+            {peekItems.map((q, k) => {
+              const tierCol = q.tier ? IMPORTANCE[q.tier].color : C.mute;
+              const dragging = ctl.draggingId === q.questId;
+              const canDrag = !q.done && !!q.questId && !q.recurring;
+              const row = (
                 <View
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 4,
-                    backgroundColor: q.tier
-                      ? IMPORTANCE[q.tier].color
-                      : C.mute,
-                  }}
-                />
-                <Text
-                  style={styles.monthPeekTaskTitle}
-                  numberOfLines={1}
+                  style={[styles.peekRow, dragging && { opacity: 0.3 }]}
                 >
-                  {q.title}
-                </Text>
-                {q.durMin != null && (
-                  <Text style={styles.monthPeekDur}>
-                    {dur(q.durMin)}
+                  {q.done ? (
+                    <View style={styles.peekDoneCheck}>
+                      <Text style={styles.peekDoneCheckGlyph}>✓</Text>
+                    </View>
+                  ) : (
+                    <View
+                      style={[
+                        styles.peekDot,
+                        { borderColor: tierCol },
+                        q.tier === 'high' && styles.peekDotHigh,
+                      ]}
+                    />
+                  )}
+                  <Text
+                    style={[
+                      styles.monthPeekTime,
+                      { color: q.done ? C.mute : C.ember },
+                    ]}
+                  >
+                    {fmt(q.min)}
                   </Text>
-                )}
-              </View>
-            ))}
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.monthPeekTaskTitle,
+                        q.done && {
+                          color: C.mute,
+                          textDecorationLine: 'line-through',
+                        },
+                      ]}
+                    >
+                      {q.title}
+                    </Text>
+                    {!q.done && (
+                      <View style={styles.peekMetaRow}>
+                        <Text
+                          style={[styles.peekSigil, { color: tierCol }]}
+                        >
+                          {q.tier ? IMPORTANCE[q.tier].sigil : '◆'}
+                        </Text>
+                        <Text style={styles.monthPeekDur}>
+                          {dur(q.durMin ?? 30)}
+                          {q.recurring ? ' · repeating' : ''}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  {canDrag && (
+                    <View style={styles.peekHandle}>
+                      {[0, 1, 2].map((r) => (
+                        <View key={r} style={styles.peekHandleRow}>
+                          <View style={styles.peekHandleDot} />
+                          <View style={styles.peekHandleDot} />
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              );
+              return canDrag ? (
+                <DragChip
+                  key={q.questId ?? k}
+                  ctl={ctl}
+                  task={{
+                    questId: q.questId as string,
+                    title: q.title,
+                    tier: q.tier ?? 'medium',
+                    min: q.min,
+                    fromIso: selIso,
+                  }}
+                >
+                  {row}
+                </DragChip>
+              ) : (
+                <View key={q.questId ?? `s${k}`}>{row}</View>
+              );
+            })}
           </View>
         ) : (
           <Text style={styles.monthPeekEmpty}>
-            An open day — just your anchors and room to breathe.
+            Nothing here yet — a good landing spot for something heavy.
+          </Text>
+        )}
+        {selLoad >= HEAVY_LOAD && (
+          <Pressable
+            onPress={() => onLighten(sel)}
+            style={styles.lightenBtn}
+          >
+            <Text style={styles.lightenBtnText}>
+              Lighten this day — move the lighter ones
+            </Text>
+          </Pressable>
+        )}
+        {peekItems.length > 0 && selLoad < HEAVY_LOAD && (
+          <Text style={styles.peekHint}>
+            hold + drag a task onto any day above
           </Text>
         )}
         <Pressable
@@ -2003,9 +2271,21 @@ const MonthView = ({
         </Pressable>
       </View>
 
-      <Text style={styles.monthCaption}>
-        Tap any day to peek · dots show how full it is.
-      </Text>
+      {/* Month stats — planned · days with plans · days open. */}
+      <View style={styles.monthSummaryRow}>
+        {(
+          [
+            [summary.monthQuests, 'planned'],
+            [summary.planDays, 'days with plans'],
+            [summary.openDays, 'days open'],
+          ] as const
+        ).map(([n, l]) => (
+          <View key={l} style={styles.monthSummaryCard}>
+            <Text style={styles.monthSummaryNum}>{n}</Text>
+            <Text style={styles.monthSummaryLabel}>{l}</Text>
+          </View>
+        ))}
+      </View>
     </ScrollView>
   );
 };
@@ -2162,9 +2442,12 @@ export default function Time() {
     else if (scale === 'week') setDate((d) => addDays(d, dir * 7));
     else setDate((d) => addMonths(d, dir));
   };
+  // [Today] snaps the DATE back without yanking you out of the scale
+  // you're in — day view returns to today's thread, week to this
+  // week, month to this month. (The NextBar separately jumps to
+  // today's thread via pickDate.)
   const jumpToToday = () => {
     setDate(today);
-    setScale('day');
   };
   const pickDate = (d: Date) => {
     setDate(d);
@@ -2178,6 +2461,188 @@ export default function Time() {
         ? startOfWeek(date).getTime() === startOfWeek(today).getTime()
         : date.getMonth() === today.getMonth() &&
           date.getFullYear() === today.getFullYear();
+
+  // ── Cross-day drag controller ───────────────────────────────────
+  const insets = useSafeAreaInsets();
+  const gx = useSharedValue(0);
+  const gy = useSharedValue(0);
+  const dragActive = useSharedValue(0);
+  const [dragTask, setDragTask] = useState<DragTask | null>(null);
+  const [overKey, setOverKey] = useState<string | null>(null);
+  const dragTaskRef = useRef<DragTask | null>(null);
+  const targetRefs = useRef(new Map<string, View>()).current;
+  const targetRects = useRef(
+    new Map<string, { x: number; y: number; w: number; h: number }>(),
+  ).current;
+
+  // Undo — snapshot of the moved quests' previous date + anchor so
+  // one tap puts everything back exactly where it was.
+  const undoRef = useRef<
+    { id: string; date: string; h: number | null; m: number | null }[] | null
+  >(null);
+  const [moveToast, setMoveToast] = useState<string | null>(null);
+  const moveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showMoveToast = (msg: string) => {
+    setMoveToast(msg);
+    if (moveToastTimer.current) clearTimeout(moveToastTimer.current);
+    moveToastTimer.current = setTimeout(() => setMoveToast(null), 6000);
+  };
+  useEffect(
+    () => () => {
+      if (moveToastTimer.current) clearTimeout(moveToastTimer.current);
+    },
+    [],
+  );
+
+  const registerTarget = (key: string, ref: View | null) => {
+    if (ref) targetRefs.set(key, ref);
+    else targetRefs.delete(key);
+  };
+  const beginDrag = (t: DragTask) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    dragTaskRef.current = t;
+    setDragTask(t);
+    setOverKey(null);
+    // Measure every registered target ONCE — the pan owns the touch
+    // from here, nothing can scroll mid-drag, so rects stay valid.
+    targetRects.clear();
+    targetRefs.forEach((ref, key) => {
+      ref.measureInWindow((x, y, w, h) => {
+        targetRects.set(key, { x, y, w, h });
+      });
+    });
+  };
+  const hitTest = (x: number, y: number): string | null => {
+    for (const [key, r] of targetRects) {
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        return key;
+      }
+    }
+    return null;
+  };
+  const hoverDrag = (x: number, y: number) => {
+    const k = hitTest(x, y);
+    setOverKey((cur) => (cur === k ? cur : k));
+  };
+  const cancelDrag = () => {
+    dragTaskRef.current = null;
+    setDragTask(null);
+    setOverKey(null);
+  };
+
+  /** Move quests to new dates (keeping their clock time) + arm Undo.
+   *  setDate deliberately un-anchors (a deferred task usually needs
+   *  re-scheduling) — but a cross-day DRAG carries intent about the
+   *  time too, so we re-anchor to the original clock time after. */
+  const applyMoves = (
+    moves: { id: string; toIso: string }[],
+    msg: string,
+  ) => {
+    const st = useQuestStore.getState();
+    const snapshot: NonNullable<typeof undoRef.current> = [];
+    for (const mv of moves) {
+      const q = st.quests.find((qq) => qq.id === mv.id);
+      if (!q) continue;
+      snapshot.push({
+        id: q.id,
+        date: q.date ?? todayKey(),
+        h: q.scheduledHour ?? null,
+        m: q.scheduledMinute ?? null,
+      });
+      st.setDate(mv.id, mv.toIso);
+      if (q.scheduledHour != null) {
+        st.anchor(mv.id, q.scheduledHour, q.scheduledMinute ?? 0);
+      }
+    }
+    if (!snapshot.length) return;
+    undoRef.current = snapshot;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    showMoveToast(msg);
+  };
+  const undoMoves = () => {
+    const snap = undoRef.current;
+    undoRef.current = null;
+    setMoveToast(null);
+    if (!snap) return;
+    const st = useQuestStore.getState();
+    for (const s of snap) {
+      st.setDate(s.id, s.date);
+      if (s.h != null) st.anchor(s.id, s.h, s.m ?? 0);
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+  const dropDrag = (x: number, y: number) => {
+    const t = dragTaskRef.current;
+    const k = hitTest(x, y);
+    cancelDrag();
+    if (!t || !k || !k.startsWith('day:')) return;
+    const toIso = k.slice(4);
+    if (toIso === t.fromIso) return;
+    const d = fromIsoLocal(toIso);
+    const short =
+      t.title.length > 26 ? `${t.title.slice(0, 24)}…` : t.title;
+    applyMoves(
+      [{ id: t.questId, toIso }],
+      `Moved “${short}” → ${WD[d.getDay()]} ${d.getDate()}`,
+    );
+  };
+  const dragCtl: DragCtl = {
+    gx,
+    gy,
+    active: dragActive,
+    begin: beginDrag,
+    hover: hoverDrag,
+    drop: dropDrag,
+    cancel: cancelDrag,
+    registerTarget,
+    overKey,
+    draggingId: dragTask?.questId ?? null,
+  };
+
+  /** One-tap "Lighten this day" — move the movable (non-high, not
+   *  done, not recurring) tasks to the calmest other future days of
+   *  the same week. The heavy stuff stays put; the day just breathes. */
+  const lightenDay = (day: Date) => {
+    const dIso = ymd(day);
+    const st = useQuestStore.getState();
+    const movable = st.quests.filter(
+      (q) =>
+        q.date === dIso &&
+        !q.completed &&
+        !q.recur &&
+        q.window !== 'someday' &&
+        q.importance !== 'high',
+    );
+    if (!movable.length) return;
+    const ws = startOfWeek(day);
+    const others = Array.from({ length: 7 }, (_, i) => addDays(ws, i)).filter(
+      (d) => !sameDay(d, day) && dayOffset(d, today) >= 0,
+    );
+    if (!others.length) return;
+    const loadFor = (d: Date) =>
+      loadOf(
+        buildItemsForDate(d, anchors, allQuests, effectiveWindows, today, nowMin),
+      );
+    others.sort((a, b) => loadFor(a) - loadFor(b));
+    const nTargets = Math.min(2, others.length);
+    const moves = movable.map((q, i) => ({
+      id: q.id,
+      toIso: ymd(others[i % nTargets]),
+    }));
+    applyMoves(
+      moves,
+      `Lightened ${WD[day.getDay()]} ${day.getDate()} — moved ${moves.length} to calmer days`,
+    );
+  };
+
+  // Drag ghost — rides the finger via shared values (UI thread only).
+  const ghostStyle = useAnimatedStyle(() => ({
+    opacity: dragActive.value,
+    transform: [
+      { translateX: gx.value },
+      { translateY: gy.value - insets.top },
+    ],
+  }));
 
   // ── Header title + sub-context ─────────────────────────────────
   const off = dayOffset(date, today);
@@ -2305,7 +2770,7 @@ export default function Time() {
           effective={effectiveWindows}
           today={today}
           nowMin={nowMin}
-          onJumpToToday={jumpToToday}
+          onJumpToToday={() => pickDate(today)}
           accent={accent}
           styles={styles}
         />
@@ -2346,9 +2811,9 @@ export default function Time() {
           quests={allQuests}
           effective={effectiveWindows}
           onPickDate={pickDate}
-          accent={accent}
           styles={styles}
           nowMin={nowMin}
+          ctl={dragCtl}
         />
       ) : (
         <MonthView
@@ -2361,7 +2826,45 @@ export default function Time() {
           accent={accent}
           styles={styles}
           nowMin={nowMin}
+          ctl={dragCtl}
+          onLighten={lightenDay}
         />
+      )}
+
+      {/* Move toast + Undo — every drop / lighten can be reversed. */}
+      {moveToast && (
+        <View style={styles.moveToast}>
+          <Text style={styles.moveToastCheck}>✓</Text>
+          <Text numberOfLines={1} style={styles.moveToastText}>
+            {moveToast}
+          </Text>
+          <Pressable onPress={undoMoves} style={styles.moveToastUndo} hitSlop={6}>
+            <Text style={styles.moveToastUndoText}>Undo</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* Drag ghost — the task pill floating at the finger. */}
+      {dragTask && (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.ghostWrap, ghostStyle]}
+        >
+          <View style={styles.ghost}>
+            <Text
+              style={[
+                styles.ghostSigil,
+                { color: IMPORTANCE[dragTask.tier].color },
+              ]}
+            >
+              {IMPORTANCE[dragTask.tier].sigil}
+            </Text>
+            <Text numberOfLines={1} style={styles.ghostTitle}>
+              {dragTask.title}
+            </Text>
+            <Text style={styles.ghostTime}>{fmt(dragTask.min)}</Text>
+          </View>
+        </Animated.View>
       )}
     </SafeAreaView>
   );
@@ -2587,78 +3090,102 @@ const makeStyles = (accent: Accent) =>
       lineHeight: 18,
     },
 
-    // ── Week view ──
-    weekRow: {
+    // ── Week view (loadmap card rows) ──
+    weekCard: {
+      borderRadius: 16,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      backgroundColor: hexA(C.bone, 0.025),
+      borderWidth: 1.5,
+      borderColor: hexA(C.hair, 0.9),
+    },
+    weekCardToday: {
+      backgroundColor: hexA(C.ember, 0.05),
+      borderColor: hexA(C.ember, 0.35),
+    },
+    weekCardOver: {
+      backgroundColor: hexA(C.ember, 0.1),
+      borderColor: C.ember,
+    },
+    weekCardHead: {
       flexDirection: 'row',
-      gap: 14,
-      paddingHorizontal: 6,
-      paddingVertical: 14,
-      alignItems: 'flex-start',
-    },
-    weekRowDivider: {
-      borderBottomWidth: 1,
-      borderBottomColor: hexA(C.hair, 0.7),
-    },
-    weekDateCell: {
-      width: 50,
       alignItems: 'center',
-      paddingTop: 2,
+      gap: 9,
     },
-    weekDateDow: {
+    weekCardDate: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 16,
+      letterSpacing: -0.2,
+    },
+    weekTodayTag: {
+      borderWidth: 1,
+      borderColor: hexA(C.ember, 0.45),
+      borderRadius: 100,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+    },
+    weekTodayTagText: {
       fontFamily: fonts.interSemi,
-      fontSize: 9.5,
-      letterSpacing: 1,
+      fontSize: 8.5,
+      letterSpacing: 1.4,
       textTransform: 'uppercase',
+      color: C.ember,
     },
-    weekDateNum: {
+    weekLoadWord: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 24,
-      lineHeight: 26,
-      marginTop: 2,
+      fontSize: 11,
     },
-    weekToday: {
-      fontFamily: fonts.interSemi,
-      fontSize: 8,
-      letterSpacing: 1,
-      marginTop: 2,
+    weekCardEmpty: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: C.dusk,
+      marginTop: 6,
     },
-    weekQuestRow: {
+    weekChipsWrap: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginTop: 9,
+    },
+    weekChip: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 100,
+      backgroundColor: hexA(C.surface, 0.9),
+      borderWidth: 1,
+      maxWidth: '100%',
     },
-    weekQuestTime: {
-      fontFamily: fonts.fraunces,
-      fontStyle: 'italic',
-      fontSize: 12,
-      color: C.mute,
-      width: 42,
-    },
-    weekQuestDot: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
-    },
-    weekQuestTitle: {
-      flex: 1,
+    weekChipSigil: {
       fontFamily: fonts.inter,
-      fontSize: 13.5,
+      fontSize: 8,
+      letterSpacing: -1,
+    },
+    weekChipTitle: {
+      fontFamily: fonts.inter,
+      fontSize: 11.5,
       color: C.bone,
       letterSpacing: -0.1,
+      flexShrink: 1,
     },
-    weekEmpty: {
+    weekChipTime: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 12.5,
+      fontSize: 10.5,
       color: C.mute,
-      paddingTop: 4,
     },
-    weekChev: {
-      fontFamily: fonts.inter,
-      fontSize: 14,
+    dragCaption: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11,
       color: C.mute,
-      alignSelf: 'center',
+      paddingVertical: 4,
     },
 
     // ── Month view ──
@@ -2691,31 +3218,279 @@ const makeStyles = (accent: Accent) =>
       justifyContent: 'center',
       gap: 3,
     },
-    // ── Month summary cards (v2.2) ─────────────────────────────────
+    // ── Month stats row (bottom, per loadmap mock) ─────────────────
     monthSummaryRow: {
       flexDirection: 'row',
       gap: 8,
-      marginBottom: 14,
+      marginTop: 12,
     },
     monthSummaryCard: {
       flex: 1,
       borderRadius: 13,
       borderWidth: 1,
-      paddingHorizontal: 12,
+      borderColor: hexA(C.hair, 0.9),
+      paddingHorizontal: 6,
       paddingVertical: 10,
+      alignItems: 'center',
     },
     monthSummaryNum: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 21,
-      lineHeight: 22,
+      fontSize: 19,
+      lineHeight: 21,
+      color: C.bone,
     },
     monthSummaryLabel: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9,
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+      color: C.mute,
+      marginTop: 3,
+      textAlign: 'center',
+    },
+    // ── Load-map cell extras ───────────────────────────────────────
+    monthCellGlow: {
+      shadowColor: C.ember,
+      shadowOpacity: 0.3,
+      shadowRadius: 13,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 6,
+    },
+    monthHeavyDot: {
+      position: 'absolute',
+      top: 4,
+      right: 5,
+      width: 5,
+      height: 5,
+      borderRadius: 3,
+      backgroundColor: C.glow,
+      shadowColor: C.glow,
+      shadowOpacity: 0.8,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 0 },
+    },
+    monthCellTodayTag: {
+      fontFamily: fonts.interSemi,
+      fontSize: 6.5,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      color: C.glow,
+    },
+    // ── Busiest-day nudge ──────────────────────────────────────────
+    monthNudge: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 9,
+      marginTop: 2,
+      marginBottom: 12,
+      paddingHorizontal: 13,
+      paddingVertical: 11,
+      borderRadius: 13,
+      backgroundColor: hexA(C.dusk, 0.07),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.25),
+    },
+    monthNudgeSpark: {
+      color: C.dusk,
+      fontSize: 11,
+      marginTop: 1,
+    },
+    monthNudgeText: {
+      flex: 1,
       fontFamily: fonts.inter,
-      fontSize: 10,
-      color: C.boneDim,
+      fontSize: 12.5,
+      color: C.dusk,
+      lineHeight: 18,
+    },
+    // ── Peek rows (compact, draggable) ─────────────────────────────
+    peekRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+      borderRadius: 12,
+      backgroundColor: hexA(C.bone, 0.035),
+      borderWidth: 1,
+      borderColor: hexA(C.hair, 0.9),
+    },
+    peekDoneCheck: {
+      width: 17,
+      height: 17,
+      marginTop: 1,
+      borderRadius: 9,
+      backgroundColor: hexA(C.lichen, 0.16),
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.5),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    peekDoneCheckGlyph: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9,
+      color: C.lichen,
+      lineHeight: 11,
+    },
+    peekDot: {
+      width: 10,
+      height: 10,
       marginTop: 4,
-      letterSpacing: -0.05,
+      borderRadius: 5,
+      backgroundColor: C.void,
+      borderWidth: 1.6,
+    },
+    peekDotHigh: {
+      shadowColor: C.ember,
+      shadowOpacity: 0.4,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 0 },
+    },
+    peekMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 4,
+    },
+    peekSigil: {
+      fontFamily: fonts.inter,
+      fontSize: 8,
+      letterSpacing: -1,
+    },
+    peekHandle: {
+      marginTop: 4,
+      gap: 3,
+    },
+    peekHandleRow: {
+      flexDirection: 'row',
+      gap: 3,
+    },
+    peekHandleDot: {
+      width: 3,
+      height: 3,
+      borderRadius: 1.5,
+      backgroundColor: hexA(C.mute, 0.5),
+    },
+    peekHint: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 10.5,
+      color: C.mute,
+      marginBottom: 11,
+    },
+    lightenBtn: {
+      paddingVertical: 11,
+      borderRadius: 12,
+      backgroundColor: hexA(C.dusk, 0.1),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.4),
+      alignItems: 'center',
+      marginBottom: 11,
+    },
+    lightenBtnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 13,
+      color: C.dusk,
+    },
+    // ── Move toast + Undo ──────────────────────────────────────────
+    moveToast: {
+      position: 'absolute',
+      left: 20,
+      right: 20,
+      bottom: FLOATING_NAV_CLEARANCE + 8,
+      zIndex: 80,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      paddingHorizontal: 15,
+      paddingVertical: 12,
+      borderRadius: 15,
+      backgroundColor: hexA('#241C17', 0.97),
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.4),
+      shadowColor: '#000',
+      shadowOpacity: 0.5,
+      shadowRadius: 15,
+      shadowOffset: { width: 0, height: 12 },
+      elevation: 14,
+    },
+    moveToastCheck: {
+      color: C.lichen,
+      fontSize: 13,
+    },
+    moveToastText: {
+      flex: 1,
+      fontFamily: fonts.inter,
+      fontSize: 12.5,
+      color: C.bone,
+      letterSpacing: -0.1,
+    },
+    moveToastUndo: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 100,
+      borderWidth: 1,
+      borderColor: hexA(C.ember, 0.45),
+    },
+    moveToastUndoText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+      color: C.ember,
+    },
+    // ── Drag ghost ─────────────────────────────────────────────────
+    ghostWrap: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      zIndex: 999,
+    },
+    ghost: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      paddingHorizontal: 13,
+      paddingVertical: 9,
+      borderRadius: 100,
+      backgroundColor: C.surface,
+      borderWidth: 1.5,
+      borderColor: C.ember,
+      shadowColor: '#000',
+      shadowOpacity: 0.6,
+      shadowRadius: 17,
+      shadowOffset: { width: 0, height: 14 },
+      elevation: 16,
+      transform: [
+        { translateX: -80 },
+        { translateY: -56 },
+        { rotate: '-2deg' },
+      ],
+    },
+    ghostSigil: {
+      fontFamily: fonts.inter,
+      fontSize: 8,
+      letterSpacing: -1,
+    },
+    ghostTitle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12.5,
+      color: C.bone,
+      maxWidth: 170,
+    },
+    ghostTime: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11,
+      color: C.mute,
+    },
+    // ── Open water label (now marker) ──────────────────────────────
+    openWaterLabel: {
+      position: 'absolute',
+      left: CONTENT_X,
+      top: 6,
+      fontFamily: fonts.inter,
+      fontSize: 10.5,
+      color: C.mute,
     },
     // ── Selected-day peek panel (v2.2) ─────────────────────────────
     monthPeekCard: {
@@ -2796,28 +3571,16 @@ const makeStyles = (accent: Accent) =>
       fontSize: 15,
       lineHeight: 16,
     },
-    // 12px tall so the "+N" overflow text has room to render
-    // legibly. Center-aligned so the dots and the text share a baseline.
-    monthDotsRow: {
-      flexDirection: 'row',
-      height: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 2,
-    },
-    monthDot: {
-      width: 4,
-      height: 4,
-      borderRadius: 2,
-    },
     monthCaption: {
       textAlign: 'center',
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 11.5,
+      fontSize: 11,
       color: C.mute,
-      marginTop: 18,
-      lineHeight: 18,
+      marginTop: 10,
+      marginBottom: 10,
+      lineHeight: 17,
+      paddingHorizontal: 10,
     },
   });
 
@@ -2825,4 +3588,3 @@ const makeStyles = (accent: Accent) =>
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _defaults = makeStyles(accentFor('ember'));
 void _defaults;
-void todayKey;
