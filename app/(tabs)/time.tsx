@@ -651,6 +651,10 @@ const DayTaskRow = ({
         style={[
           styles.dayRowTime,
           { color: done ? C.mute : missed ? C.ash : C.ember },
+          // The 10px radio clearance only applies while the ring
+          // floats off the line — once complete, the time settles
+          // back into column with the anchor times.
+          !done && { marginLeft: 10 },
         ]}
       >
         {fmt(it.min)}
@@ -2334,9 +2338,6 @@ const makeStyles = (accent: Accent) =>
       fontStyle: 'italic',
       fontSize: 13.5,
       marginTop: 1,
-      // Breathing room from the floating radio (which rests
-      // RADIO_OFFSET px into the gap between the columns).
-      marginLeft: 10,
       fontVariant: ['tabular-nums'],
     },
     dayRowTitle: {
