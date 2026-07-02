@@ -3262,9 +3262,11 @@ const makeStyles = (accent: Accent) =>
     },
     undoToast: {
       position: 'absolute',
-      // Above the floating glass nav, with a small gap so the toast
-      // doesn't kiss the pill.
-      bottom: FLOATING_NAV_CLEARANCE + 8,
+      // Above the CAPTURE PILL, not on it — the pill lives at
+      // FLOATING_NAV_CLEARANCE + 4 and is ~56pt tall; parking the
+      // toast at the same altitude buried the text/mic input for the
+      // whole 6-second undo window. +72 clears the pill with a gap.
+      bottom: FLOATING_NAV_CLEARANCE + 72,
       left: 22,
       right: 22,
       flexDirection: 'row',
