@@ -69,10 +69,7 @@ import { useQuestStore, type Quest } from '../../store/questStore';
 import { useLearningDigest } from '../../lib/learning';
 import { todayKey } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
-import {
-  useDeleteConfirm,
-  useUncompleteConfirm,
-} from '../../components/TaskDeleteWrap';
+import { useUncompleteConfirm } from '../../components/TaskDeleteWrap';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 
 // ═════════════════════════════════════════════════════════════════════
@@ -512,9 +509,13 @@ const NowPulse = () => {
 //   past due → its own DIMMED state (ash time, quiet title, no glow) —
 //              deliberately NOT the bright ember "up next" look — with
 //              a MISSED tag + ember Done pill (same reward fan-out as
-//              Home so no XP leaks) + Delete pill
+//              Home so no XP leaks)
 //   active   → hollow tier dot (high gets a glow), sigil + duration,
-//              Delete pill, and handle dots when it's draggable
+//              and handle dots when it's draggable
+//
+// NO delete here by design — Time is where you SEE and MOVE the day,
+// not where you manage the task list. Completing (and un-completing)
+// is the only state change a row offers; deleting lives on Home.
 // ═════════════════════════════════════════════════════════════════════
 const DayTaskRow = ({
   it,
@@ -538,7 +539,6 @@ const DayTaskRow = ({
   // unfinished task on yesterday rendered exactly like "up next".)
   const missed =
     !done && (isPast || (isToday && it.min + (it.durMin ?? 0) <= nowMin));
-  const confirmDelete = useDeleteConfirm(it.questId ?? '', it.title);
   const confirmUncomplete = useUncompleteConfirm(it.questId ?? '', it.title);
 
   // FAN-OUT mirrors Home's completeQuest (XP + shard + activity) so
@@ -620,31 +620,23 @@ const DayTaskRow = ({
         {!done && (
           <View style={styles.dayRowMeta}>
             {missed ? (
-              // Past-due meta: the state + what to do about it.
-              // Sigil/duration drop away — once it's missed, "15m,
-              // low tier" matters less than "finish it or let go".
+              // Past-due meta: the state + the one action. With
+              // delete gone (Time doesn't manage the list), there's
+              // room for the duration again — useful for judging
+              // "can I still squeeze this in".
               <>
                 <View style={styles.missedTag}>
                   <Text style={styles.missedTagText}>missed</Text>
                 </View>
+                <Text style={styles.dayRowDur}>{dur(it.durMin ?? 30)}</Text>
+                <View style={{ flex: 1 }} />
                 <Pressable
                   onPress={markDone}
-                  hitSlop={6}
+                  hitSlop={8}
                   style={styles.missedDoneBtn}
                 >
-                  <Text style={styles.missedDoneBtnText}>Done</Text>
+                  <Text style={styles.missedDoneBtnText}>Mark done</Text>
                 </Pressable>
-                <View style={{ flex: 1 }} />
-                {!!it.questId && !it.recurring && (
-                  <Pressable
-                    onPress={confirmDelete}
-                    hitSlop={6}
-                    style={styles.dayDeletePill}
-                  >
-                    <Text style={styles.dayDeletePillGlyph}>×</Text>
-                    <Text style={styles.dayDeletePillText}>Delete</Text>
-                  </Pressable>
-                )}
               </>
             ) : (
               <>
@@ -655,17 +647,6 @@ const DayTaskRow = ({
                   {dur(it.durMin ?? 30)}
                   {it.recurring ? ' · repeating' : ''}
                 </Text>
-                <View style={{ flex: 1 }} />
-                {!!it.questId && !it.recurring && (
-                  <Pressable
-                    onPress={confirmDelete}
-                    hitSlop={6}
-                    style={styles.dayDeletePill}
-                  >
-                    <Text style={styles.dayDeletePillGlyph}>×</Text>
-                    <Text style={styles.dayDeletePillText}>Delete</Text>
-                  </Pressable>
-                )}
               </>
             )}
           </View>
@@ -2299,32 +2280,6 @@ const makeStyles = (accent: Accent) =>
       fontSize: 10.5,
       color: C.mute,
     },
-    // Delete — same pill language as Home's rest rows (× Delete) so
-    // the affordance reads consistently app-wide, instead of the
-    // floating circled × that looked like debris.
-    dayDeletePill: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-      borderWidth: 1,
-      borderColor: hexA(C.boneDim, 0.22),
-      borderRadius: 100,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-    },
-    dayDeletePillGlyph: {
-      fontFamily: fonts.inter,
-      fontSize: 12,
-      color: C.boneDim,
-      lineHeight: 14,
-      marginTop: -1,
-    },
-    dayDeletePillText: {
-      fontFamily: fonts.interSemi,
-      fontSize: 11,
-      color: C.boneDim,
-      letterSpacing: -0.1,
-    },
     missedTag: {
       paddingHorizontal: 6,
       paddingVertical: 2,
@@ -2341,14 +2296,14 @@ const makeStyles = (accent: Accent) =>
       color: C.ember,
     },
     missedDoneBtn: {
-      paddingHorizontal: 9,
-      paddingVertical: 3,
+      paddingHorizontal: 11,
+      paddingVertical: 4,
       borderRadius: 100,
       backgroundColor: C.ember,
     },
     missedDoneBtnText: {
       fontFamily: fonts.interSemi,
-      fontSize: 10,
+      fontSize: 10.5,
       letterSpacing: 0.3,
       color: C.void,
     },
