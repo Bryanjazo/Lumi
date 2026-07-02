@@ -1696,24 +1696,14 @@ export default function MeTab() {
               </View>
             </HubRow>
 
-            <HubRow
-              glyph="✦"
-              color="#9A85A8"
-              label="Personalize"
-              sub={`skins, accent, how playful Lumi is`}
-              open={false}
-              chevronOnly
-              onToggle={() => {
-                Haptics.selectionAsync();
-                router.push('/profile');
-              }}
-            />
-
+            {/* One door, not two — Personalize and Account both live
+                on /profile, so they share a row (skins, accent,
+                playfulness, email, notifications — all one screen). */}
             <HubRow
               glyph="◐"
               color="#B0A38B"
               label="Account & settings"
-              sub="email, data, notifications"
+              sub="personalize · skins · email · notifications"
               open={false}
               chevronOnly
               onToggle={() => {
