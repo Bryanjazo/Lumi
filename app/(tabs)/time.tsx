@@ -508,29 +508,36 @@ const NowPulse = () => {
 
 // ═════════════════════════════════════════════════════════════════════
 // DayTaskRow — one task on the compact day thread (loadmap style).
-//   done   → lichen check circle, strikethrough, tap to un-complete
-//   missed → MISSED tag + ember Done pill (finish it in place, same
-//            reward fan-out as Home so no XP leaks)
-//   active → hollow tier dot (high gets a glow), sigil + duration,
-//            × delete, and handle dots when it's draggable
+//   done     → lichen check circle, strikethrough, tap to un-complete
+//   past due → its own DIMMED state (ash time, quiet title, no glow) —
+//              deliberately NOT the bright ember "up next" look — with
+//              a MISSED tag + ember Done pill (same reward fan-out as
+//              Home so no XP leaks) + Delete pill
+//   active   → hollow tier dot (high gets a glow), sigil + duration,
+//              Delete pill, and handle dots when it's draggable
 // ═════════════════════════════════════════════════════════════════════
 const DayTaskRow = ({
   it,
   isToday,
+  isPast,
   nowMin,
   inPeak,
   styles,
 }: {
   it: TItem;
   isToday: boolean;
+  isPast: boolean;
   nowMin: number;
   inPeak: boolean;
   styles: ReturnType<typeof makeStyles>;
 }) => {
   const tierCol = it.tier ? IMPORTANCE[it.tier].color : C.boneDim;
   const done = it.done === true;
-  const past = isToday && it.min + (it.durMin ?? 0) <= nowMin;
-  const missed = past && !done;
+  // Past due = the whole day is behind you, OR its slot already
+  // passed today. (Previously only the today case existed, so an
+  // unfinished task on yesterday rendered exactly like "up next".)
+  const missed =
+    !done && (isPast || (isToday && it.min + (it.durMin ?? 0) <= nowMin));
   const confirmDelete = useDeleteConfirm(it.questId ?? '', it.title);
   const confirmUncomplete = useUncompleteConfirm(it.questId ?? '', it.title);
 
@@ -557,8 +564,10 @@ const DayTaskRow = ({
       style={styles.dayRow}
     >
       {/* Peak-hours sheen — tasks sitting in the sharp window get a
-          soft glow wash so "do the hard thing now" reads ambiently. */}
-      {inPeak && !done && (
+          soft glow wash so "do the hard thing now" reads ambiently.
+          Skipped once a task is past due — a missed task shouldn't
+          glow like an invitation. */}
+      {inPeak && !done && !missed && (
         <LinearGradient
           colors={[hexA(C.glow, 0.05), 'rgba(0,0,0,0)']}
           start={{ x: 0, y: 0.5 }}
@@ -575,13 +584,22 @@ const DayTaskRow = ({
           <View
             style={[
               styles.peekDot,
-              { borderColor: tierCol },
-              it.tier === 'high' && styles.peekDotHigh,
+              // Past due dims to a rust outline (no glow) — the dot
+              // stops advertising and starts recording.
+              {
+                borderColor: missed ? hexA(C.ember, 0.5) : tierCol,
+              },
+              it.tier === 'high' && !missed && styles.peekDotHigh,
             ]}
           />
         )}
       </View>
-      <Text style={[styles.dayRowTime, { color: done ? C.mute : C.ember }]}>
+      <Text
+        style={[
+          styles.dayRowTime,
+          { color: done ? C.mute : missed ? C.ash : C.ember },
+        ]}
+      >
         {fmt(it.min)}
       </Text>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -589,6 +607,7 @@ const DayTaskRow = ({
           numberOfLines={2}
           style={[
             styles.dayRowTitle,
+            missed && { color: C.boneDim },
             done && {
               color: C.mute,
               textDecorationLine: 'line-through',
@@ -600,14 +619,10 @@ const DayTaskRow = ({
         </Text>
         {!done && (
           <View style={styles.dayRowMeta}>
-            <Text style={[styles.peekSigil, { color: tierCol }]}>
-              {it.tier ? IMPORTANCE[it.tier].sigil : '◆'}
-            </Text>
-            <Text style={styles.dayRowDur}>
-              {dur(it.durMin ?? 30)}
-              {it.recurring ? ' · repeating' : ''}
-            </Text>
-            {missed && (
+            {missed ? (
+              // Past-due meta: the state + what to do about it.
+              // Sigil/duration drop away — once it's missed, "15m,
+              // low tier" matters less than "finish it or let go".
               <>
                 <View style={styles.missedTag}>
                   <Text style={styles.missedTagText}>missed</Text>
@@ -619,17 +634,39 @@ const DayTaskRow = ({
                 >
                   <Text style={styles.missedDoneBtnText}>Done</Text>
                 </Pressable>
+                <View style={{ flex: 1 }} />
+                {!!it.questId && !it.recurring && (
+                  <Pressable
+                    onPress={confirmDelete}
+                    hitSlop={6}
+                    style={styles.dayDeletePill}
+                  >
+                    <Text style={styles.dayDeletePillGlyph}>×</Text>
+                    <Text style={styles.dayDeletePillText}>Delete</Text>
+                  </Pressable>
+                )}
               </>
-            )}
-            <View style={{ flex: 1 }} />
-            {!!it.questId && !it.recurring && (
-              <Pressable
-                onPress={confirmDelete}
-                hitSlop={8}
-                style={styles.dayRowDelete}
-              >
-                <Text style={styles.dayRowDeleteGlyph}>×</Text>
-              </Pressable>
+            ) : (
+              <>
+                <Text style={[styles.peekSigil, { color: tierCol }]}>
+                  {it.tier ? IMPORTANCE[it.tier].sigil : '◆'}
+                </Text>
+                <Text style={styles.dayRowDur}>
+                  {dur(it.durMin ?? 30)}
+                  {it.recurring ? ' · repeating' : ''}
+                </Text>
+                <View style={{ flex: 1 }} />
+                {!!it.questId && !it.recurring && (
+                  <Pressable
+                    onPress={confirmDelete}
+                    hitSlop={6}
+                    style={styles.dayDeletePill}
+                  >
+                    <Text style={styles.dayDeletePillGlyph}>×</Text>
+                    <Text style={styles.dayDeletePillText}>Delete</Text>
+                  </Pressable>
+                )}
+              </>
             )}
           </View>
         )}
@@ -703,7 +740,16 @@ const DayView = ({
         nowPlaced = true;
       }
       const gapFrom = Math.max(prevEnd, isToday ? nowMin : prevEnd);
-      if (it.min - gapFrom >= GAP_MIN && (!isToday || it.min > nowMin)) {
+      // Gaps ("room for one thing") only where dropping makes sense:
+      // never on a day that's already over, never before the first
+      // item (the mock's 6am seed painted a phantom stretch above
+      // Wake), and today only ahead of now.
+      if (
+        prev &&
+        !isPast &&
+        it.min - gapFrom >= GAP_MIN &&
+        (!isToday || it.min > nowMin)
+      ) {
         out.push({
           kind: 'gap',
           from: gapFrom,
@@ -848,11 +894,16 @@ const DayView = ({
             it.min >= peakStart &&
             it.min < peakEnd &&
             !it.done;
-          const draggable = !it.done && !!it.questId && !it.recurring;
+          // No drag on past days — gaps are suppressed there, so the
+          // gesture would have nowhere to land. (Today's missed rows
+          // still drag forward into open gaps.)
+          const draggable =
+            !it.done && !!it.questId && !it.recurring && !isPast;
           const row = (
             <DayTaskRow
               it={it}
               isToday={isToday}
+              isPast={isPast}
               nowMin={nowMin}
               inPeak={inPeak}
               styles={styles}
@@ -2248,21 +2299,31 @@ const makeStyles = (accent: Accent) =>
       fontSize: 10.5,
       color: C.mute,
     },
-    dayRowDelete: {
-      width: 20,
-      height: 20,
-      borderRadius: 10,
+    // Delete — same pill language as Home's rest rows (× Delete) so
+    // the affordance reads consistently app-wide, instead of the
+    // floating circled × that looked like debris.
+    dayDeletePill: {
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: 'rgba(255,255,255,0.04)',
+      gap: 5,
       borderWidth: 1,
       borderColor: hexA(C.boneDim, 0.22),
+      borderRadius: 100,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
     },
-    dayRowDeleteGlyph: {
-      color: C.mute,
+    dayDeletePillGlyph: {
+      fontFamily: fonts.inter,
       fontSize: 12,
+      color: C.boneDim,
       lineHeight: 14,
       marginTop: -1,
+    },
+    dayDeletePillText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11,
+      color: C.boneDim,
+      letterSpacing: -0.1,
     },
     missedTag: {
       paddingHorizontal: 6,
