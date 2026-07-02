@@ -81,6 +81,7 @@ import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
 import { TwinkleMotes } from '../../components/TwinkleMotes';
 import { DayThread } from '../../components/DayThread';
+import { findWindowSlot, windowIsFull } from '../../lib/slotting';
 import { useDeleteConfirm } from '../../components/TaskDeleteWrap';
 import { HabitScheduleSheet } from '../../components/HabitScheduleSheet';
 import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
@@ -1579,41 +1580,12 @@ export default function Home() {
   const commitTask = (t: SmartTask) => {
     const hasTime = t.at != null;
 
-    // When the user captures a windowed task on TODAY and the chosen
-    // window is already in progress (e.g. "meditate sometime today"
-    // captured at 12:30 PM, midday = 11–14), anchor it to a stable
-    // clock time NOW + 5 min so the Time tab renders it at one fixed
-    // spot — not dynamically against the live `nowMin`, which made it
-    // shift every minute ("in 5 min", "in 4 min", "in 3 min"…). For
-    // tasks captured before the window opens or after it ends, leave
-    // windowed — Time tab renders at the window start and tags it
-    // "missed" if past.
-    let derivedAt: number | null = null;
-    if (
-      !hasTime &&
-      t.timeMode === 'windowed' &&
-      t.window !== 'someday' &&
-      (!t.date || t.date === todayKey())
-    ) {
-      const winStart = effectiveWindows[t.window].start;
-      const winEnd = effectiveWindows[t.window].end;
-      if (winStart != null && winEnd != null) {
-        const startMin = winStart * 60;
-        const endMin = winEnd * 60;
-        const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
-        if (nowMin >= startMin && nowMin < endMin) {
-          derivedAt = Math.min(nowMin + 5, endMin - 5);
-        }
-      }
-    }
-    const effectiveAt = hasTime ? (t.at as number) : derivedAt;
-    const writeAnchor = effectiveAt != null;
-
     // Length: prefer what the LLM extracted / the user picked. If
     // still unknown (LLM didn't infer, user didn't override), fall
     // back to a sane importance-keyed default — never the old
     // hardcoded 30, which over-booked Trials and under-budgeted
-    // Whims.
+    // Whims. (Computed BEFORE the slot search — the slot needs to
+    // know how long the task is.)
     const defaultDurationForImportance: Record<Importance, number> = {
       high: 60,
       medium: 30,
@@ -1621,6 +1593,38 @@ export default function Home() {
     };
     const effectiveDuration =
       t.durationMinutes ?? defaultDurationForImportance[t.importance];
+
+    // AUTO-SLOT — a windowed task with no explicit time gets the next
+    // open :15 slot in its window (after anchors + everything already
+    // scheduled), decided ONCE here at commit. Five "morning" tasks
+    // cascade 8:15 → 8:30 → … instead of piling up at the window
+    // start. Quests are read FRESH from the store (not the render
+    // closure) so batch captures see each other's slots. If the
+    // window is genuinely full, fall back to plain windowed — the
+    // pickers gray full windows out, so this stays rare.
+    let derivedAt: number | null = null;
+    if (
+      !hasTime &&
+      t.timeMode === 'windowed' &&
+      t.window !== 'someday' &&
+      !t.recur
+    ) {
+      const targetISO = t.date ?? todayKey();
+      derivedAt = findWindowSlot({
+        window: t.window,
+        dateISO: targetISO,
+        durationMin: effectiveDuration,
+        quests: useQuestStore.getState().quests,
+        anchors,
+        effectiveWindows,
+        nowMin:
+          targetISO === todayKey()
+            ? new Date().getHours() * 60 + new Date().getMinutes()
+            : null,
+      });
+    }
+    const effectiveAt = hasTime ? (t.at as number) : derivedAt;
+    const writeAnchor = effectiveAt != null;
 
     const quest = addQuest({
       title: t.title,
@@ -2425,15 +2429,35 @@ export default function Home() {
     const idx = Number(sugInput.id.replace('preview_', ''));
     const t = previewTasks[idx];
     if (!t) return;
+    // No pinned time → auto-slot into the chosen window (next open
+    // :15 after anchors + everything scheduled). Same cascade as
+    // commitTask; fresh store read so back-to-back accepts stack.
+    const targetISO = t.date ?? todayKey();
+    const autoSlot =
+      opts.exactMinute == null && !t.recur
+        ? findWindowSlot({
+            window: opts.window,
+            dateISO: targetISO,
+            durationMin: opts.durationMin,
+            quests: useQuestStore.getState().quests,
+            anchors,
+            effectiveWindows,
+            nowMin:
+              targetISO === todayKey()
+                ? now.getHours() * 60 + now.getMinutes()
+                : null,
+          })
+        : null;
+    const anchorMinute = opts.exactMinute ?? autoSlot;
     addQuest({
       title: t.title,
       difficulty: 'medium',
       importance: t.importance,
       window: opts.window,
       durationMinutes: opts.durationMin,
-      ...(opts.exactMinute != null && {
-        scheduledHour: Math.floor(opts.exactMinute / 60),
-        scheduledMinute: opts.exactMinute % 60,
+      ...(anchorMinute != null && {
+        scheduledHour: Math.floor(anchorMinute / 60),
+        scheduledMinute: anchorMinute % 60,
       }),
       ...(t.date && { date: t.date }),
       ...(t.recur && { recur: t.recur }),
@@ -2848,6 +2872,21 @@ export default function Home() {
               index={0}
               onAccept={acceptPreviewTaskFromCard}
               onDismiss={dismissPreviewTaskFromCard}
+              isWindowFull={(w, d) => {
+                const targetISO = previewTasks[0].date ?? todayKey();
+                return windowIsFull({
+                  window: w,
+                  dateISO: targetISO,
+                  durationMin: d,
+                  quests,
+                  anchors,
+                  effectiveWindows,
+                  nowMin:
+                    targetISO === todayKey()
+                      ? now.getHours() * 60 + now.getMinutes()
+                      : null,
+                });
+              }}
             />
             {previewTasks.length > 1 && (
               <View style={styles.bulkActionsRow}>

@@ -136,6 +136,13 @@ interface Props {
   onDismiss: (input: SuggestInput) => void;
   /** Skip without accepting/dismissing — moves to the next suggestion. */
   onSkip?: (input: SuggestInput) => void;
+  /**
+   * When provided, windows that can't fit a floating task of the
+   * currently-picked duration gray out (auto-slotting has nowhere to
+   * put it). Pinning an exact time bypasses the check — the grid
+   * stays fully tappable in exact mode.
+   */
+  isWindowFull?: (w: WindowKey, durationMin: number) => boolean;
 }
 
 export const LumiSuggestCard = ({
@@ -145,6 +152,7 @@ export const LumiSuggestCard = ({
   onAccept,
   onDismiss,
   onSkip,
+  isWindowFull,
 }: Props) => {
   // Seed state from the input's defaults so the user lands on Lumi's
   // best estimate; everything is overridable. Keyed on input.id so
@@ -293,9 +301,15 @@ export const LumiSuggestCard = ({
       <View style={styles.windowGrid}>
         {WINDOWS.map((w) => {
           const on = effWin === w.key;
+          // A window grays out when auto-slotting can't fit the task
+          // in it (no room after anchors + what's scheduled). Exact
+          // mode bypasses — a pinned time is the user's call.
+          const full =
+            !exact && !on && (isWindowFull?.(w.key, dur) ?? false);
           return (
             <Pressable
               key={w.key}
+              disabled={full}
               onPress={() => pickWindow(w.key)}
               style={[
                 styles.winCell,
@@ -308,6 +322,7 @@ export const LumiSuggestCard = ({
                       backgroundColor: hexA(C.void, 0.35),
                       borderColor: C.hair,
                     },
+                full && { opacity: 0.35 },
               ]}
             >
               <View
@@ -341,6 +356,7 @@ export const LumiSuggestCard = ({
               >
                 {w.label}
               </Text>
+              {full && <Text style={styles.winFullTag}>full</Text>}
             </Pressable>
           );
         })}
@@ -637,6 +653,14 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: '600',
     letterSpacing: -0.1,
+  },
+  winFullTag: {
+    fontFamily: fonts.interSemi,
+    fontSize: 8,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: C.mute,
+    marginLeft: 2,
   },
 
   pinRow: {
