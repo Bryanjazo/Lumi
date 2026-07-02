@@ -37,14 +37,8 @@ import {
   countEarned,
   type UnlockCategory,
 } from '../../constants/unlocks';
-import {
-  computeVitality,
-  stageOf,
-  vitalityParts,
-  type VitalityPart,
-} from '../../lib/vitality';
+import { computeVitality } from '../../lib/vitality';
 import { last7DaysEnergy, useLearningDigest } from '../../lib/learning';
-import { SoftGlow } from '../../components/SoftGlow';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 import {
   useQuestStore,
@@ -53,7 +47,7 @@ import {
 } from '../../store/questStore';
 import { useCheckinStore } from '../../store/checkinStore';
 import { useUserStore } from '../../store/userStore';
-import { todayKey } from '../../lib/gamification';
+import { todayKey, xpProgress, TITLES } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
 
 // ═════════════════════════════════════════════════════════════════════
@@ -758,75 +752,6 @@ const Room = ({
 };
 
 // ═════════════════════════════════════════════════════════════════════
-// VitalityRing — small ring overlay showing the score
-// ═════════════════════════════════════════════════════════════════════
-const VitalityRing = ({
-  value,
-  glow,
-}: {
-  value: number;
-  glow: string;
-}) => {
-  const r = 16;
-  const circ = 2 * Math.PI * r;
-  const offset = circ * (1 - value / 100);
-  return (
-    <View style={{ position: 'relative', width: 38, height: 38 }}>
-      <Svg width={38} height={38} style={{ transform: [{ rotate: '-90deg' }] }}>
-        <Circle cx={19} cy={19} r={r} fill="none" stroke={C.hair} strokeWidth={3} />
-        <Circle
-          cx={19}
-          cy={19}
-          r={r}
-          fill="none"
-          stroke={glow}
-          strokeWidth={3}
-          strokeLinecap="round"
-          strokeDasharray={`${circ}`}
-          strokeDashoffset={`${offset}`}
-        />
-      </Svg>
-      <View style={styles.ringNumWrap}>
-        <Text style={styles.ringNum}>{value}</Text>
-      </View>
-    </View>
-  );
-};
-
-// ═════════════════════════════════════════════════════════════════════
-// VitalityBreakdown — contribution chips
-// ═════════════════════════════════════════════════════════════════════
-const VitalityBreakdown = ({ parts }: { parts: VitalityPart[] }) => (
-  <View style={styles.breakdownRow}>
-    {parts.map((p) => (
-      <View
-        key={p.label}
-        style={[
-          styles.breakdownChip,
-          {
-            borderColor: p.on ? p.color : C.hair,
-            opacity: p.on ? 1 : 0.5,
-          },
-        ]}
-      >
-        <View
-          style={[
-            styles.breakdownDot,
-            { backgroundColor: p.on ? p.color : C.mute },
-          ]}
-        />
-        <Text
-          style={[styles.breakdownLabel, { color: p.on ? C.bone : C.mute }]}
-        >
-          {p.label}
-        </Text>
-        <Text style={styles.breakdownVal}>{p.val}</Text>
-      </View>
-    ))}
-  </View>
-);
-
-// ═════════════════════════════════════════════════════════════════════
 // EnergyTrend — 7-day sparkline bars
 // ═════════════════════════════════════════════════════════════════════
 const EnergyTrend = ({
@@ -855,6 +780,178 @@ const EnergyTrend = ({
     })}
   </View>
 );
+
+// ═════════════════════════════════════════════════════════════════════
+// JourneyPath — rank as a WALKED ROAD (lumi-me-hearthside mock), not a
+// badge in a corner. The last few ranks sit behind you as passed dots,
+// the current one glows underfoot, and the next milestone waits ahead
+// as a dashed outline. Data is the REAL ladder from lib/gamification
+// (LEVEL_THRESHOLDS + TITLES) — nothing hardcoded.
+// ═════════════════════════════════════════════════════════════════════
+const JourneyPath = ({ xp }: { xp: number }) => {
+  const prog = xpProgress(xp);
+  // Show up to the last 4 titles ending at the current rank; the walked
+  // stretch spans the left 66% of the road, progress toward the next
+  // rank fills the remaining 34%.
+  const start = Math.max(0, prog.level - 4);
+  const walked = TITLES.slice(start, prog.level);
+  const nextTitle = TITLES[prog.level] ?? 'Threshold';
+  const remaining = Math.max(0, prog.next - xp);
+  const posOf = (i: number) =>
+    walked.length > 1 ? (i / (walked.length - 1)) * 66 : 0;
+  return (
+    <View>
+      <View style={{ position: 'relative', height: 56, marginHorizontal: 6 }}>
+        {/* the road */}
+        <View style={jpStyles.track} />
+        <View
+          style={[jpStyles.walked, { width: `${66 + prog.pct * 30}%` }]}
+        />
+        {walked.map((r, i) => {
+          const here = i === walked.length - 1;
+          return (
+            <View
+              key={`${r}-${i}`}
+              style={[jpStyles.stop, { left: `${posOf(i)}%` }]}
+            >
+              <Text
+                numberOfLines={1}
+                style={[
+                  jpStyles.stopLabel,
+                  {
+                    color: here ? C.glow : C.mute,
+                    fontFamily: here ? fonts.interSemi : fonts.inter,
+                  },
+                  // Only the first + current labels render — middle
+                  // ones collapse to keep the road quiet (mock does
+                  // the same).
+                  !here && i !== 0 && { opacity: 0 },
+                ]}
+              >
+                {r}
+              </Text>
+              <View
+                style={
+                  here
+                    ? jpStyles.dotHere
+                    : [
+                        jpStyles.dot,
+                        { backgroundColor: hexA(C.ember, 0.55) },
+                      ]
+                }
+              />
+            </View>
+          );
+        })}
+        {/* next milestone — dashed, waiting ahead */}
+        <View style={jpStyles.nextStop}>
+          <Text numberOfLines={1} style={jpStyles.nextLabel}>
+            {nextTitle}
+          </Text>
+          <View style={jpStyles.dotNext} />
+        </View>
+      </View>
+      <Text style={jpStyles.caption}>
+        <Text style={jpStyles.captionXp}>
+          {remaining.toLocaleString()} xp
+        </Text>{' '}
+        until {nextTitle} — mostly by just showing up.
+      </Text>
+    </View>
+  );
+};
+
+const jpStyles = StyleSheet.create({
+  track: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 24,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: hexA(C.bone, 0.08),
+  },
+  walked: {
+    position: 'absolute',
+    left: 0,
+    top: 24,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: C.ember,
+    shadowColor: C.ember,
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  stop: {
+    position: 'absolute',
+    top: 0,
+    alignItems: 'center',
+    width: 80,
+    marginLeft: -40,
+  },
+  stopLabel: {
+    fontSize: 8.5,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  dot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    marginTop: 2,
+  },
+  dotHere: {
+    width: 13,
+    height: 13,
+    borderRadius: 7,
+    backgroundColor: C.ember,
+    borderWidth: 2,
+    borderColor: hexA(C.glow, 0.8),
+    shadowColor: C.ember,
+    shadowOpacity: 0.7,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
+  },
+  nextStop: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    alignItems: 'center',
+  },
+  nextLabel: {
+    fontFamily: fonts.inter,
+    fontSize: 8.5,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: C.mute,
+    marginBottom: 6,
+  },
+  dotNext: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    marginTop: 2,
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: hexA(C.glow, 0.5),
+  },
+  caption: {
+    fontFamily: fonts.inter,
+    fontSize: 11,
+    color: C.mute,
+    marginTop: 10,
+    paddingLeft: 6,
+  },
+  captionXp: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    color: C.glow,
+  },
+});
 
 // ═════════════════════════════════════════════════════════════════════
 // UnlockThumb — tiny SVG placeholder until commissioned art lands
@@ -1318,14 +1415,48 @@ export default function MeTab() {
     untangledToday,
     capturedToday,
   };
+  // Vitality still drives the ROOM's ambience (wall warmth, lamp,
+  // plant) — it just isn't displayed as a bar/number anymore. The
+  // room IS the read; her health-bar UI is gone by design.
   const vitality = computeVitality(signals);
-  const stage = stageOf(vitality);
-  const parts = vitalityParts(signals);
 
-  // v2 UI state — collapsible feed chips + the "Your corner" hub.
+  // Hearthside UI state — cheer pulses the room; hub rows collapse.
   const [cheer, setCheer] = useState(0);
-  const [showFeed, setShowFeed] = useState(false);
   const [hub, setHub] = useState<null | 'unlocks' | 'rhythm'>(null);
+
+  // Care toast — "A slow blink back…" feedback for Sit with her.
+  const [careToast, setCareToast] = useState<string | null>(null);
+  const careToastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showCareToast = (m: string) => {
+    setCareToast(m);
+    if (careToastRef.current) clearTimeout(careToastRef.current);
+    careToastRef.current = setTimeout(() => setCareToast(null), 2600);
+  };
+  useEffect(
+    () => () => {
+      if (careToastRef.current) clearTimeout(careToastRef.current);
+    },
+    [],
+  );
+  const sitWithHer = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCheer((c) => c + 1);
+    showCareToast("A slow blink back. That's cat for love.");
+  };
+
+  // Days together — the bond, not a stat.
+  const onboardedAt = useUserStore((s) => s.onboardedAt);
+  const daysTogether = useMemo(() => {
+    if (!onboardedAt) return 1;
+    const ms = Date.now() - new Date(onboardedAt).getTime();
+    return Math.max(1, Math.floor(ms / 86400000) + 1);
+  }, [onboardedAt]);
+  const bondLine =
+    streak >= 3
+      ? "She's warm and settled — you've been steady lately, and she can tell."
+      : streak >= 1
+        ? "She's settling in beside you — a little rhythm goes a long way."
+        : "She's here either way — today counts whenever you start.";
 
   // Learning digest — drives "What Lumi noticed" + the Week card.
   const digest = useLearningDigest();
@@ -1347,36 +1478,25 @@ export default function MeTab() {
         q.completed && q.completedAt && new Date(q.completedAt) >= cutoff,
     ).length;
   }, [quests]);
-  const weekSubtitle = useMemo(() => {
+  // This week, as ONE story line in Lumi's voice — composed from
+  // real numbers only (no invented "3 focus embers" like the mock).
+  const storyLine = useMemo(() => {
     if (weekQuestsDone === 0) {
-      return 'No quests cleared yet — your week takes shape as you go.';
+      return '“A quiet week so far — nothing finished yet, and that’s a fine place to start from.”';
     }
-    return `${weekQuestsDone} quest${
+    const win = digest.win ? `, and ${digest.win.headline.toLowerCase()}` : '';
+    const pattern = digest.pattern
+      ? ' — and a pattern turned up worth a look'
+      : '';
+    return `“You did ${weekQuestsDone} thing${
       weekQuestsDone === 1 ? '' : 's'
-    } done${digest.win ? `, ${digest.win.headline.toLowerCase()}` : ''}${
-      digest.pattern ? ', and a pattern Lumi noticed' : ''
-    }.`;
+    } this week${win}${pattern}. That counts.”`;
   }, [weekQuestsDone, digest]);
-  const weekFooterLabel = useMemo(() => {
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    return `${days[new Date().getDay()]} · this week`;
-  }, []);
 
-  // Rank derivation — same simple formula as Home
-  const XP_PER_RANK = 1000;
-  const rank = Math.max(1, Math.floor(xpTotal / XP_PER_RANK) + 1);
-  const xpInRank = xpTotal % XP_PER_RANK;
-  const xpPct = (xpInRank / XP_PER_RANK) * 100;
-  const remainingToNext = XP_PER_RANK - xpInRank;
-  const RANK_TITLES = [
-    'First Light',
-    'Steady Hand',
-    'Quiet Builder',
-    'Bright Wick',
-    'Long Game',
-    'Open Sky',
-  ];
-  const rankTitle = RANK_TITLES[Math.min(RANK_TITLES.length - 1, rank - 1)];
+  // Rank — the REAL ladder from lib/gamification. (The old ad-hoc
+  // 1000-xp-per-rank formula here disagreed with the app's actual
+  // level thresholds; the road now tells the truth.)
+  const road = xpProgress(xpTotal);
 
   const screenWidth = Dimensions.get('window').width;
   const roomHeight = Math.round(screenWidth * 0.82);
@@ -1436,133 +1556,137 @@ export default function MeTab() {
             width={screenWidth}
             height={roomHeight}
           />
-          {/* Top legibility scrim + Me / Rank / shards */}
+          {/* Floating chrome over the room — minimal (hearthside):
+              just her room's name and the profile door. Rank moved
+              down to "Your road"; shards to the care card. */}
           <View pointerEvents="none" style={styles.heroTopScrim} />
           <View style={styles.heroTopBar}>
-            <Text style={styles.heroEyebrow}>Me</Text>
-            <View style={styles.heroRightCluster}>
-              <View
-                style={[
-                  styles.rankPill,
-                  { borderColor: hexA(accent.fg, 0.55) },
-                ]}
-              >
-                <Text style={styles.rankPillEyebrow}>RANK</Text>
-                <Text style={[styles.rankPillNum, { color: accent.fg }]}>
-                  {rank}
-                </Text>
-                <Text style={styles.rankPillTitle}>{rankTitle}</Text>
-              </View>
-              <Text style={styles.shardsHero}>◈{shards}</Text>
-            </View>
+            <Text style={styles.heroEyebrow}>{petName}&apos;s room</Text>
+            <View style={{ flex: 1 }} />
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                router.push('/profile');
+              }}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Your account"
+              style={styles.heroProfileBtn}
+            >
+              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+                <Circle
+                  cx={12}
+                  cy={8.6}
+                  r={3.4}
+                  stroke={C.honey}
+                  strokeWidth={1.7}
+                />
+                <Path
+                  d="M5.4 19.4c1.3-3 3.8-4.5 6.6-4.5s5.3 1.5 6.6 4.5"
+                  stroke={C.honey}
+                  strokeWidth={1.7}
+                  strokeLinecap="round"
+                />
+              </Svg>
+            </Pressable>
           </View>
           {/* Whisper-thin bottom fade — blends into the page, doesn't cover Luna */}
           <View pointerEvents="none" style={styles.heroBottomFade} />
         </Pressable>
 
-        {/* ═══ Poetic vitality read — BELOW the scene ═══ */}
-        <View style={styles.poeticBlock}>
-          <View style={styles.poeticHead}>
-            <View
-              style={[
-                styles.stageDot,
-                { backgroundColor: stage.glow, shadowColor: stage.glow },
-              ]}
-            />
-            <Text style={[styles.stageLabel, { color: stage.glow }]}>
-              {petName} is {stage.label}
-            </Text>
-            <Text style={styles.vitalityMini}>
-              vitality{' '}
-              <Text style={styles.vitalityMiniNum}>{vitality}</Text>
-            </Text>
-          </View>
-          <Text style={styles.poeticNote}>{stage.note}</Text>
+        {/* ═══ The two of you — a bond, not a dashboard ═══ */}
+        <View style={styles.bondBlock}>
+          <Text style={styles.bondTitle}>
+            {daysTogether} day{daysTogether === 1 ? '' : 's'}, the two of
+            you.
+          </Text>
+          <Text style={styles.bondLine}>✦ {bondLine}</Text>
         </View>
 
-        {/* What's feeding her world — collapsed by default */}
-        <View style={styles.feedBlock}>
-          <Pressable
-            onPress={() => setShowFeed((f) => !f)}
-            style={styles.feedToggle}
-          >
-            <Text style={styles.feedToggleSpark}>✦</Text>
-            <Text style={styles.feedToggleLabel}>
-              What&apos;s feeding her world
-            </Text>
-            <Text
-              style={[
-                styles.feedToggleChev,
-                showFeed && { transform: [{ rotate: '180deg' }] },
-              ]}
+        {/* ═══ Care — no treats, no warmth bar; just being together ═══ */}
+        <View style={styles.careCard}>
+          <View style={styles.careRow}>
+            <Pressable
+              onPress={sitWithHer}
+              style={[styles.careBtn, styles.careBtnEmber]}
+              hitSlop={4}
             >
-              ▾
+              <Text style={[styles.careBtnText, { color: C.ember }]}>
+                ♥ Sit with her
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                router.push('/profile');
+              }}
+              style={[styles.careBtn, styles.careBtnAmethyst]}
+              hitSlop={4}
+            >
+              <Text style={[styles.careBtnText, { color: C.amethyst }]}>
+                ✦ Decorate
+              </Text>
+            </Pressable>
+          </View>
+          <View style={styles.shardsLine}>
+            <Text style={styles.shardsLineDim}>you have</Text>
+            <Text style={styles.shardsLineNum}>◈ {shards} shards</Text>
+            <Text style={styles.shardsLineDim}>
+              — earned by finishing things
             </Text>
-          </Pressable>
-          {showFeed && (
-            <View style={{ paddingBottom: 8 }}>
-              <View style={styles.feedChipsRow}>
-                {parts.map((p) => (
-                  <View
-                    key={p.label}
-                    style={[styles.feedChip, { borderColor: p.color }]}
-                  >
-                    <View
-                      style={[
-                        styles.feedChipDot,
-                        { backgroundColor: p.color },
-                      ]}
-                    />
-                    <Text style={styles.feedChipLabel}>{p.label}</Text>
-                    <Text style={styles.feedChipVal}>{p.val}</Text>
-                  </View>
-                ))}
-              </View>
-              <Text style={styles.feedNote}>
-                Her world blooms from your whole self-care — not one number.
-                Show up where you can; it all feeds her.
+          </View>
+        </View>
+
+        {/* ═══ Your road — rank as a walked path ═══ */}
+        {companion.showXp && (
+          <View style={styles.roadBlock}>
+            <View style={styles.roadHead}>
+              <Text style={styles.sectionEyebrow}>Your road</Text>
+              <Text style={styles.roadRankLabel}>
+                Rank {road.level} · {road.title}
               </Text>
             </View>
-          )}
-        </View>
-
-        {/* ═══ YOUR WEEK — recap entry (keystone) ═══ */}
-        <Pressable
-          onPress={() => {
-            Haptics.selectionAsync();
-            router.push('/recap');
-          }}
-          style={styles.weekCardOuter}
-        >
-          <SoftGlow
-            color={accent.fg}
-            opacity={0.22}
-            fade={0.7}
-            cx={0.92}
-            cy={0.08}
-            style={styles.weekCardGlow}
-          />
-          <View>
-            <View style={styles.weekHeadRow}>
-              <Text style={styles.weekEyebrow}>Your Week</Text>
-              <View style={styles.weekNewPill}>
-                <Text style={styles.weekNewText}>New</Text>
-              </View>
+            <View style={styles.roadCard}>
+              <JourneyPath xp={xpTotal} />
             </View>
-            <Text style={styles.weekH1}>
-              {weekQuestsDone === 0
-                ? 'Your week is starting.'
-                : 'Your week is ready.'}
-            </Text>
-            <Text style={styles.weekSub}>{weekSubtitle}</Text>
           </View>
-          <View style={styles.weekFoot}>
-            <Text style={styles.weekFootLabel}>{weekFooterLabel}</Text>
-            <Text style={styles.weekFootCta}>
-              See your week <Text style={{ fontSize: 14 }}>→</Text>
-            </Text>
+        )}
+
+        {/* ═══ This week, as a story ═══ */}
+        <View style={styles.storyBlock}>
+          <Text style={styles.sectionEyebrow}>This week&apos;s story</Text>
+          <View style={styles.storyCard}>
+            <Text style={styles.storyQuote}>{storyLine}</Text>
+            <View style={styles.storyFootRow}>
+              <View style={styles.storyCatBadge}>
+                <Svg
+                  width={13}
+                  height={13}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke={C.dusk}
+                  strokeWidth={1.8}
+                >
+                  <Path d="M8.6 7.6 7 4l3.1 2.3M15.4 7.6 17 4l-3.1 2.3" />
+                  <Circle cx={12} cy={13.2} r={5.3} />
+                </Svg>
+              </View>
+              <Text style={styles.storyByline}>
+                — Lumi, your week in one breath
+              </Text>
+              <View style={{ flex: 1 }} />
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  router.push('/recap');
+                }}
+                hitSlop={8}
+              >
+                <Text style={styles.storyCta}>full recap →</Text>
+              </Pressable>
+            </View>
           </View>
-        </Pressable>
+        </View>
         </>
         )}
 
@@ -1574,62 +1698,12 @@ export default function MeTab() {
             "calm AI organizer" framing. */}
         <View style={styles.cornerBlock}>
           <Text style={styles.cornerEyebrow}>
-            {companion.isFocused ? 'Snapshot' : 'Your corner'}
+            {companion.isFocused ? 'Snapshot' : 'The quiet corner'}
           </Text>
 
-          {/* Game-flavored standing strip — Full + Minimal only. */}
-          {companion.showXp && (
-            <>
-              <View style={styles.standingStrip}>
-                <View style={styles.standingCell}>
-                  <Text style={styles.standingCellNum}>{rank}</Text>
-                  <Text style={styles.standingCellLabel}>RANK</Text>
-                </View>
-                <View style={styles.standingDivider} />
-                <View style={styles.standingCell}>
-                  <Text
-                    style={[
-                      styles.standingCellNum,
-                      { color: '#C9A06A' },
-                    ]}
-                  >
-                    🔥{streak}
-                  </Text>
-                  <Text style={styles.standingCellLabel}>STREAK</Text>
-                </View>
-                <View style={styles.standingDivider} />
-                <View style={styles.standingCell}>
-                  <Text
-                    style={[
-                      styles.standingCellNum,
-                      { color: accent.fg },
-                    ]}
-                  >
-                    {xpTotal.toLocaleString()}
-                  </Text>
-                  <Text style={styles.standingCellLabel}>LIFETIME XP</Text>
-                </View>
-              </View>
-
-              {/* Level progress to next rank */}
-              <View style={styles.levelBarRow}>
-                <View style={styles.levelBarTrack}>
-                  <View
-                    style={[
-                      styles.levelBarFill,
-                      {
-                        width: `${xpPct}%`,
-                        backgroundColor: accent.fg,
-                      },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.levelBarLabel}>
-                  {remainingToNext.toLocaleString()} XP to Rank {rank + 1}
-                </Text>
-              </View>
-            </>
-          )}
+          {/* The standing strip + level bar are gone — "Your road"
+              above carries rank/XP now, as a walked path instead of
+              a dashboard. */}
 
           {/* Neutral snapshot — Focused mode only.
               Three calm stats that read as "you've been showing up,"
@@ -1672,6 +1746,19 @@ export default function MeTab() {
           </HubRow>
 
           <HubRow
+            glyph="✦"
+            color="#9A85A8"
+            label="Personalize"
+            sub={`skins, accent, how playful Lumi is`}
+            open={false}
+            chevronOnly
+            onToggle={() => {
+              Haptics.selectionAsync();
+              router.push('/profile');
+            }}
+          />
+
+          <HubRow
             glyph="◐"
             color="#B0A38B"
             label="Account & settings"
@@ -1683,10 +1770,21 @@ export default function MeTab() {
               router.push('/profile');
             }}
           />
+
+          <Text style={styles.cornerFooter}>
+            that&apos;s everything — no feed, no noise, just your corner
+          </Text>
         </View>
 
         <View style={{ height: 30 }} />
       </ScrollView>
+
+      {/* Care toast — "A slow blink back…" floats over the room. */}
+      {careToast && (
+        <View style={styles.careToast} pointerEvents="none">
+          <Text style={styles.careToastText}>{careToast}</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -1790,90 +1888,188 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     lineHeight: 18,
   },
 
-  // ── Your Week card ──
-  weekCardOuter: {
+  // ── Hearthside — bond / care / road / story ──
+  bondBlock: {
+    paddingHorizontal: 24,
+    paddingTop: 16,
+  },
+  bondTitle: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 24,
+    color: C.bone,
+    letterSpacing: -0.5,
+    lineHeight: 29,
+  },
+  bondLine: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 12.5,
+    color: C.dusk,
+    marginTop: 6,
+    lineHeight: 19,
+  },
+  careCard: {
     marginHorizontal: 24,
-    marginTop: 18,
+    marginTop: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderRadius: 18,
-    backgroundColor: '#241812',
+    backgroundColor: hexA(C.bone, 0.03),
     borderWidth: 1,
-    borderColor: hexA(accent.fg, 0.33),
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    overflow: 'hidden',
-    position: 'relative',
+    borderColor: hexA(C.hair, 0.9),
   },
-  // SoftGlow paints a radial fade inside this box — no borderRadius
-  // needed (the SVG gradient handles the falloff). Bigger box than the
-  // old hard circle so the bloom has room to breathe and feel like a
-  // glow rather than an object.
-  weekCardGlow: {
-    position: 'absolute',
-    top: -60,
-    right: -60,
-    width: 240,
-    height: 240,
+  careRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
-  weekHeadRow: {
+  careBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 13,
+    borderWidth: 1,
+  },
+  careBtnEmber: {
+    backgroundColor: hexA(C.ember, 0.07),
+    borderColor: hexA(C.ember, 0.32),
+  },
+  careBtnAmethyst: {
+    backgroundColor: hexA(C.amethyst, 0.07),
+    borderColor: hexA(C.amethyst, 0.3),
+  },
+  careBtnText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 12.5,
+    letterSpacing: -0.1,
+  },
+  shardsLine: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
   },
-  weekEyebrow: {
+  shardsLineDim: {
+    fontFamily: fonts.inter,
+    fontSize: 10.5,
+    color: C.mute,
+  },
+  shardsLineNum: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 13,
+    color: C.honey,
+  },
+  sectionEyebrow: {
     fontFamily: fonts.interSemi,
     fontSize: 10,
     letterSpacing: 2,
-    color: accent.fg,
     textTransform: 'uppercase',
+    color: C.mute,
   },
-  weekNewPill: {
-    backgroundColor: accent.fg,
-    borderRadius: 100,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
+  roadBlock: {
+    paddingHorizontal: 24,
+    marginTop: 18,
   },
-  weekNewText: {
-    fontFamily: fonts.interSemi,
-    fontSize: 9,
-    letterSpacing: 0.5,
-    color: C.void,
-    textTransform: 'uppercase',
-  },
-  weekH1: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 20,
-    color: C.bone,
-    letterSpacing: -0.4,
-    lineHeight: 25,
-    marginBottom: 6,
-  },
-  weekSub: {
-    fontFamily: fonts.inter,
-    fontSize: 12.5,
-    color: C.boneDim,
-    lineHeight: 19,
-  },
-  weekFoot: {
+  roadHead: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 14,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: C.hair,
+    alignItems: 'baseline',
+    gap: 8,
+    marginBottom: 12,
   },
-  weekFootLabel: {
+  roadRankLabel: {
     fontFamily: fonts.fraunces,
     fontStyle: 'italic',
     fontSize: 11,
-    color: C.mute,
+    color: C.glow,
   },
-  weekFootCta: {
+  roadCard: {
+    paddingHorizontal: 14,
+    paddingTop: 16,
+    paddingBottom: 14,
+    borderRadius: 18,
+    backgroundColor: hexA(C.bone, 0.03),
+    borderWidth: 1,
+    borderColor: hexA(C.hair, 0.9),
+  },
+  storyBlock: {
+    paddingHorizontal: 24,
+    marginTop: 18,
+  },
+  storyCard: {
+    marginTop: 12,
+    paddingHorizontal: 17,
+    paddingVertical: 16,
+    borderRadius: 18,
+    backgroundColor: hexA(C.dusk, 0.05),
+    borderWidth: 1,
+    borderColor: hexA(C.dusk, 0.22),
+  },
+  storyQuote: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 16.5,
+    color: C.bone,
+    letterSpacing: -0.3,
+    lineHeight: 24,
+  },
+  storyFootRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  storyCatBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: hexA(C.dusk, 0.15),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storyByline: {
+    fontFamily: fonts.inter,
+    fontSize: 11,
+    color: C.dusk,
+  },
+  storyCta: {
+    fontFamily: fonts.inter,
+    fontSize: 11.5,
+    color: C.boneDim,
+    textDecorationLine: 'underline',
+  },
+  careToast: {
+    position: 'absolute',
+    top: 56,
+    alignSelf: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 100,
+    backgroundColor: hexA('#241C17', 0.96),
+    borderWidth: 1,
+    borderColor: hexA(C.honey, 0.4),
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 13,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 12,
+    zIndex: 50,
+  },
+  careToastText: {
     fontFamily: fonts.interSemi,
-    fontSize: 13,
-    color: accent.fg,
+    fontSize: 12.5,
+    color: C.bone,
+  },
+  cornerFooter: {
+    textAlign: 'center',
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 10.5,
+    color: C.mute,
+    paddingTop: 12,
+    paddingBottom: 4,
   },
 
   // ── Living world ──
@@ -2315,48 +2511,16 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     textShadowRadius: 6,
     textShadowOffset: { width: 0, height: 1 },
   },
-  heroRightCluster: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-  },
-  rankPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: hexA(C.void, 0.45),
+  // Frosted profile door over the room (hearthside chrome).
+  heroProfileBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1,
-    borderRadius: 100,
-    paddingLeft: 12,
-    paddingRight: 11,
-    paddingVertical: 4,
-  },
-  rankPillEyebrow: {
-    fontFamily: fonts.interSemi,
-    fontSize: 8.5,
-    letterSpacing: 1.5,
-    color: C.boneDim,
-  },
-  rankPillNum: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 15,
-    lineHeight: 17,
-  },
-  rankPillTitle: {
-    fontFamily: fonts.interMed,
-    fontSize: 10.5,
-    color: C.bone,
-    letterSpacing: -0.1,
-  },
-  shardsHero: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 15,
-    color: C.bone,
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowRadius: 6,
-    textShadowOffset: { width: 0, height: 1 },
+    borderColor: hexA(C.honey, 0.5),
+    backgroundColor: hexA(C.void, 0.5),
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   heroBottomFade: {
     position: 'absolute',
@@ -2366,112 +2530,6 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     height: 36,
     backgroundColor: C.void,
     opacity: 0.85,
-  },
-
-  // ═════ Poetic vitality read ═════
-  poeticBlock: {
-    paddingHorizontal: 24,
-    paddingTop: 16,
-  },
-  poeticHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 7,
-  },
-  stageDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    shadowOpacity: 0.7,
-    shadowRadius: 5,
-  },
-  stageLabel: {
-    fontFamily: fonts.interSemi,
-    fontSize: 10,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-  },
-  vitalityMini: {
-    marginLeft: 'auto',
-    fontFamily: fonts.inter,
-    fontSize: 10,
-    color: C.mute,
-    letterSpacing: 0.5,
-  },
-  vitalityMiniNum: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 13,
-    color: C.boneDim,
-  },
-  poeticNote: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 21,
-    color: C.bone,
-    letterSpacing: -0.4,
-    lineHeight: 27,
-  },
-
-  // ═════ Feed (collapsible) ═════
-  feedBlock: { paddingHorizontal: 24, paddingTop: 6 },
-  feedToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-  },
-  feedToggleSpark: { fontSize: 11, color: C.dusk },
-  feedToggleLabel: {
-    fontFamily: fonts.interMed,
-    fontSize: 12.5,
-    color: C.boneDim,
-  },
-  feedToggleChev: {
-    marginLeft: 'auto',
-    fontFamily: fonts.inter,
-    fontSize: 11,
-    color: C.mute,
-  },
-  feedChipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 7,
-    marginBottom: 10,
-  },
-  feedChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 100,
-    borderWidth: 1,
-    backgroundColor: C.void2,
-  },
-  feedChipDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  feedChipLabel: {
-    fontFamily: fonts.interSemi,
-    fontSize: 11.5,
-    color: C.bone,
-    letterSpacing: -0.1,
-  },
-  feedChipVal: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 10.5,
-    color: C.mute,
-  },
-  feedNote: {
-    fontFamily: fonts.inter,
-    fontSize: 11.5,
-    color: C.mute,
-    lineHeight: 17,
   },
 
   // ═════ Your corner ═════
@@ -2511,31 +2569,6 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     marginTop: 4,
   },
   standingDivider: { width: 1, height: 28, backgroundColor: C.hair },
-  levelBarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 2,
-    marginBottom: 18,
-  },
-  levelBarTrack: {
-    flex: 1,
-    height: 4,
-    borderRadius: 10,
-    backgroundColor: C.void2,
-    borderWidth: 1,
-    borderColor: C.hair,
-    overflow: 'hidden',
-  },
-  levelBarFill: {
-    height: '100%',
-    borderRadius: 10,
-  },
-  levelBarLabel: {
-    fontFamily: fonts.inter,
-    fontSize: 10,
-    color: C.mute,
-  },
 });
 
 // Default ember-themed styles for module-level sub-components.
