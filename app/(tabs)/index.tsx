@@ -2484,29 +2484,19 @@ export default function Home() {
 
         {/* ═══ THE ONE THING ═══ */}
         {allDone ? (
+          /* Compact text card — Luna lives in her nook now (she used
+             to be duplicated here at 96px, which made this card tall
+             and put two cats on screen). The nook's mood already
+             reads content/sleepy when the day is cleared. */
           <View style={styles.doneCard}>
             <SoftGlow
               color={C.glow}
-              opacity={0.22}
+              opacity={0.18}
               fade={0.7}
               cx={0.5}
-              cy={0.42}
+              cy={0.3}
               style={styles.doneGlow}
             />
-            {/* Luna in the DAY CLEARED card — reads from the same
-               ambient mood hook as the nook. When the user clears
-               the day, the hook returns 'happy' (that's the second
-               priority); past bedtime it returns 'sleep' (which is
-               actually right — the card's body copy already nudges
-               rest). 96×96 = clean 3× scale of the 32×32 source. */}
-            <View style={styles.doneLuna}>
-              <Image
-                source={lunaSource(ambientMood, lunaSkin)}
-                style={{ width: 96, height: 96 }}
-                resizeMode="contain"
-                accessibilityLabel="Luna"
-              />
-            </View>
             <Text style={styles.doneEyebrow}>Day cleared</Text>
             <Text style={styles.doneTitle}>
               That&apos;s everything. Luna&apos;s content.
@@ -3366,12 +3356,12 @@ const makeStyles = (accent: Accent) =>
       fontStyle: 'italic',
     },
 
-    // ── Done state ──
+    // ── Done state — compact text card (Luna stays in her nook) ──
     doneCard: {
-      borderRadius: 24,
+      borderRadius: 22,
       paddingHorizontal: 24,
-      paddingTop: 34,
-      paddingBottom: 30,
+      paddingTop: 24,
+      paddingBottom: 22,
       alignItems: 'center',
       backgroundColor: C.void2,
       borderWidth: 1,
@@ -3379,17 +3369,15 @@ const makeStyles = (accent: Accent) =>
       marginBottom: 26,
       overflow: 'hidden',
     },
-    // Container the bloom paints inside. Spans the full width of the
-    // card so cx=0.5 lands center; height covers Luna's nook so
-    // cy=0.42 puts the brightest spot just above her head.
+    // Container the bloom paints inside — full card width, warm
+    // center just above the title.
     doneGlow: {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
-      height: 220,
+      height: 140,
     },
-    doneLuna: { marginBottom: 6 },
     doneEyebrow: {
       fontFamily: fonts.interSemi,
       fontSize: 10,
