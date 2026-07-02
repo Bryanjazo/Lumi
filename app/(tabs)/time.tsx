@@ -728,7 +728,7 @@ const DayTaskRow = ({
 // ═════════════════════════════════════════════════════════════════════
 type DayRow =
   | { kind: 'now' }
-  | { kind: 'seam'; label: string }
+  | { kind: 'seam'; label: string; tone: 'peak' | 'dip' }
   | { kind: 'gap'; from: number; to: number; key: string }
   | { kind: 'item'; it: TItem };
 
@@ -741,6 +741,7 @@ const DayView = ({
   slumpStart,
   peakStart,
   peakEnd,
+  curveSource,
   styles,
   ctl,
 }: {
@@ -752,6 +753,7 @@ const DayView = ({
   slumpStart: number | null;
   peakStart: number | null;
   peakEnd: number | null;
+  curveSource: 'baseline' | 'learning' | 'learned';
   styles: ReturnType<typeof makeStyles>;
   ctl: DragCtl;
 }) => {
@@ -761,6 +763,31 @@ const DayView = ({
   const rows = useMemo((): DayRow[] => {
     const out: DayRow[] = [];
     let nowPlaced = false;
+
+    // Energy seams — labels derived from the USER's curve (learned
+    // from check-ins; baseline is still seeded from their own
+    // chronotype + anchors). Until the curve is trusted (≥14 sample
+    // days) the copy hedges with "likely" instead of asserting.
+    const trusted = curveSource === 'learned';
+    const seams = [
+      peakStart != null && peakEnd != null
+        ? {
+            at: peakStart,
+            tone: 'peak' as const,
+            label: `${trusted ? '' : 'likely '}peak energy · sharp until ${fmt(peakEnd)}`,
+          }
+        : null,
+      slumpStart != null
+        ? {
+            at: slumpStart,
+            tone: 'dip' as const,
+            label: `${trusted ? 'the' : 'likely'} ${fmt(slumpStart)} dip · keep it light`,
+          }
+        : null,
+    ]
+      .filter((s): s is NonNullable<typeof s> => s != null)
+      .sort((a, b) => a.at - b.at);
+
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       const prev = items[i - 1];
@@ -787,20 +814,29 @@ const DayView = ({
           key: `gap:${dIso}:${gapFrom}`,
         });
       }
-      if (
-        slumpStart != null &&
-        !isPast &&
-        it.min >= slumpStart &&
-        prev &&
-        prev.min < slumpStart
-      ) {
-        out.push({ kind: 'seam', label: 'the 3pm dip · keep it light' });
+      // Drop each seam where the thread crosses its boundary.
+      if (prev && !isPast) {
+        for (const s of seams) {
+          if (it.min >= s.at && prev.min < s.at) {
+            out.push({ kind: 'seam', label: s.label, tone: s.tone });
+          }
+        }
       }
       out.push({ kind: 'item', it });
     }
     if (isToday && !nowPlaced) out.push({ kind: 'now' });
     return out;
-  }, [items, isToday, isPast, nowMin, slumpStart, dIso]);
+  }, [
+    items,
+    isToday,
+    isPast,
+    nowMin,
+    slumpStart,
+    peakStart,
+    peakEnd,
+    curveSource,
+    dIso,
+  ]);
 
   // Open water — minutes until the next not-done item after now.
   const openAhead = useMemo(() => {
@@ -866,15 +902,18 @@ const DayView = ({
             );
           }
           if (r.kind === 'seam') {
+            const seamCol = r.tone === 'peak' ? C.lichen : C.dusk;
             return (
               <View key={`seam${i}`} style={styles.daySeamRow}>
                 <LinearGradient
-                  colors={[hexA(C.dusk, 0.4), 'rgba(0,0,0,0)']}
+                  colors={[hexA(seamCol, 0.4), 'rgba(0,0,0,0)']}
                   start={{ x: 0, y: 0.5 }}
                   end={{ x: 1, y: 0.5 }}
                   style={{ flex: 1, height: 1 }}
                 />
-                <Text style={styles.daySeamLabel}>{r.label}</Text>
+                <Text style={[styles.daySeamLabel, { color: seamCol }]}>
+                  {r.label}
+                </Text>
               </View>
             );
           }
@@ -2079,6 +2118,7 @@ export default function Time() {
           slumpStart={slumpStart}
           peakStart={peakStart}
           peakEnd={peakEnd}
+          curveSource={digest.curve.source}
           styles={styles}
           ctl={dragCtl}
         />
