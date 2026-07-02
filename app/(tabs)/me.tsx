@@ -782,74 +782,37 @@ const EnergyTrend = ({
 );
 
 // ═════════════════════════════════════════════════════════════════════
-// JourneyPath — rank as a WALKED ROAD (lumi-me-hearthside mock), not a
-// badge in a corner. The last few ranks sit behind you as passed dots,
-// the current one glows underfoot, and the next milestone waits ahead
-// as a dashed outline. Data is the REAL ladder from lib/gamification
-// (LEVEL_THRESHOLDS + TITLES) — nothing hardcoded.
+// JourneyPath — the stretch of road you're ON. One honest segment:
+// your current rank glows at the left end, the next waits at the
+// right, and the walker bead sits exactly at your XP progress between
+// them. Data is the REAL ladder from lib/gamification — nothing
+// hardcoded. (The old multi-dot version implied meaningless distances
+// and its dashed circle rendered broken on iOS.)
 // ═════════════════════════════════════════════════════════════════════
 const JourneyPath = ({ xp }: { xp: number }) => {
   const prog = xpProgress(xp);
-  // Show up to the last 4 titles ending at the current rank; the walked
-  // stretch spans the left 66% of the road, progress toward the next
-  // rank fills the remaining 34%.
-  const start = Math.max(0, prog.level - 4);
-  const walked = TITLES.slice(start, prog.level);
   const nextTitle = TITLES[prog.level] ?? 'Threshold';
   const remaining = Math.max(0, prog.next - xp);
-  const posOf = (i: number) =>
-    walked.length > 1 ? (i / (walked.length - 1)) * 66 : 0;
+  const pct = Math.round(prog.pct * 100);
   return (
     <View>
-      <View style={{ position: 'relative', height: 56, marginHorizontal: 6 }}>
-        {/* the road */}
-        <View style={jpStyles.track} />
-        <View
-          style={[jpStyles.walked, { width: `${66 + prog.pct * 30}%` }]}
-        />
-        {walked.map((r, i) => {
-          const here = i === walked.length - 1;
-          return (
-            <View
-              key={`${r}-${i}`}
-              style={[jpStyles.stop, { left: `${posOf(i)}%` }]}
-            >
-              <Text
-                numberOfLines={1}
-                style={[
-                  jpStyles.stopLabel,
-                  {
-                    color: here ? C.glow : C.mute,
-                    fontFamily: here ? fonts.interSemi : fonts.inter,
-                  },
-                  // Only the first + current labels render — middle
-                  // ones collapse to keep the road quiet (mock does
-                  // the same).
-                  !here && i !== 0 && { opacity: 0 },
-                ]}
-              >
-                {r}
-              </Text>
-              <View
-                style={
-                  here
-                    ? jpStyles.dotHere
-                    : [
-                        jpStyles.dot,
-                        { backgroundColor: hexA(C.ember, 0.55) },
-                      ]
-                }
-              />
-            </View>
-          );
-        })}
-        {/* next milestone — dashed, waiting ahead */}
-        <View style={jpStyles.nextStop}>
-          <Text numberOfLines={1} style={jpStyles.nextLabel}>
-            {nextTitle}
-          </Text>
-          <View style={jpStyles.dotNext} />
+      {/* rank labels — where you stand, what's ahead */}
+      <View style={jpStyles.labelRow}>
+        <Text numberOfLines={1} style={jpStyles.hereLabel}>
+          {prog.title}
+        </Text>
+        <Text numberOfLines={1} style={jpStyles.nextLabel}>
+          {nextTitle}
+        </Text>
+      </View>
+      {/* the road — filled to your progress, bead walking it */}
+      <View style={jpStyles.roadRow}>
+        <View style={jpStyles.hereDot} />
+        <View style={jpStyles.track}>
+          <View style={[jpStyles.fill, { width: `${pct}%` }]} />
+          <View style={[jpStyles.bead, { left: `${pct}%` }]} />
         </View>
+        <View style={jpStyles.nextDot} />
       </View>
       <Text style={jpStyles.caption}>
         <Text style={jpStyles.captionXp}>
@@ -862,89 +825,97 @@ const JourneyPath = ({ xp }: { xp: number }) => {
 };
 
 const jpStyles = StyleSheet.create({
-  track: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 24,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: hexA(C.bone, 0.08),
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 10,
+    paddingHorizontal: 2,
   },
-  walked: {
-    position: 'absolute',
-    left: 0,
-    top: 24,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: C.ember,
-    shadowColor: C.ember,
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 0 },
-  },
-  stop: {
-    position: 'absolute',
-    top: 0,
-    alignItems: 'center',
-    width: 80,
-    marginLeft: -40,
-  },
-  stopLabel: {
-    fontSize: 8.5,
-    letterSpacing: 0.6,
+  hereLabel: {
+    fontFamily: fonts.interSemi,
+    fontSize: 9.5,
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
-    marginBottom: 6,
-  },
-  dot: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    marginTop: 2,
-  },
-  dotHere: {
-    width: 13,
-    height: 13,
-    borderRadius: 7,
-    backgroundColor: C.ember,
-    borderWidth: 2,
-    borderColor: hexA(C.glow, 0.8),
-    shadowColor: C.ember,
-    shadowOpacity: 0.7,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 6,
-  },
-  nextStop: {
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    alignItems: 'center',
+    color: C.glow,
+    flexShrink: 1,
   },
   nextLabel: {
     fontFamily: fonts.inter,
-    fontSize: 8.5,
-    letterSpacing: 0.6,
+    fontSize: 9.5,
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
     color: C.mute,
-    marginBottom: 6,
+    flexShrink: 1,
+    marginLeft: 12,
   },
-  dotNext: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    marginTop: 2,
+  roadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  hereDot: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    backgroundColor: C.ember,
+    borderWidth: 1.5,
+    borderColor: hexA(C.glow, 0.8),
+    shadowColor: C.ember,
+    shadowOpacity: 0.7,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 5,
+  },
+  nextDot: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
     backgroundColor: 'transparent',
     borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderColor: hexA(C.glow, 0.5),
+    borderColor: hexA(C.glow, 0.45),
+  },
+  track: {
+    flex: 1,
+    height: 4,
+    borderRadius: 3,
+    backgroundColor: hexA(C.bone, 0.08),
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  fill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: 3,
+    backgroundColor: C.ember,
+    shadowColor: C.ember,
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  // The walker — you, mid-stride between ranks.
+  bead: {
+    position: 'absolute',
+    top: -4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginLeft: -6,
+    backgroundColor: C.glow,
+    shadowColor: C.glow,
+    shadowOpacity: 0.8,
+    shadowRadius: 9,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
   },
   caption: {
     fontFamily: fonts.inter,
     fontSize: 11,
     color: C.mute,
-    marginTop: 10,
-    paddingLeft: 6,
+    marginTop: 12,
+    paddingLeft: 2,
   },
   captionXp: {
     fontFamily: fonts.fraunces,
@@ -952,6 +923,7 @@ const jpStyles = StyleSheet.create({
     color: C.glow,
   },
 });
+
 
 // ═════════════════════════════════════════════════════════════════════
 // UnlockThumb — tiny SVG placeholder until commissioned art lands
@@ -1283,6 +1255,7 @@ const HubRow = ({
   onToggle,
   children,
   chevronOnly,
+  first,
 }: {
   glyph: string;
   color: string;
@@ -1292,8 +1265,10 @@ const HubRow = ({
   onToggle: () => void;
   children?: React.ReactNode;
   chevronOnly?: boolean;
+  /** First row inside the grouped card — no top hairline. */
+  first?: boolean;
 }) => (
-  <View style={hubRowStyles.row}>
+  <View style={[hubRowStyles.row, first && { borderTopWidth: 0 }]}>
     <Pressable onPress={onToggle} style={hubRowStyles.head} hitSlop={4}>
       <Text style={[hubRowStyles.glyph, { color }]}>{glyph}</Text>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -1315,17 +1290,19 @@ const HubRow = ({
   </View>
 );
 
+// Rows live INSIDE the grouped cornerCard container (mock style):
+// hairline dividers between rows, no outer borders of their own.
 const hubRowStyles = StyleSheet.create({
   row: {
-    borderBottomWidth: 1,
-    borderBottomColor: hexA('#2A2420', 0.7),
+    borderTopWidth: 1,
+    borderTopColor: hexA('#2A2420', 0.7),
   },
   head: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 13,
-    paddingHorizontal: 2,
-    paddingVertical: 15,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
   glyph: {
     fontSize: 15,
@@ -1333,16 +1310,16 @@ const hubRowStyles = StyleSheet.create({
     textAlign: 'center',
   },
   label: {
-    fontFamily: fonts.inter,
-    fontSize: 14.5,
+    fontFamily: fonts.interSemi,
+    fontSize: 13.5,
     color: '#ECE0CB',
-    letterSpacing: -0.1,
+    letterSpacing: -0.2,
   },
   sub: {
     fontFamily: fonts.inter,
-    fontSize: 11.5,
+    fontSize: 11,
     color: '#6E655A',
-    marginTop: 1,
+    marginTop: 2,
   },
   chev: {
     fontFamily: fonts.inter,
@@ -1352,6 +1329,7 @@ const hubRowStyles = StyleSheet.create({
   body: {
     paddingTop: 2,
     paddingBottom: 16,
+    paddingHorizontal: 16,
   },
 });
 
@@ -1544,10 +1522,10 @@ export default function MeTab() {
         {!companion.isFocused && (
         <>
         <Pressable
-          onPress={() => {
-            Haptics.selectionAsync();
-            setCheer((c) => c + 1);
-          }}
+          // Tapping the room IS "sitting with her" — cheer pulse +
+          // the slow-blink toast. (The care buttons are gone; the
+          // interaction lives where she lives.)
+          onPress={sitWithHer}
           style={{ position: 'relative' }}
         >
           <Room
@@ -1601,40 +1579,6 @@ export default function MeTab() {
             you.
           </Text>
           <Text style={styles.bondLine}>✦ {bondLine}</Text>
-        </View>
-
-        {/* ═══ Care — no treats, no warmth bar; just being together ═══ */}
-        <View style={styles.careCard}>
-          <View style={styles.careRow}>
-            <Pressable
-              onPress={sitWithHer}
-              style={[styles.careBtn, styles.careBtnEmber]}
-              hitSlop={4}
-            >
-              <Text style={[styles.careBtnText, { color: C.ember }]}>
-                ♥ Sit with her
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => {
-                Haptics.selectionAsync();
-                router.push('/profile');
-              }}
-              style={[styles.careBtn, styles.careBtnAmethyst]}
-              hitSlop={4}
-            >
-              <Text style={[styles.careBtnText, { color: C.amethyst }]}>
-                ✦ Decorate
-              </Text>
-            </Pressable>
-          </View>
-          <View style={styles.shardsLine}>
-            <Text style={styles.shardsLineDim}>you have</Text>
-            <Text style={styles.shardsLineNum}>◈ {shards} shards</Text>
-            <Text style={styles.shardsLineDim}>
-              — earned by finishing things
-            </Text>
-          </View>
         </View>
 
         {/* ═══ Your road — rank as a walked path ═══ */}
@@ -1710,66 +1654,74 @@ export default function MeTab() {
               not "you levelled up." No flame, no XP unit, no rank. */}
           {companion.isFocused && <FocusedSnapshot quests={quests} />}
 
-          {/* Hub rows — collapsible.
-              Unlocks/shop ('worlds & unlocks') is the game/XP shop —
-              hidden in Minimal + Focused per spec §3. */}
-          {companion.showXp && (
+          {/* One grouped container (mock style) — rows divided by
+              hairlines inside a single rounded card, admin tucked
+              where admin belongs. Unlocks/shop is game chrome —
+              hidden in Minimal + Focused per spec §3. Shards live
+              on the unlocks row now (where they're spent). */}
+          <View style={styles.cornerCard}>
+            {companion.showXp && (
+              <HubRow
+                first
+                glyph="◉"
+                color="#7FA06A"
+                label={`${petName}'s worlds & unlocks`}
+                sub={`◈ ${shards} shards · next-to-unlock + see all`}
+                open={hub === 'unlocks'}
+                onToggle={() =>
+                  setHub(hub === 'unlocks' ? null : 'unlocks')
+                }
+              >
+                <UnlocksShop totalXp={xpTotal} />
+              </HubRow>
+            )}
+
             <HubRow
-              glyph="◉"
-              color="#7FA06A"
-              label={`${petName}'s worlds & unlocks`}
-              sub="next-to-unlock + see all"
-              open={hub === 'unlocks'}
-              onToggle={() => setHub(hub === 'unlocks' ? null : 'unlocks')}
+              first={!companion.showXp}
+              glyph="◷"
+              color="#8EA0B4"
+              label="Your rhythm"
+              sub={`energy this week · avg ${avgEnergy}`}
+              open={hub === 'rhythm'}
+              onToggle={() => setHub(hub === 'rhythm' ? null : 'rhythm')}
             >
-              <UnlocksShop totalXp={xpTotal} />
+              <View style={styles.rhythmCard}>
+                <EnergyTrend data={energyTrend} />
+                <Text style={styles.rhythmNote}>
+                  ✦{' '}
+                  {avgEnergy > 0
+                    ? 'Your energy story builds with every check-in.'
+                    : 'A few check-ins and Lumi will start to see your rhythm.'}
+                </Text>
+              </View>
             </HubRow>
-          )}
 
-          <HubRow
-            glyph="◷"
-            color="#8EA0B4"
-            label="Your rhythm"
-            sub={`energy this week · avg ${avgEnergy}`}
-            open={hub === 'rhythm'}
-            onToggle={() => setHub(hub === 'rhythm' ? null : 'rhythm')}
-          >
-            <View style={styles.rhythmCard}>
-              <EnergyTrend data={energyTrend} />
-              <Text style={styles.rhythmNote}>
-                ✦{' '}
-                {avgEnergy > 0
-                  ? 'Your energy story builds with every check-in.'
-                  : 'A few check-ins and Lumi will start to see your rhythm.'}
-              </Text>
-            </View>
-          </HubRow>
+            <HubRow
+              glyph="✦"
+              color="#9A85A8"
+              label="Personalize"
+              sub={`skins, accent, how playful Lumi is`}
+              open={false}
+              chevronOnly
+              onToggle={() => {
+                Haptics.selectionAsync();
+                router.push('/profile');
+              }}
+            />
 
-          <HubRow
-            glyph="✦"
-            color="#9A85A8"
-            label="Personalize"
-            sub={`skins, accent, how playful Lumi is`}
-            open={false}
-            chevronOnly
-            onToggle={() => {
-              Haptics.selectionAsync();
-              router.push('/profile');
-            }}
-          />
-
-          <HubRow
-            glyph="◐"
-            color="#B0A38B"
-            label="Account & settings"
-            sub="profile, premium, notifications"
-            open={false}
-            chevronOnly
-            onToggle={() => {
-              Haptics.selectionAsync();
-              router.push('/profile');
-            }}
-          />
+            <HubRow
+              glyph="◐"
+              color="#B0A38B"
+              label="Account & settings"
+              sub="email, data, notifications"
+              open={false}
+              chevronOnly
+              onToggle={() => {
+                Haptics.selectionAsync();
+                router.push('/profile');
+              }}
+            />
+          </View>
 
           <Text style={styles.cornerFooter}>
             that&apos;s everything — no feed, no noise, just your corner
@@ -1909,58 +1861,14 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     marginTop: 6,
     lineHeight: 19,
   },
-  careCard: {
-    marginHorizontal: 24,
-    marginTop: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+  // The quiet corner's single grouped container (mock style) — rows
+  // divide with hairlines INSIDE one rounded card.
+  cornerCard: {
     borderRadius: 18,
-    backgroundColor: hexA(C.bone, 0.03),
     borderWidth: 1,
     borderColor: hexA(C.hair, 0.9),
-  },
-  careRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  careBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 13,
-    borderWidth: 1,
-  },
-  careBtnEmber: {
-    backgroundColor: hexA(C.ember, 0.07),
-    borderColor: hexA(C.ember, 0.32),
-  },
-  careBtnAmethyst: {
-    backgroundColor: hexA(C.amethyst, 0.07),
-    borderColor: hexA(C.amethyst, 0.3),
-  },
-  careBtnText: {
-    fontFamily: fonts.interSemi,
-    fontSize: 12.5,
-    letterSpacing: -0.1,
-  },
-  shardsLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 10,
-  },
-  shardsLineDim: {
-    fontFamily: fonts.inter,
-    fontSize: 10.5,
-    color: C.mute,
-  },
-  shardsLineNum: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 13,
-    color: C.honey,
+    backgroundColor: hexA(C.bone, 0.02),
+    overflow: 'hidden',
   },
   sectionEyebrow: {
     fontFamily: fonts.interSemi,
