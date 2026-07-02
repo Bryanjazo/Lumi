@@ -521,9 +521,9 @@ const NowPulse = () => {
 //
 //   done     → check bead ON the line, strikethrough, tap row to
 //              un-complete
-//   past due → its own DIMMED state (ash time, quiet title, no glow),
-//              MISSED tag + ember Mark-done pill (same reward fan-out
-//              as Home so no XP leaks) — radio works here too
+//   past due → its own DIMMED state (ash time, quiet title, no glow)
+//              with a MISSED tag — the radio completes it (same
+//              reward fan-out as Home so no XP leaks)
 //   active   → floating radio ring in the tier color (high glows),
 //              sigil + duration, handle dots when draggable
 //
@@ -673,23 +673,15 @@ const DayTaskRow = ({
         {!done && (
           <View style={styles.dayRowMeta}>
             {missed ? (
-              // Past-due meta: the state + the one action. With
-              // delete gone (Time doesn't manage the list), there's
-              // room for the duration again — useful for judging
-              // "can I still squeeze this in".
+              // Past-due meta: just the state + duration ("can I
+              // still squeeze this in"). No Mark-done pill — the
+              // radio IS the completion affordance, same as every
+              // other row.
               <>
                 <View style={styles.missedTag}>
                   <Text style={styles.missedTagText}>missed</Text>
                 </View>
                 <Text style={styles.dayRowDur}>{dur(it.durMin ?? 30)}</Text>
-                <View style={{ flex: 1 }} />
-                <Pressable
-                  onPress={markDone}
-                  hitSlop={8}
-                  style={styles.missedDoneBtn}
-                >
-                  <Text style={styles.missedDoneBtnText}>Mark done</Text>
-                </Pressable>
               </>
             ) : (
               <>
@@ -2342,6 +2334,9 @@ const makeStyles = (accent: Accent) =>
       fontStyle: 'italic',
       fontSize: 13.5,
       marginTop: 1,
+      // Breathing room from the floating radio (which rests
+      // RADIO_OFFSET px into the gap between the columns).
+      marginLeft: 10,
       fontVariant: ['tabular-nums'],
     },
     dayRowTitle: {
@@ -2376,18 +2371,6 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: 0.5,
       textTransform: 'uppercase',
       color: C.ember,
-    },
-    missedDoneBtn: {
-      paddingHorizontal: 11,
-      paddingVertical: 4,
-      borderRadius: 100,
-      backgroundColor: C.ember,
-    },
-    missedDoneBtnText: {
-      fontFamily: fonts.interSemi,
-      fontSize: 10.5,
-      letterSpacing: 0.3,
-      color: C.void,
     },
     dayNowRow: {
       flexDirection: 'row',
