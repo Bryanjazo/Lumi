@@ -50,6 +50,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
+  withSpring,
   withTiming,
   runOnJS,
   type SharedValue,
@@ -78,6 +79,10 @@ import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 const MARKER_W = 34; // thread-marker column (dots / now pulse)
 const TIME_W = 46; // time-stamp column
 const GAP_MIN = 60; // open stretches ≥ this render as droppable gaps
+// Unfinished tasks float their radio this far RIGHT of the thread
+// line; completing one springs it back onto the line — the day
+// physically collects your wins.
+const RADIO_OFFSET = 16;
 
 const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WDF = [
@@ -505,13 +510,22 @@ const NowPulse = () => {
 
 // ═════════════════════════════════════════════════════════════════════
 // DayTaskRow — one task on the compact day thread (loadmap style).
-//   done     → lichen check circle, strikethrough, tap to un-complete
-//   past due → its own DIMMED state (ash time, quiet title, no glow) —
-//              deliberately NOT the bright ember "up next" look — with
-//              a MISSED tag + ember Done pill (same reward fan-out as
-//              Home so no XP leaks)
-//   active   → hollow tier dot (high gets a glow), sigil + duration,
-//              and handle dots when it's draggable
+//
+// The marker is a RADIO with physical meaning: an unfinished task
+// floats its hollow ring RADIO_OFFSET px right of the thread line —
+// visibly not part of the day's record yet. Tap the ring → the task
+// completes and the marker SPRINGS LEFT onto the line, morphing into
+// the lichen check as it lands (the thread collects the win). Un-
+// completing springs it back off. Anchors and the now-pulse always
+// live on the line; tasks have to earn their place.
+//
+//   done     → check bead ON the line, strikethrough, tap row to
+//              un-complete
+//   past due → its own DIMMED state (ash time, quiet title, no glow),
+//              MISSED tag + ember Mark-done pill (same reward fan-out
+//              as Home so no XP leaks) — radio works here too
+//   active   → floating radio ring in the tier color (high glows),
+//              sigil + duration, handle dots when draggable
 //
 // NO delete here by design — Time is where you SEE and MOVE the day,
 // not where you manage the task list. Completing (and un-completing)
@@ -539,6 +553,33 @@ const DayTaskRow = ({
   // unfinished task on yesterday rendered exactly like "up next".)
   const missed =
     !done && (isPast || (isToday && it.min + (it.durMin ?? 0) <= nowMin));
+  // Radio-complete works on real quest rows only. Future dates show
+  // recurring TEMPLATES as ghost projections — completing one of
+  // those would mark the template itself done, which is a lie.
+  const canComplete = !!it.questId && (!it.recurring || isToday || isPast);
+
+  // ── The clip-to-thread animation ─────────────────────────────────
+  // slide 1 = floating right of the line (unfinished), 0 = seated on
+  // the line (done). Syncs to `done` with a spring on every change,
+  // so BOTH completion paths (radio tap, missed Mark-done pill) get
+  // the clip effect, and un-completing springs the marker back off.
+  const slide = useSharedValue(done ? 0 : 1);
+  useEffect(() => {
+    slide.value = withSpring(done ? 0 : 1, {
+      damping: 13,
+      stiffness: 160,
+    });
+  }, [done, slide]);
+  const markerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: slide.value * RADIO_OFFSET }],
+  }));
+  const ringStyle = useAnimatedStyle(() => ({
+    opacity: slide.value,
+  }));
+  const checkStyle = useAnimatedStyle(() => ({
+    opacity: 1 - slide.value,
+    transform: [{ scale: 0.6 + 0.4 * (1 - slide.value) }],
+  }));
   const confirmUncomplete = useUncompleteConfirm(it.questId ?? '', it.title);
 
   // FAN-OUT mirrors Home's completeQuest (XP + shard + activity) so
@@ -576,23 +617,35 @@ const DayTaskRow = ({
         />
       )}
       <View style={styles.dayMarkerCol}>
-        {done ? (
-          <View style={styles.peekDoneCheck}>
-            <Text style={styles.peekDoneCheckGlyph}>✓</Text>
-          </View>
-        ) : (
-          <View
-            style={[
-              styles.peekDot,
-              // Past due dims to a rust outline (no glow) — the dot
-              // stops advertising and starts recording.
-              {
-                borderColor: missed ? hexA(C.ember, 0.5) : tierCol,
-              },
-              it.tier === 'high' && !missed && styles.peekDotHigh,
-            ]}
-          />
-        )}
+        <Pressable
+          disabled={done || !canComplete}
+          onPress={markDone}
+          hitSlop={12}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: done }}
+          accessibilityLabel={`Mark done: ${it.title}`}
+        >
+          <Animated.View style={[styles.dayRadioWrap, markerStyle]}>
+            {/* hollow radio — floats off the line until earned.
+                Past due dims to a rust outline (no glow): the ring
+                stops advertising and starts recording. */}
+            <Animated.View
+              style={[
+                styles.dayRadio,
+                {
+                  borderColor: missed ? hexA(C.ember, 0.5) : tierCol,
+                },
+                it.tier === 'high' && !missed && styles.peekDotHigh,
+                ringStyle,
+              ]}
+            />
+            {/* check bead — scales in as the marker clips to the
+                thread. */}
+            <Animated.View style={[styles.dayRadioCheck, checkStyle]}>
+              <Text style={styles.peekDoneCheckGlyph}>✓</Text>
+            </Animated.View>
+          </Animated.View>
+        </Pressable>
       </View>
       <Text
         style={[
@@ -2252,6 +2305,35 @@ const makeStyles = (accent: Accent) =>
       width: MARKER_W,
       alignItems: 'center',
       flexShrink: 0,
+    },
+    // ── The task radio (clip-to-thread completion) ──
+    dayRadioWrap: {
+      width: 18,
+      height: 18,
+      marginTop: 1,
+    },
+    dayRadio: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderRadius: 9,
+      borderWidth: 2,
+      backgroundColor: C.void,
+    },
+    dayRadioCheck: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderRadius: 9,
+      backgroundColor: hexA(C.lichen, 0.16),
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.5),
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     dayRowTime: {
       width: TIME_W,
