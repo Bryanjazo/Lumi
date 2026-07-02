@@ -384,20 +384,20 @@ export const signInWithGoogle = async (): Promise<{
     throw new Error(msg);
   }
 
-  // Instrument: log the user id + whether this looks like a fresh
-  // create. If `created_at` is within the last 5 seconds of now, the
-  // Google sign-in just minted a new row — almost always a sign the
-  // user actually has an existing email/password account that
-  // Supabase isn't linking.
-  if (signedInUser) {
+  // Instrument: log whether this looks like a fresh create. If
+  // `created_at` is within the last 5 seconds of now, the Google
+  // sign-in just minted a new row — almost always a sign the user
+  // actually has an existing email/password account that Supabase
+  // isn't linking. DEV-only, and no PII (id/email stay out of logs —
+  // production console output can end up in device logs / crash
+  // reports; security audit §1.4).
+  if (__DEV__ && signedInUser) {
     const createdMs = signedInUser.created_at
       ? Date.parse(signedInUser.created_at)
       : NaN;
     const isFresh = !isNaN(createdMs) && Date.now() - createdMs < 5_000;
     console.log(
       '[google] supabase user',
-      signedInUser.id,
-      signedInUser.email,
       isFresh ? '(JUST CREATED — possible duplicate)' : '(returning)',
     );
   }

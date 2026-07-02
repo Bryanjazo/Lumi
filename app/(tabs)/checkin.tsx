@@ -1095,7 +1095,18 @@ export default function Untangle() {
           const [hStr, mStr] = p.at.split(':');
           const h = parseInt(hStr, 10);
           const m = parseInt(mStr, 10);
-          if (Number.isFinite(h) && Number.isFinite(m)) {
+          // Bounds-check the clock (security audit §4): the regex
+          // alone admits "25:99", and a hostile/hallucinated model
+          // response shouldn't be able to write an impossible time
+          // into the store. Out of range → windowed fallback below.
+          if (
+            Number.isFinite(h) &&
+            Number.isFinite(m) &&
+            h >= 0 &&
+            h <= 23 &&
+            m >= 0 &&
+            m <= 59
+          ) {
             useQuestStore.getState().addQuest({
               title: p.title.trim(),
               difficulty,
