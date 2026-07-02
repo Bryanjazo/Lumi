@@ -967,6 +967,18 @@ export default function FocusScreen() {
     }
   }, [currentFocus, lastCompleted, step]);
 
+  // …and the mirror: if the session evaporates OUTSIDE this tab —
+  // Home's done screen dismissed ("Not yet"), completeQuest ending
+  // the session, a new start() hijacking it — walk back to picking.
+  // Without this, the tab stayed frozen on a ghost session ("0 of
+  // 0 min") whose Pause/Finish no-op'd against a null store.
+  useEffect(() => {
+    if (step === 'session' && !currentFocus && !lastCompleted) {
+      setPickedTask(null);
+      setStep('picking');
+    }
+  }, [currentFocus, lastCompleted, step]);
+
   // ── Session task derivation ──
   // The task in scope during the session comes from either:
   //   (a) the local pickedTask (fresh flow: pick → duration → start), OR
