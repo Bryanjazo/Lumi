@@ -2837,71 +2837,99 @@ export default function Home() {
           </View>
         )}
 
-        {/* ── Done today — quiet history with one-tap undo. ───────── */}
+        {/* ── DONE TODAY — the waiting card's sibling, but lichen-lit
+            and celebratory: the day's collected wins, not another
+            list. Check badge instead of the ✦ spark, a warm tally
+            headline, quiet +xp per row, and its own promise line
+            (undo, no judgment). Collapsed by default, same calm. */}
         {doneTodayList.length > 0 && (
-          <View style={styles.historySection}>
+          <View style={styles.doneTodayCard}>
             <Pressable
               onPress={() => {
                 Haptics.selectionAsync();
                 setHistoryOpen((o) => !o);
               }}
-              style={styles.historyEyebrowRow}
+              style={styles.doneTodayHead}
               hitSlop={6}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: historyOpen }}
             >
-              <Text style={styles.historyEyebrow}>Done today</Text>
-              <Text style={styles.historyCount}>{doneTodayList.length}</Text>
+              <View style={styles.doneTodayBadge}>
+                <Text style={styles.doneTodayBadgeGlyph}>✓</Text>
+              </View>
+              <Text numberOfLines={1} style={styles.doneTodayHeadTitle}>
+                {doneTodayList.length} done today —{' '}
+                {doneTodayList.length >= 5
+                  ? 'a genuinely full day'
+                  : doneTodayList.length === 1
+                    ? 'the first one counts double'
+                    : 'quietly stacking up'}
+              </Text>
               <View style={{ flex: 1 }} />
-              <Text style={styles.historyChev}>
-                {historyOpen ? '▾' : '▸'}
+              <Text style={styles.doneTodayChev}>
+                {historyOpen ? '▴' : '▾'}
               </Text>
             </Pressable>
-            {historyOpen &&
-              (moreDoneOpen ? doneTodayList : doneTodayList.slice(0, 3)).map(
-              (q) => {
-                const ago = fmtAgo(q.completedAt, now);
-                return (
-                  <View key={q.id} style={styles.historyRow}>
-                    <View style={styles.historyCheck}>
-                      <Text style={styles.historyCheckGlyph}>✓</Text>
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.historyTitle} numberOfLines={1}>
-                        {q.title}
-                      </Text>
-                      <Text style={styles.historyMeta}>
-                        {ago ? ago : 'today'}
-                        {q.window !== 'someday' && q.window
-                          ? ` · ${effectiveWindows[q.window].label}`
-                          : ''}
-                      </Text>
-                    </View>
-                    <Pressable
-                      onPress={() => undoFromHistory(q)}
-                      hitSlop={6}
-                      style={styles.undoPill}
-                    >
-                      <Text style={styles.undoPillGlyph}>↺</Text>
-                      <Text
-                        style={[styles.undoPillText, { color: accent.fg }]}
+            {historyOpen && (
+              <>
+                {(moreDoneOpen
+                  ? doneTodayList
+                  : doneTodayList.slice(0, 3)
+                ).map((q) => {
+                  const ago = fmtAgo(q.completedAt, now);
+                  return (
+                    <View key={q.id} style={styles.doneTodayRow}>
+                      <View style={styles.historyCheck}>
+                        <Text style={styles.historyCheckGlyph}>✓</Text>
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.historyTitle} numberOfLines={1}>
+                          {q.title}
+                        </Text>
+                        <Text style={styles.historyMeta}>
+                          {ago ? ago : 'today'}
+                          {q.window !== 'someday' && q.window
+                            ? ` · ${effectiveWindows[q.window].label}`
+                            : ''}
+                        </Text>
+                      </View>
+                      {companion.showXp && (
+                        <Text style={styles.doneTodayXp}>
+                          +{q.xpReward}
+                        </Text>
+                      )}
+                      <Pressable
+                        onPress={() => undoFromHistory(q)}
+                        hitSlop={6}
+                        style={styles.undoPill}
                       >
-                        Undo
-                      </Text>
-                    </Pressable>
-                  </View>
-                );
-              },
-            )}
-            {historyOpen && doneTodayList.length > 3 && (
-              <Pressable
-                onPress={() => setMoreDoneOpen((o) => !o)}
-                style={styles.moreToggle}
-              >
-                <Text style={styles.moreText}>
-                  {moreDoneOpen
-                    ? 'show less'
-                    : `+ ${doneTodayList.length - 3} more`}
+                        <Text style={styles.undoPillGlyph}>↺</Text>
+                        <Text
+                          style={[styles.undoPillText, { color: accent.fg }]}
+                        >
+                          Undo
+                        </Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+                {doneTodayList.length > 3 && (
+                  <Pressable
+                    onPress={() => setMoreDoneOpen((o) => !o)}
+                    style={styles.moreToggle}
+                  >
+                    <Text style={styles.moreText}>
+                      {moreDoneOpen
+                        ? 'show less'
+                        : `+ ${doneTodayList.length - 3} more`}
+                    </Text>
+                  </Pressable>
+                )}
+                <Text style={styles.doneTodayFooter}>
+                  changed your mind? undo brings it right back — no
+                  judgment
                 </Text>
-              </Pressable>
+              </>
             )}
           </View>
         )}
@@ -4231,50 +4259,79 @@ const makeStyles = (accent: Accent) =>
       color: C.mute,
     },
 
-    // ── "Done today" — quiet history with one-tap undo. ────────────
-    // Lichen accent on the check (the only place "done" lives in the
-    // palette). Title is dim + line-through so the row reads as past.
-    // Undo pill uses the user accent (ember by default) — the user's
-    // action color, since reactivating is THEIR move.
-    historySection: {
-      marginTop: 28,
-      paddingTop: 18,
-      borderTopWidth: 1,
-      borderTopColor: hexA(C.lichen, 0.18),
+    // ── DONE TODAY — the waiting card's lichen-lit sibling. ────────
+    // Same collapsible-card bones as waitingCard, its own soul: the
+    // done color throughout (border, dividers, badge), a warm tally
+    // headline, quiet +xp per row (glow), and the no-judgment undo
+    // promise. Undo pill keeps the user accent — reactivating is
+    // THEIR move.
+    doneTodayCard: {
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.28),
+      backgroundColor: hexA(C.lichen, 0.04),
+      marginTop: 14,
+      overflow: 'hidden',
     },
-    historyEyebrowRow: {
+    doneTodayHead: {
       flexDirection: 'row',
-      alignItems: 'baseline',
-      gap: 8,
-      marginBottom: 10,
-      paddingLeft: 2,
+      alignItems: 'center',
+      gap: 9,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
     },
-    historyEyebrow: {
+    doneTodayBadge: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: hexA(C.lichen, 0.16),
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.5),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    doneTodayBadgeGlyph: {
       fontFamily: fonts.interSemi,
       fontSize: 10,
-      letterSpacing: 2,
-      textTransform: 'uppercase',
       color: C.lichen,
+      lineHeight: 12,
     },
-    historyCount: {
+    doneTodayHeadTitle: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 13,
-      color: C.lichen,
+      fontSize: 15.5,
+      color: C.lichenLt,
+      letterSpacing: -0.2,
+      flexShrink: 1,
     },
-    historyChev: {
-      fontSize: 13,
+    doneTodayChev: {
       color: hexA(C.lichen, 0.7),
-      marginLeft: 'auto',
+      fontSize: 12,
     },
-    historyRow: {
+    doneTodayRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.lichen, 0.14),
+    },
+    doneTodayXp: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 12.5,
+      color: C.glow,
+    },
+    doneTodayFooter: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: hexA(C.lichenLt, 0.8),
       paddingVertical: 11,
-      paddingHorizontal: 2,
-      borderBottomWidth: 1,
-      borderBottomColor: hexA(C.hair, 0.55),
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.lichen, 0.14),
     },
     historyCheck: {
       width: 22,
