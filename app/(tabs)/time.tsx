@@ -400,6 +400,8 @@ interface DragTask {
   title: string;
   tier: Importance;
   min: number;
+  /** Task length — the gap drop-preview clamps so the task FITS. */
+  durMin: number;
   fromIso: string;
 }
 
@@ -412,10 +414,14 @@ interface DragCtl {
   drop: (x: number, y: number) => void;
   cancel: () => void;
   registerTarget: (key: string, ref: View | null) => void;
-  /** "day:YYYY-MM-DD" currently hovered, or null. */
+  /** "day:YYYY-MM-DD" / "gap:…" currently hovered, or null. */
   overKey: string | null;
   /** questId being dragged (chips dim themselves), or null. */
   draggingId: string | null;
+  /** Live landing time while hovering a day-view gap — the finger's
+   *  position INSIDE the gap picks the minute (:15-snapped). Null
+   *  when not over a gap. */
+  dropPreview: number | null;
 }
 
 /** Wraps a chip/row to make it long-press-draggable. Long-press (not
@@ -811,7 +817,9 @@ const DayView = ({
           kind: 'gap',
           from: gapFrom,
           to: it.min,
-          key: `gap:${dIso}:${gapFrom}`,
+          // from + to ride in the key so the drag controller can map
+          // finger-Y inside the gap's rect to a landing minute.
+          key: `gap:${dIso}:${gapFrom}:${it.min}`,
         });
       }
       // Drop each seam where the thread crosses its boundary.
@@ -920,6 +928,7 @@ const DayView = ({
           if (r.kind === 'gap') {
             const over = ctl.overKey === r.key;
             const dragging = ctl.draggingId != null;
+            const preview = over ? ctl.dropPreview : null;
             return (
               <View
                 key={r.key}
@@ -941,16 +950,29 @@ const DayView = ({
                 >
                   ◦
                 </Text>
-                <Text style={[styles.dayGapTime, over && { color: C.ember }]}>
-                  {dur(r.to - r.from)} open
-                </Text>
-                <Text style={styles.dayGapSub}>
-                  {over
-                    ? 'drop it here'
-                    : dragging
-                      ? 'room for this'
-                      : 'room for one thing'}
-                </Text>
+                {preview != null ? (
+                  // Live landing time — the finger's position inside
+                  // the gap picks it. What you see is what commits.
+                  <>
+                    <Text style={styles.dayGapPreviewTime}>
+                      {fmt(preview)}
+                    </Text>
+                    <Text style={styles.dayGapSub}>
+                      drop here · {dur(r.to - r.from)} open
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text
+                      style={[styles.dayGapTime, over && { color: C.ember }]}
+                    >
+                      {dur(r.to - r.from)} open
+                    </Text>
+                    <Text style={styles.dayGapSub}>
+                      {dragging ? 'room for this' : 'room for one thing'}
+                    </Text>
+                  </>
+                )}
               </View>
             );
           }
@@ -1000,6 +1022,7 @@ const DayView = ({
                 title: it.title,
                 tier: it.tier ?? 'medium',
                 min: it.min,
+                durMin: it.durMin ?? 30,
                 fromIso: dIso,
               }}
             >
@@ -1166,6 +1189,7 @@ const WeekView = ({
                         title: q.title,
                         tier: q.tier ?? 'medium',
                         min: q.min,
+                        durMin: q.durMin ?? 30,
                         fromIso: dIso,
                       }}
                     >
@@ -1544,6 +1568,7 @@ const MonthView = ({
                     title: q.title,
                     tier: q.tier ?? 'medium',
                     min: q.min,
+                    durMin: q.durMin ?? 30,
                     fromIso: selIso,
                   }}
                 >
@@ -1835,14 +1860,42 @@ export default function Time() {
     }
     return null;
   };
+  /** Map the finger's Y inside a gap's rect to a landing minute:
+   *  linear across [from, to], snapped to :15, clamped so the task
+   *  still fits before the gap closes. Pure — hover preview and the
+   *  actual drop share it, so what you see is what commits. */
+  const gapDropMinute = (
+    key: string,
+    y: number,
+    durMin: number,
+  ): number | null => {
+    const parts = key.split(':'); // gap : iso : from : to
+    const from = parseInt(parts[2], 10);
+    const to = parseInt(parts[3], 10);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    const lo = Math.ceil(from / 15) * 15;
+    const hi = Math.max(lo, Math.floor((to - durMin) / 15) * 15);
+    const rect = targetRects.get(key);
+    if (!rect || rect.h <= 0) return lo;
+    const rel = Math.max(0, Math.min(1, (y - rect.y) / rect.h));
+    const snapped = Math.round((from + rel * (to - from)) / 15) * 15;
+    return Math.max(lo, Math.min(hi, snapped));
+  };
+  const [dropPreview, setDropPreview] = useState<number | null>(null);
   const hoverDrag = (x: number, y: number) => {
     const k = hitTest(x, y);
     setOverKey((cur) => (cur === k ? cur : k));
+    const preview =
+      k && k.startsWith('gap:')
+        ? gapDropMinute(k, y, dragTaskRef.current?.durMin ?? 30)
+        : null;
+    setDropPreview((cur) => (cur === preview ? cur : preview));
   };
   const cancelDrag = () => {
     dragTaskRef.current = null;
     setDragTask(null);
     setOverKey(null);
+    setDropPreview(null);
   };
 
   /** Move quests to new dates (keeping their clock time) + arm Undo.
@@ -1892,20 +1945,23 @@ export default function Time() {
   const dropDrag = (x: number, y: number) => {
     const t = dragTaskRef.current;
     const k = hitTest(x, y);
+    // Compute the gap landing minute BEFORE cancelDrag clears the
+    // ref — same math as the hover preview, so the time the user
+    // watched under their finger is exactly what commits.
+    const gapT =
+      t && k && k.startsWith('gap:')
+        ? gapDropMinute(k, y, t.durMin)
+        : null;
     cancelDrag();
     if (!t || !k) return;
     const short =
       t.title.length > 26 ? `${t.title.slice(0, 24)}…` : t.title;
-    // Day-thread gap → re-time into the open stretch (snapped up to
-    // the next quarter hour so nothing lands at 2:16p).
     if (k.startsWith('gap:')) {
-      const [, toIso, fromStr] = k.split(':');
-      const from = parseInt(fromStr, 10);
-      if (!Number.isFinite(from)) return;
-      const newT = Math.min(24 * 60 - 15, Math.ceil(from / 15) * 15);
+      if (gapT == null) return;
+      const toIso = k.split(':')[1];
       applyMoves(
-        [{ id: t.questId, toIso, newT }],
-        `“${short}” → ${fmt(newT)}`,
+        [{ id: t.questId, toIso, newT: gapT }],
+        `“${short}” → ${fmt(gapT)}`,
       );
       return;
     }
@@ -1929,6 +1985,7 @@ export default function Time() {
     registerTarget,
     overKey,
     draggingId: dragTask?.questId ?? null,
+    dropPreview,
   };
 
   /** One-tap "Lighten this day" — move the movable (non-high, not
@@ -2181,7 +2238,21 @@ export default function Time() {
             <Text numberOfLines={1} style={styles.ghostTitle}>
               {dragTask.title}
             </Text>
-            <Text style={styles.ghostTime}>{fmt(dragTask.min)}</Text>
+            {/* Over a gap, the pill shows where it'll LAND — right at
+               the finger, no guessing. */}
+            <Text
+              style={[
+                styles.ghostTime,
+                dropPreview != null && {
+                  color: C.glow,
+                  fontFamily: fonts.frauncesMed,
+                },
+              ]}
+            >
+              {dropPreview != null
+                ? `→ ${fmt(dropPreview)}`
+                : fmt(dragTask.min)}
+            </Text>
           </View>
         </Animated.View>
       )}
@@ -2478,6 +2549,19 @@ const makeStyles = (accent: Accent) =>
       fontStyle: 'italic',
       fontSize: 13,
       color: C.dusk,
+    },
+    // Live landing time while hovering — bigger + ember-glow so it's
+    // unmistakable under the finger.
+    dayGapPreviewTime: {
+      fontFamily: fonts.frauncesMed,
+      fontStyle: 'italic',
+      fontSize: 17,
+      color: C.ember,
+      letterSpacing: -0.3,
+      fontVariant: ['tabular-nums'],
+      textShadowColor: hexA(C.ember, 0.6),
+      textShadowOffset: { width: 0, height: 0 },
+      textShadowRadius: 8,
     },
     dayGapSub: {
       fontFamily: fonts.inter,
