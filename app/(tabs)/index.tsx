@@ -2394,16 +2394,14 @@ export default function Home() {
             style={styles.lunaNook}
             hitSlop={6}
           >
-            {/* When the day is cleared, the DAY CLEARED card below
-               already features Luna front-and-center, so the nook
-               here would just duplicate the cat. Swap to the same
-               person glyph the ProfileIcon uses elsewhere so this
-               corner still reads as the profile entry. When the
-               day still has work, keep the GIF cat.
-               In Focused companion mode (no cat anywhere) we ALSO
-               fall back to the person glyph so the user still has
-               a tappable profile-entry corner. */}
-            {allDone || !companion.showLuna ? (
+            {/* Luna ALWAYS keeps her nook — even when the day is
+               cleared (she used to swap out for a person glyph
+               there, which read as her leaving; the DAY CLEARED
+               card's sleeping Luna is a scene, this is her home).
+               Only Focused companion mode (no cat anywhere) falls
+               back to the person glyph so the corner still reads
+               as the profile entry. */}
+            {!companion.showLuna ? (
               <Svg
                 width={36}
                 height={36}
@@ -2438,12 +2436,12 @@ export default function Home() {
                    state (sleeping past bedtime, sad if overdue
                    piles, happy on a long streak, idle by default),
                    PLUS a 30-second 'happy' celebration window
-                   whenever a quest gets completed.
-                   32×32 native asset rendered at 64×64 = clean 2×
-                   for sharp pixels. */}
+                   whenever a quest gets completed. 52pt in the
+                   shrunken 62pt tile (1.625× of the 32px source —
+                   soft, but the tile reads cleaner small). */}
                 <Image
                   source={lunaSource(nookMood, lunaSkin)}
-                  style={{ width: 64, height: 64 }}
+                  style={{ width: 52, height: 52 }}
                   resizeMode="contain"
                   accessibilityLabel="Luna"
                 />
@@ -3317,10 +3315,12 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: -0.1,
       maxWidth: 250,
     },
+    // Shrunk 78 → 62 (mock proportions) — the nook is a home, not a
+    // billboard; smaller reads cleaner beside the greeting.
     lunaNook: {
-      width: 78,
-      height: 78,
-      borderRadius: 20,
+      width: 62,
+      height: 62,
+      borderRadius: 16,
       borderWidth: 1,
       borderColor: C.hair,
       backgroundColor: C.surface,
@@ -3331,11 +3331,11 @@ const makeStyles = (accent: Accent) =>
     // Container only — SoftGlow paints the radial fade inside.
     lunaNookGlow: {
       position: 'absolute',
-      top: -10,
+      top: -8,
       left: '50%',
-      marginLeft: -55,
-      width: 110,
-      height: 90,
+      marginLeft: -44,
+      width: 88,
+      height: 72,
     },
 
     // ── Quiet today line ──
