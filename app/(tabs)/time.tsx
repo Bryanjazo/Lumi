@@ -818,10 +818,23 @@ const DayView = ({
         paddingHorizontal: 22,
         paddingTop: 4,
         paddingBottom: FLOATING_NAV_CLEARANCE,
+        // Light days own the whole sheet: flexGrow lets the thread
+        // container stretch to the viewport…
+        flexGrow: 1,
       }}
       showsVerticalScrollIndicator={false}
     >
-      <View style={{ position: 'relative' }}>
+      {/* …and space-between breathes the rows apart to fill it —
+          morning near the top, wind-down near the bottom, a faint
+          echo of real time. Once the day has enough rows to exceed
+          the screen, spacing collapses to natural and it scrolls. */}
+      <View
+        style={{
+          position: 'relative',
+          flex: 1,
+          justifyContent: 'space-between',
+        }}
+      >
         {/* the thread — one soft line down the marker column */}
         <LinearGradient
           colors={[hexA(C.ash, 0.4), hexA(C.bone, 0.07)]}
