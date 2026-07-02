@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import * as Linking from 'expo-linking';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from './supabase';
+import { useUserStore } from '../store/userStore';
 
 // Native SDKs are lazy-loaded so the app still boots in Expo Go
 // (no native modules) and on platforms where they aren't available
@@ -110,7 +111,30 @@ export const signIn = async (
 };
 
 export const signOut = async (): Promise<void> => {
+  // Sign-out completeness (security audit §5): push everything local
+  // to the cloud FIRST, and only wipe the device copy when that push
+  // succeeded — the wipe must never be the thing that destroys
+  // unsynced work. If the push fails (offline, misconfigured), local
+  // data stays: it's AES-encrypted at rest, and the cross-account
+  // guard in _layout still wipes it before a DIFFERENT account can
+  // see it.
+  let pushed = false;
+  try {
+    const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
+    const offline = useUserStore.getState().offlineMode;
+    if (userId && isSupabaseConfigured && !offline) {
+      const { pushAllNow } = await import('./sync');
+      await pushAllNow(userId);
+      pushed = true;
+    }
+  } catch {
+    // fail-safe: keep local data
+  }
   await supabase.auth.signOut();
+  if (pushed) {
+    const { resetLocalUserData } = await import('./localData');
+    resetLocalUserData();
+  }
 };
 
 // ── Sign in with Apple ──────────────────────────────────────────────────

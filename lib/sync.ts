@@ -397,6 +397,21 @@ export const pullAll = async (userId: string): Promise<void> => {
  * Mount once at the root. Pulls on login, subscribes each store, debounces
  * pushes. No-ops when offline / unconfigured / signed out.
  */
+/**
+ * Immediate, undebounced push of everything local — the sign-out
+ * flow runs this BEFORE wiping local data so the wipe can never
+ * destroy unsynced work. Throws if any push fails (caller then
+ * keeps the local data as the fail-safe).
+ */
+export const pushAllNow = async (userId: string): Promise<void> => {
+  await Promise.all([
+    pushUser(userId),
+    pushQuests(userId),
+    pushCheckins(userId),
+    pushPet(userId),
+  ]);
+};
+
 export const useCloudSync = (session: Session | null) => {
   const offlineMode = useUserStore((s) => s.offlineMode);
   const pulledRef = useRef<string | null>(null);

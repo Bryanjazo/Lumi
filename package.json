@@ -55,5 +55,9 @@
     "ios": "expo run:ios",
     "web": "expo start --web"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "@xmldom/xmldom": "^0.9.10",
+    "uuid": "^11.1.1"
+  }
 }

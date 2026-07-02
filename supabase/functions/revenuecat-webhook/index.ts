@@ -143,11 +143,25 @@ Deno.serve(async (req) => {
   }
   const got = req.headers.get("authorization") ?? "";
   // RC sends "Authorization: Bearer <token>" if you configure it
-  // that way in the dashboard. Match the whole header literally.
+  // that way in the dashboard. Match the whole header — via SHA-256
+  // digests, not `!==` (security audit §3): comparing hashes makes
+  // the check constant-time, so response timing can't leak how many
+  // leading characters of the secret an attacker has guessed. (RC
+  // offers no HMAC signing; this shared secret IS the auth, so it
+  // gets the careful treatment.)
   const expectedHeader = expected.startsWith("Bearer ")
     ? expected
     : `Bearer ${expected}`;
-  if (got !== expectedHeader) {
+  const enc = new TextEncoder();
+  const [gotHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(got)),
+    crypto.subtle.digest("SHA-256", enc.encode(expectedHeader)),
+  ]);
+  const a = new Uint8Array(gotHash);
+  const b = new Uint8Array(expectedHash);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  if (diff !== 0) {
     return json({ error: "Unauthorized" }, 401);
   }
 
