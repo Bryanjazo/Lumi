@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Encrypted at-rest (security audit §6): AES via lib/secureStorage —
+// key in Keychain/Keystore, ciphertext in AsyncStorage. Legacy
+// plaintext values migrate in place on first read.
+import { secureStorage } from '../lib/secureStorage';
 import { todayKey } from '../lib/gamification';
 import { readState, energyValue, type ZoneName } from '../constants/moodMap';
 
@@ -157,7 +160,7 @@ export const useCheckinStore = create<CheckinState>()(
     }),
     {
       name: 'lumi.checkins',
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createJSONStorage(() => secureStorage),
       version: 2,
       migrate: (persisted: unknown, version) => {
         if (!persisted || typeof persisted !== 'object')

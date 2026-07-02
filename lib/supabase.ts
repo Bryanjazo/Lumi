@@ -1,5 +1,10 @@
 import 'react-native-url-polyfill/auto';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Session tokens are encrypted at rest (security audit §5): AES key
+// in the iOS Keychain / Android Keystore via SecureStore, ciphertext
+// in AsyncStorage (sessions are too big for the Keychain directly).
+// Existing plaintext sessions migrate in place on first read — no
+// one gets signed out by the upgrade.
+import { secureStorage } from './secureStorage';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import Constants from 'expo-constants';
 
@@ -16,10 +21,11 @@ export const supabase: SupabaseClient = (() => {
   if (_supabase) return _supabase;
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     // Stub client to avoid crashing the app during local dev without env vars.
-    // All calls return offline shape; stores will fall back to AsyncStorage.
+    // All calls return offline shape; persistSession is off so the
+    // storage adapter is never exercised here.
     _supabase = createClient('https://offline.invalid', 'offline-key', {
       auth: {
-        storage: AsyncStorage,
+        storage: secureStorage,
         autoRefreshToken: false,
         persistSession: false,
         detectSessionInUrl: false,
@@ -29,7 +35,7 @@ export const supabase: SupabaseClient = (() => {
   }
   _supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
-      storage: AsyncStorage,
+      storage: secureStorage,
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,

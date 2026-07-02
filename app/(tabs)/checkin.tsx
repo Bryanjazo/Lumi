@@ -1088,6 +1088,14 @@ export default function Untangle() {
           imp === 'high' ? 'hard' : imp === 'medium' ? 'medium' : 'easy';
         const defaultDur =
           imp === 'high' ? 60 : imp === 'medium' ? 30 : 15;
+        // Defense-in-depth clamp (security audit §4): llmUntangle
+        // already caps durations upstream, but this is the last stop
+        // before the store — a bypassed/hostile value must not write
+        // a 999999-minute task.
+        const safeDur =
+          p.durationMin != null && Number.isFinite(p.durationMin)
+            ? Math.max(5, Math.min(600, Math.round(p.durationMin)))
+            : defaultDur;
         // Time landing logic. If the LLM gave a clock time, anchor to
         // it. Else fall back to a window — defaulting to morning for
         // high importance, evening for low.
@@ -1113,7 +1121,7 @@ export default function Untangle() {
               importance: imp,
               scheduledHour: h,
               scheduledMinute: m,
-              durationMinutes: p.durationMin ?? defaultDur,
+              durationMinutes: safeDur,
               ...(p.date ? { date: p.date } : { date: selectedDate }),
             });
             applied += 1;
@@ -1133,7 +1141,7 @@ export default function Untangle() {
           difficulty,
           importance: imp,
           window: win,
-          durationMinutes: p.durationMin ?? defaultDur,
+          durationMinutes: safeDur,
           ...(p.date ? { date: p.date } : { date: selectedDate }),
         });
         applied += 1;
