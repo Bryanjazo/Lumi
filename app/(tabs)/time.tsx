@@ -414,6 +414,10 @@ interface DragCtl {
   drop: (x: number, y: number) => void;
   cancel: () => void;
   registerTarget: (key: string, ref: View | null) => void;
+  /** Re-measure all drop-target rects mid-drag — for views that
+   *  scroll themselves when a drag starts (Month snaps to top so the
+   *  grid is reachable from a long peek list). */
+  remeasure: () => void;
   /** "day:YYYY-MM-DD" / "gap:…" currently hovered, or null. */
   overKey: string | null;
   /** questId being dragged (chips dim themselves), or null. */
@@ -1228,7 +1232,6 @@ const MonthView = ({
   styles,
   nowMin,
   ctl,
-  onLighten,
 }: {
   date: Date;
   today: Date;
@@ -1240,7 +1243,6 @@ const MonthView = ({
   styles: ReturnType<typeof makeStyles>;
   nowMin: number;
   ctl: DragCtl;
-  onLighten: (d: Date) => void;
 }) => {
   const y = date.getFullYear();
   const m = date.getMonth();
@@ -1250,6 +1252,20 @@ const MonthView = ({
   for (let i = 0; i < lead; i++) cells.push(null);
   for (let dd = 1; dd <= dim; dd++) cells.push(new Date(y, m, dd));
   while (cells.length % 7) cells.push(null);
+
+  // Drag rescue — when the peek list is long, the calendar grid has
+  // scrolled clear off-screen, leaving a drag with nowhere to land.
+  // The moment a drag starts here, snap the scroll to the top (grid
+  // in reach) and re-measure the drop targets (their rects were
+  // captured pre-jump and would be stale).
+  const scrollRef = useRef<ScrollView>(null);
+  useEffect(() => {
+    if (!ctl.draggingId) return;
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+    const t = setTimeout(() => ctl.remeasure(), 90);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctl.draggingId]);
 
   // Per-day load + count in one pass — drives the heat cells, the
   // stats row, and the busiest-day nudge.
@@ -1358,8 +1374,14 @@ const MonthView = ({
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={{ flex: 1 }}
-      contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 24 }}
+      contentContainerStyle={{
+        paddingHorizontal: 18,
+        // Clear the floating glass nav — the stats row at the bottom
+        // was unreachable underneath it.
+        paddingBottom: FLOATING_NAV_CLEARANCE + 12,
+      }}
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.monthHeaderRow}>
@@ -1455,13 +1477,13 @@ const MonthView = ({
           <Text style={styles.monthNudgeText}>
             {WDF[busiestDay.getDay()]} the {busiestDay.getDate()}
             {ordSuffix(busiestDay.getDate())} is your heaviest — tap to
-            peek, or spread it out.
+            peek, drag things to calmer days.
           </Text>
         </Pressable>
       )}
 
       {/* Selected-day peek — compact rows you can drag straight onto
-          the grid above. Heavy days offer one-tap Lighten. */}
+          the grid above. */}
       <View style={styles.monthPeekCard}>
         <View style={styles.monthPeekHead}>
           <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 9 }}>
@@ -1584,17 +1606,10 @@ const MonthView = ({
             Nothing here yet — a good landing spot for something heavy.
           </Text>
         )}
-        {selLoad >= HEAVY_LOAD && (
-          <Pressable
-            onPress={() => onLighten(sel)}
-            style={styles.lightenBtn}
-          >
-            <Text style={styles.lightenBtnText}>
-              Lighten this day — move the lighter ones
-            </Text>
-          </Pressable>
-        )}
-        {peekItems.length > 0 && selLoad < HEAVY_LOAD && (
+        {/* "Lighten this day" removed by design — it scattered tasks
+            to auto-picked days the user never chose. Rebalancing is
+            the drag: hold a row, drop it exactly where YOU want it. */}
+        {peekItems.length > 0 && (
           <Text style={styles.peekHint}>
             hold + drag a task onto any day above
           </Text>
@@ -1838,19 +1853,23 @@ export default function Time() {
     if (ref) targetRefs.set(key, ref);
     else targetRefs.delete(key);
   };
-  const beginDrag = (t: DragTask) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    dragTaskRef.current = t;
-    setDragTask(t);
-    setOverKey(null);
-    // Measure every registered target ONCE — the pan owns the touch
-    // from here, nothing can scroll mid-drag, so rects stay valid.
+  const measureTargets = () => {
     targetRects.clear();
     targetRefs.forEach((ref, key) => {
       ref.measureInWindow((x, y, w, h) => {
         targetRects.set(key, { x, y, w, h });
       });
     });
+  };
+  const beginDrag = (t: DragTask) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    dragTaskRef.current = t;
+    setDragTask(t);
+    setOverKey(null);
+    // Measure every registered target at drag start. The user can't
+    // scroll mid-drag (the pan owns the touch), but a VIEW may scroll
+    // itself (Month snaps to top) — those call ctl.remeasure() after.
+    measureTargets();
   };
   const hitTest = (x: number, y: number): string | null => {
     for (const [key, r] of targetRects) {
@@ -1983,46 +2002,14 @@ export default function Time() {
     drop: dropDrag,
     cancel: cancelDrag,
     registerTarget,
+    remeasure: measureTargets,
     overKey,
     draggingId: dragTask?.questId ?? null,
     dropPreview,
   };
 
-  /** One-tap "Lighten this day" — move the movable (non-high, not
-   *  done, not recurring) tasks to the calmest other future days of
-   *  the same week. The heavy stuff stays put; the day just breathes. */
-  const lightenDay = (day: Date) => {
-    const dIso = ymd(day);
-    const st = useQuestStore.getState();
-    const movable = st.quests.filter(
-      (q) =>
-        q.date === dIso &&
-        !q.completed &&
-        !q.recur &&
-        q.window !== 'someday' &&
-        q.importance !== 'high',
-    );
-    if (!movable.length) return;
-    const ws = startOfWeek(day);
-    const others = Array.from({ length: 7 }, (_, i) => addDays(ws, i)).filter(
-      (d) => !sameDay(d, day) && dayOffset(d, today) >= 0,
-    );
-    if (!others.length) return;
-    const loadFor = (d: Date) =>
-      loadOf(
-        buildItemsForDate(d, anchors, allQuests, effectiveWindows, today, nowMin),
-      );
-    others.sort((a, b) => loadFor(a) - loadFor(b));
-    const nTargets = Math.min(2, others.length);
-    const moves = movable.map((q, i) => ({
-      id: q.id,
-      toIso: ymd(others[i % nTargets]),
-    }));
-    applyMoves(
-      moves,
-      `Lightened ${WD[day.getDay()]} ${day.getDate()} — moved ${moves.length} to calmer days`,
-    );
-  };
+  // ("Lighten this day" removed by design — it scattered tasks to
+  // auto-picked days the user never chose. Rebalancing is the drag.)
 
   // Drag ghost — rides the finger via shared values (UI thread only).
   const ghostStyle = useAnimatedStyle(() => ({
@@ -2203,7 +2190,6 @@ export default function Time() {
           styles={styles}
           nowMin={nowMin}
           ctl={dragCtl}
-          onLighten={lightenDay}
         />
       )}
 
@@ -2906,20 +2892,6 @@ const makeStyles = (accent: Accent) =>
       fontSize: 10.5,
       color: C.mute,
       marginBottom: 11,
-    },
-    lightenBtn: {
-      paddingVertical: 11,
-      borderRadius: 12,
-      backgroundColor: hexA(C.dusk, 0.1),
-      borderWidth: 1,
-      borderColor: hexA(C.dusk, 0.4),
-      alignItems: 'center',
-      marginBottom: 11,
-    },
-    lightenBtnText: {
-      fontFamily: fonts.interSemi,
-      fontSize: 13,
-      color: C.dusk,
     },
     // ── Move toast + Undo ──────────────────────────────────────────
     moveToast: {
