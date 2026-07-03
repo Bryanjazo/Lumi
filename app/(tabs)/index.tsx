@@ -2985,6 +2985,9 @@ export default function Home() {
           matching the mockup's quick-fire capture pattern. */}
       {!capOpen && !previewTasks && !sortingRaw && (
         <View
+          // Tour target — the capture-pill rewrite dropped this ref,
+          // which left the tour's first step spotlighting nothing.
+          ref={captureRef as never}
           style={[
             styles.capturePill,
             // Keyboard open → sit right on top of it (the nav below

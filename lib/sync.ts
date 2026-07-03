@@ -251,6 +251,17 @@ export const pullAll = async (userId: string): Promise<void> => {
       subscriptionTier: nextSubTier,
       subscriptionCurrentPeriodEnd: nextSubEnd,
     });
+
+    // Mint the PER-USER onboarding receipt from the server signal.
+    // The routing gate checks `onboardedUserIds[uid]` — a device-local
+    // receipt — so a returning user on a fresh install (or one who
+    // onboarded before receipts shipped) got bounced through
+    // onboarding again even though the server knew them. The server's
+    // `onboarded` flag (pushed on completion) or any existing quests
+    // are proof enough.
+    if (userRow.onboarded) {
+      useUserStore.getState().markOnboardedForUser(userId);
+    }
   }
 
   // Quests — merge by id, cloud version wins on conflict.
@@ -286,6 +297,12 @@ export const pullAll = async (userId: string): Promise<void> => {
       });
     }
     useQuestStore.setState({ quests: Array.from(byId.values()) });
+    // Backstop for rows that predate the `onboarded` column push:
+    // having ANY quests server-side proves this user has been through
+    // the app before — don't re-onboard them.
+    if (q.data.length > 0) {
+      useUserStore.getState().markOnboardedForUser(userId);
+    }
   }
 
   // Checkins — merge by id.
