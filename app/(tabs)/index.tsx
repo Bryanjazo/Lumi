@@ -3546,7 +3546,10 @@ const makeStyles = (accent: Accent) =>
       backgroundColor: C.void2,
       borderWidth: 1,
       borderColor: hexA(C.glow, 0.4),
-      marginBottom: 26,
+      // Followers (pull-forward card, Done today) own their own
+      // marginTop: 14 — a big bottom margin here doubled up with
+      // them into a ~40px chasm while everything below sat ~18 apart.
+      marginBottom: 2,
       overflow: 'hidden',
     },
     // Container the bloom paints inside — full card width, warm
@@ -3697,7 +3700,8 @@ const makeStyles = (accent: Accent) =>
       borderColor: C.hair,
       backgroundColor: C.void2,
       padding: 22,
-      marginBottom: 26,
+      // Same rhythm as doneCard — followers bring their own gap.
+      marginBottom: 2,
     },
     emptyEyebrow: {
       fontFamily: fonts.interSemi,
