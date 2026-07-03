@@ -61,6 +61,7 @@ import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
 import { useUserStore } from '../../store/userStore';
 import { MicIcon } from '../../components/MicIcon';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
+import { useKeyboardHeight } from '../../lib/useKeyboard';
 import {
   useCorrectionsStore,
   summarizeCorrections,
@@ -1415,6 +1416,9 @@ export default function Untangle() {
   //  is steady while the user does the talking.
   const chatMood: LunaMood = 'idle';
 
+  // Keyboard-aware input clearance — see the inputWrap override below.
+  const keyboardHeight = useKeyboardHeight();
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView
@@ -1655,7 +1659,16 @@ export default function Untangle() {
         </ScrollView>
 
         {/* ─── Input (ember) ─── */}
-        <View style={styles.inputWrap}>
+        {/* While the keyboard is up, the floating nav is buried under
+            it — so the input drops its nav clearance and sits snug on
+            the keyboard instead of floating ~100px above it (the
+            KeyboardAvoidingView already adds the keyboard's height). */}
+        <View
+          style={[
+            styles.inputWrap,
+            keyboardHeight > 0 && { paddingBottom: 14 },
+          ]}
+        >
           <View
             style={[
               styles.inputBar,

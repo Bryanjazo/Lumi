@@ -82,6 +82,7 @@ import { SoftGlow } from '../../components/SoftGlow';
 import { TwinkleMotes } from '../../components/TwinkleMotes';
 import { DayThread } from '../../components/DayThread';
 import { findWindowSlot, windowIsFull } from '../../lib/slotting';
+import { useKeyboardHeight } from '../../lib/useKeyboard';
 import { useDeleteConfirm } from '../../components/TaskDeleteWrap';
 import { HabitScheduleSheet } from '../../components/HabitScheduleSheet';
 import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
@@ -893,6 +894,11 @@ export default function Home() {
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
   const effectiveWindows = useEffectiveWindows();
+  // Keyboard height — the capture pill rides ABOVE the keyboard when
+  // it opens (it used to vanish underneath), and the scroll gains the
+  // same clearance so the hero / Lumi-suggests card can always scroll
+  // clear of the pill while typing.
+  const keyboardHeight = useKeyboardHeight();
   // Companion-mode flags — gate the playful chrome (Luna, XP, cheer).
   const companion = useCompanionMode();
   // Ambient mood — reflects sleep window, overdue pile, streak.
@@ -2185,32 +2191,38 @@ export default function Home() {
   ) => {
     const s = suggestions.find((x) => x.id === sugInput.id);
     if (!s) return;
-    const recurAt =
-      opts.exactMinute != null ? opts.exactMinute : (s.guess.at ?? undefined);
-    // The card only exposes the four part-of-day windows (no
-    // 'someday'), so this cast is safe — the constraint is enforced
-    // by the WINDOWS array in LumiSuggestCard.
-    const recurPart = opts.window as import('../../constants/recur').RecurPart;
-    const rule = {
-      ...s.guess,
-      part: recurPart,
-      ...(recurAt != null ? { at: recurAt } : {}),
-    };
-    addQuest({
-      title: s.title,
-      difficulty: 'medium',
-      importance: s.importance,
-      window: opts.window,
-      durationMinutes: opts.durationMin,
-      ...(opts.exactMinute != null && {
-        scheduledHour: Math.floor(opts.exactMinute / 60),
-        scheduledMinute: opts.exactMinute % 60,
-      }),
-      recur: rule,
-    });
+    // The card's "Make it repeat" section owns the rule now — it was
+    // prefilled from s.guess, so opts.recur IS the user-confirmed
+    // version of Lumi's guess. Toggled off → they want it once.
+    if (opts.recur) {
+      addQuest({
+        title: s.title,
+        difficulty: 'medium',
+        importance: s.importance,
+        window: opts.window,
+        durationMinutes: opts.durationMin,
+        ...(opts.exactMinute != null && {
+          scheduledHour: Math.floor(opts.exactMinute / 60),
+          scheduledMinute: opts.exactMinute % 60,
+        }),
+        recur: opts.recur,
+      });
+    } else {
+      addQuest({
+        title: s.title,
+        difficulty: 'medium',
+        importance: s.importance,
+        window: opts.window,
+        durationMinutes: opts.durationMin,
+        ...(opts.exactMinute != null && {
+          scheduledHour: Math.floor(opts.exactMinute / 60),
+          scheduledMinute: opts.exactMinute % 60,
+        }),
+      });
+    }
     consumeSuggestion(s.id);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    showToast('Added to your day 💛');
+    showToast(opts.recur ? 'Set to repeat 🔁' : 'Added to your day 💛');
   };
 
   const dismissSuggestionFromCard = (
@@ -2232,12 +2244,18 @@ export default function Home() {
     const idx = Number(sugInput.id.replace('preview_', ''));
     const t = previewTasks[idx];
     if (!t) return;
+    // Recurrence: the card's "Make it repeat" section is the source
+    // of truth now — the user SAW and could edit it there (it used
+    // to pass through invisibly from the LLM parse). opts.recur is
+    // null when the toggle is off, even if the LLM guessed a cadence.
+    const recur = opts.recur;
     // No pinned time → auto-slot into the chosen window (next open
     // :15 after anchors + everything scheduled). Same cascade as
     // commitTask; fresh store read so back-to-back accepts stack.
+    // Recurring tasks skip slotting — they're templates.
     const targetISO = t.date ?? todayKey();
     const autoSlot =
-      opts.exactMinute == null && !t.recur
+      opts.exactMinute == null && !recur
         ? findWindowSlot({
             window: opts.window,
             dateISO: targetISO,
@@ -2263,7 +2281,7 @@ export default function Home() {
         scheduledMinute: anchorMinute % 60,
       }),
       ...(t.date && { date: t.date }),
-      ...(t.recur && { recur: t.recur }),
+      ...(recur && { recur }),
     });
     // Remove this task from the queue; if it was the last, close
     // the preview card entirely.
@@ -2369,7 +2387,12 @@ export default function Home() {
       )}
 
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[
+          styles.scroll,
+          keyboardHeight > 0 && {
+            paddingBottom: keyboardHeight + 96,
+          },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* ── Header: date + greeting + Luna nook ── */}
@@ -2658,6 +2681,9 @@ export default function Home() {
                     ? 'evening'
                     : previewTasks[0].window,
                 defaultExactMinute: previewTasks[0].at ?? null,
+                // LLM-detected cadence prefills the repeat section —
+                // visible + editable instead of silently committed.
+                defaultRecur: previewTasks[0].recur ?? null,
               }}
               total={previewTasks.length}
               index={0}
@@ -2722,6 +2748,10 @@ export default function Home() {
                 defaultWindow:
                   (heroSuggestion.guess?.part as WindowKey) ?? 'evening',
                 defaultExactMinute: heroSuggestion.guess?.at ?? null,
+                // Recurrence suggestions ARE about repeating — the
+                // repeat section starts on, prefilled with the
+                // detector's guess for the user to confirm or adjust.
+                defaultRecur: heroSuggestion.guess ?? null,
               }}
               total={suggestions.length}
               index={0}
@@ -2954,7 +2984,15 @@ export default function Home() {
           single ember-filled ↑ submit button that runs sendCapture,
           matching the mockup's quick-fire capture pattern. */}
       {!capOpen && !previewTasks && !sortingRaw && (
-        <View style={styles.capturePill} pointerEvents="box-none">
+        <View
+          style={[
+            styles.capturePill,
+            // Keyboard open → sit right on top of it (the nav below
+            // is buried anyway). Closed → back to the nav clearance.
+            keyboardHeight > 0 && { bottom: keyboardHeight + 8 },
+          ]}
+          pointerEvents="box-none"
+        >
           <View style={styles.capturePillInner}>
             <Text
               style={[styles.capturePillSpark, { color: accent.fg }]}
