@@ -86,6 +86,24 @@ const moodScore: Record<Mood, number> = {
 
 const newId = () => `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+// ── Local retention ─────────────────────────────────────────────────
+// Check-ins accumulate forever with daily use; nothing on-device reads
+// past the energy curve's 28-day lookback, so the LOCAL copy keeps a
+// generous 90 days and the cloud keeps the full history (sync pushes
+// are insert-only — pruning here never deletes a server row). Without
+// this, years of use = an ever-growing encrypted blob rehydrated on
+// every launch.
+export const CHECKIN_RETENTION_DAYS = 90;
+
+export const pruneOldCheckins = (list: Checkin[]): Checkin[] => {
+  const cutoff = Date.now() - CHECKIN_RETENTION_DAYS * 86_400_000;
+  return list.filter((c) => {
+    const t = new Date(c.createdAt).getTime();
+    // Unparseable timestamps are kept — fail-safe, never data-eating.
+    return Number.isNaN(t) || t >= cutoff;
+  });
+};
+
 // Derive a legacy Mood from the (x, y) coordinate so old screens still
 // have something to render until they switch to zone.
 export const moodFromCoord = (x: number, y: number): Mood => {
@@ -114,7 +132,9 @@ export const useCheckinStore = create<CheckinState>()(
           id: newId(),
           createdAt: new Date().toISOString(),
         };
-        set((s) => ({ checkins: [created, ...s.checkins] }));
+        set((s) => ({
+          checkins: pruneOldCheckins([created, ...s.checkins]),
+        }));
         return created;
       },
       todayMood: () => {

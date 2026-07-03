@@ -1661,19 +1661,21 @@ export default function MeTab() {
               on the unlocks row now (where they're spent). */}
           <View style={styles.cornerCard}>
             {companion.showXp && (
-              <HubRow
-                first
-                glyph="◉"
-                color="#7FA06A"
-                label={`${petName}'s worlds & unlocks`}
-                sub={`◈ ${shards} shards · next-to-unlock + see all`}
-                open={hub === 'unlocks'}
-                onToggle={() =>
-                  setHub(hub === 'unlocks' ? null : 'unlocks')
-                }
-              >
-                <UnlocksShop totalXp={xpTotal} />
-              </HubRow>
+              // Worlds & unlocks isn't ready to ship — the row stays
+              // as a quiet teaser (shards keep accruing meanwhile)
+              // instead of opening the placeholder shop.
+              <View style={styles.comingSoonRow} pointerEvents="none">
+                <HubRow
+                  first
+                  glyph="◉"
+                  color="#7FA06A"
+                  label={`${petName}'s worlds & unlocks`}
+                  sub={`◈ ${shards} shards saved · coming soon…`}
+                  open={false}
+                  chevronOnly
+                  onToggle={() => {}}
+                />
+              </View>
             )}
 
             <HubRow
@@ -1859,6 +1861,10 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     borderColor: hexA(C.hair, 0.9),
     backgroundColor: hexA(C.bone, 0.02),
     overflow: 'hidden',
+  },
+  // Teaser rows — visibly present, clearly not interactive yet.
+  comingSoonRow: {
+    opacity: 0.55,
   },
   sectionEyebrow: {
     fontFamily: fonts.interSemi,

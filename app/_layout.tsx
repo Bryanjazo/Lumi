@@ -33,7 +33,7 @@ import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { useSession, handleAuthDeepLink } from '../lib/auth';
 import { isSupabaseConfigured } from '../lib/supabase';
-import { useCloudSync } from '../lib/sync';
+import { useCloudSync, useSyncStatus } from '../lib/sync';
 import { useWidgetSync } from '../lib/widget';
 import {
   configureRevenueCat,
@@ -78,6 +78,8 @@ export default function RootLayout() {
   const markOnboardedForUser = useUserStore((s) => s.markOnboardedForUser);
   const { session, loading: sessionLoading } = useSession();
   useCloudSync(session);
+  // First-pull-per-user flags — the cross-account wipe waits on these.
+  const pulledFor = useSyncStatus((s) => s.pulledFor);
   // Push the cat's mood + completion count to the iOS home-screen
   // widget whenever they change. No-op on Android / Expo Go / web.
   useWidgetSync();
@@ -137,6 +139,15 @@ export default function RootLayout() {
     if (!uid) return;
     // Already known on this device — keep their data.
     if (onboardedUserIds[uid]) return;
+    // WAIT for the first cloud pull before wiping. The pull mints the
+    // onboarding receipt from the server (users.onboarded / existing
+    // quests) — wiping before it spoke is how returning Google/Apple
+    // sign-ins kept losing their check-ins (rhythm reset to zero).
+    // A genuinely NEW account still gets wiped right after its pull
+    // completes (no receipt gets minted for it). A failed pull never
+    // sets the flag → no wipe on flaky networks (fail-safe; re-arms
+    // next launch).
+    if (!pulledFor[uid]) return;
     // First-launch legacy adoption (only fires when the map is fully
     // empty AND local `onboarded` is still true from before v7). Don't
     // wipe — the bridge above adopts the existing data.
@@ -163,7 +174,7 @@ export default function RootLayout() {
     } catch (e) {
       console.warn('[lumi] cross-account wipe failed', e);
     }
-  }, [session, onboardedUserIds, onboarded, onboardedAt]);
+  }, [session, onboardedUserIds, onboarded, onboardedAt, pulledFor]);
 
   // ── Legacy adoption (one-shot, single user):
   //
