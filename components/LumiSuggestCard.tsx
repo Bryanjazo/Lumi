@@ -21,6 +21,13 @@ import {
 import * as Haptics from 'expo-haptics';
 import { fonts } from '../constants/fonts';
 import type { WindowKey } from '../constants/windows';
+import {
+  RDAYS,
+  type CadenceKey,
+  type RecurPart,
+  type RecurRule,
+  type WeekdayKey,
+} from '../constants/recur';
 
 const C = {
   void: '#120E0C',
@@ -97,6 +104,10 @@ export interface SuggestAcceptOptions {
   durationMin: number;
   /** Minute-of-day when the user pinned an exact time; null = floats. */
   exactMinute: number | null;
+  /** Recurrence the user configured in the card; null = one-time.
+   *  Already carries part (the chosen window), day (for weekly
+   *  cadences) and at (the pinned time, when set). */
+  recur: RecurRule | null;
 }
 
 // Generic input shape — both recurrence Suggestions (from the
@@ -124,6 +135,10 @@ export interface SuggestInput {
   defaultExactMinute?: number | null;
   /** Default duration in minutes; defaults to 30. */
   defaultDurationMin?: number;
+  /** Prefill for the "Make it repeat" section — the LLM's extracted
+   *  cadence or the recurrence-detector's guess. Null/omitted = the
+   *  repeat toggle starts off. */
+  defaultRecur?: RecurRule | null;
 }
 
 interface Props {
@@ -136,6 +151,13 @@ interface Props {
   onDismiss: (input: SuggestInput) => void;
   /** Skip without accepting/dismissing — moves to the next suggestion. */
   onSkip?: (input: SuggestInput) => void;
+  /**
+   * When provided, windows that can't fit a floating task of the
+   * currently-picked duration gray out (auto-slotting has nowhere to
+   * put it). Pinning an exact time bypasses the check — the grid
+   * stays fully tappable in exact mode.
+   */
+  isWindowFull?: (w: WindowKey, durationMin: number) => boolean;
 }
 
 export const LumiSuggestCard = ({
@@ -145,6 +167,7 @@ export const LumiSuggestCard = ({
   onAccept,
   onDismiss,
   onSkip,
+  isWindowFull,
 }: Props) => {
   // Seed state from the input's defaults so the user lands on Lumi's
   // best estimate; everything is overridable. Keyed on input.id so
@@ -158,6 +181,19 @@ export const LumiSuggestCard = ({
   const [exact, setExact] = useState<boolean>(initialExact != null);
   const [time, setTime] = useState<number>(
     initialExact ?? defaultMinuteForWindow(initialWindow),
+  );
+
+  // ── Make it repeat — recurrence lives IN the card now. It used to
+  // pass through accept invisibly (an LLM-detected cadence committed
+  // with nothing to see or change) or get lost entirely. Prefilled
+  // from defaultRecur; weekly cadences default their day to today.
+  const initialRecur = input.defaultRecur ?? null;
+  const [repeat, setRepeat] = useState<boolean>(initialRecur != null);
+  const [cadence, setCadence] = useState<CadenceKey>(
+    initialRecur?.every ?? 'day',
+  );
+  const [recurDay, setRecurDay] = useState<WeekdayKey>(
+    initialRecur?.day ?? RDAYS[new Date().getDay()],
   );
 
   // When the user toggles exact on, the window follows the chosen
@@ -193,12 +229,37 @@ export const LumiSuggestCard = ({
     ? `${effWinObj.label} · ${fmtTime(time)}`
     : `${effWinObj.label} · no set time`;
 
+  // One-line read of the configured cadence for the repeat row's sub.
+  const recurSummary =
+    cadence === 'day'
+      ? 'Every day'
+      : cadence === 'weekday'
+        ? 'Every weekday'
+        : cadence === 'week'
+          ? `Every ${recurDay}`
+          : cadence === '2week'
+            ? `Every other ${recurDay}`
+            : 'Every month';
+
   const handleAccept = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const recur: RecurRule | null = repeat
+      ? {
+          every: cadence,
+          // The card only offers the four real windows, never
+          // someday — the cast is safe.
+          part: effWin as RecurPart,
+          ...(cadence === 'week' || cadence === '2week'
+            ? { day: recurDay }
+            : {}),
+          ...(exact ? { at: time } : {}),
+        }
+      : null;
     onAccept(input, {
       window: effWin,
       durationMin: dur,
       exactMinute: exact ? time : null,
+      recur,
     });
   };
 
@@ -293,9 +354,15 @@ export const LumiSuggestCard = ({
       <View style={styles.windowGrid}>
         {WINDOWS.map((w) => {
           const on = effWin === w.key;
+          // A window grays out when auto-slotting can't fit the task
+          // in it (no room after anchors + what's scheduled). Exact
+          // mode bypasses — a pinned time is the user's call.
+          const full =
+            !exact && !on && (isWindowFull?.(w.key, dur) ?? false);
           return (
             <Pressable
               key={w.key}
+              disabled={full}
               onPress={() => pickWindow(w.key)}
               style={[
                 styles.winCell,
@@ -308,6 +375,7 @@ export const LumiSuggestCard = ({
                       backgroundColor: hexA(C.void, 0.35),
                       borderColor: C.hair,
                     },
+                full && { opacity: 0.35 },
               ]}
             >
               <View
@@ -341,6 +409,7 @@ export const LumiSuggestCard = ({
               >
                 {w.label}
               </Text>
+              {full && <Text style={styles.winFullTag}>full</Text>}
             </Pressable>
           );
         })}
@@ -428,6 +497,132 @@ export const LumiSuggestCard = ({
               );
             })}
           </ScrollView>
+        </View>
+      )}
+
+      {/* Make it repeat — honey row, mirrors the pin row's language. */}
+      <View
+        style={[
+          styles.pinRow,
+          {
+            marginTop: 10,
+            backgroundColor: repeat
+              ? hexA(C.honey, 0.08)
+              : hexA(C.void, 0.4),
+            borderColor: repeat ? hexA(C.honey, 0.4) : C.hair,
+          },
+        ]}
+      >
+        <Text
+          style={[styles.pinGlyph, { color: repeat ? C.honey : C.mute }]}
+        >
+          ↻
+        </Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.pinTitle}>Make it repeat</Text>
+          <Text style={styles.pinSub}>
+            {repeat
+              ? `${recurSummary} · ${effWinObj.label.toLowerCase()}${
+                  exact ? ` · ${fmtTime(time)}` : ''
+                }`
+              : 'One-time unless you say so'}
+          </Text>
+        </View>
+        <Switch
+          value={repeat}
+          onValueChange={(v) => {
+            Haptics.selectionAsync();
+            setRepeat(v);
+          }}
+          trackColor={{ false: C.hair, true: C.honey }}
+          thumbColor={repeat ? C.void : C.mute}
+        />
+      </View>
+
+      {/* Cadence chips (only when repeating) */}
+      {repeat && (
+        <View style={styles.recurWrap}>
+          <View style={styles.recurChipsRow}>
+            {(
+              [
+                ['day', 'Daily'],
+                ['weekday', 'Weekdays'],
+                ['week', 'Weekly'],
+                ['2week', '2 weeks'],
+                ['month', 'Monthly'],
+              ] as [CadenceKey, string][]
+            ).map(([key, label]) => {
+              const on = cadence === key;
+              return (
+                <Pressable
+                  key={key}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setCadence(key);
+                  }}
+                  style={[
+                    styles.recurChip,
+                    on
+                      ? {
+                          backgroundColor: hexA(C.honey, 0.16),
+                          borderColor: C.honey,
+                        }
+                      : { borderColor: C.hair },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.recurChipText,
+                      {
+                        color: on ? C.honey : C.boneDim,
+                        fontFamily: on ? fonts.interSemi : fonts.inter,
+                      },
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {(cadence === 'week' || cadence === '2week') && (
+            <View style={styles.recurChipsRow}>
+              {RDAYS.map((d) => {
+                const on = recurDay === d;
+                return (
+                  <Pressable
+                    key={d}
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      setRecurDay(d);
+                    }}
+                    style={[
+                      styles.recurChip,
+                      styles.recurDayChip,
+                      on
+                        ? {
+                            backgroundColor: hexA(C.honey, 0.16),
+                            borderColor: C.honey,
+                          }
+                        : { borderColor: C.hair },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.recurChipText,
+                        {
+                          color: on ? C.honey : C.boneDim,
+                          fontFamily: on ? fonts.interSemi : fonts.inter,
+                        },
+                      ]}
+                    >
+                      {d}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
         </View>
       )}
 
@@ -638,6 +833,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: -0.1,
   },
+  winFullTag: {
+    fontFamily: fonts.interSemi,
+    fontSize: 8,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: C.mute,
+    marginLeft: 2,
+  },
 
   pinRow: {
     flexDirection: 'row',
@@ -647,6 +850,29 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderRadius: 14,
     borderWidth: 1,
+  },
+  // ── Make it repeat ──
+  recurWrap: {
+    marginTop: 10,
+    gap: 8,
+  },
+  recurChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  recurChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 100,
+    borderWidth: 1,
+  },
+  recurDayChip: {
+    paddingHorizontal: 11,
+  },
+  recurChipText: {
+    fontSize: 12,
+    letterSpacing: -0.1,
   },
   pinGlyph: {
     fontSize: 15,

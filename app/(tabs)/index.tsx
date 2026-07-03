@@ -79,6 +79,10 @@ import {
 import { useVoice } from '../../lib/voice';
 import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
+import { TwinkleMotes } from '../../components/TwinkleMotes';
+import { DayThread } from '../../components/DayThread';
+import { findWindowSlot, windowIsFull } from '../../lib/slotting';
+import { useKeyboardHeight } from '../../lib/useKeyboard';
 import { useDeleteConfirm } from '../../components/TaskDeleteWrap';
 import { HabitScheduleSheet } from '../../components/HabitScheduleSheet';
 import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
@@ -658,168 +662,6 @@ const HeroOverflowMenu = ({
   );
 };
 
-// (Legacy wrapper retained for the very few callers that still want
-// a standalone × — kept as no-op alias in case future hero variants
-// need just the delete. New code should use HeroOverflowMenu.)
-const HeroDeleteBtn = ({ id, title }: { id: string; title: string }) => {
-  const confirm = useDeleteConfirm(id, title);
-  return (
-    <Pressable
-      onPress={confirm}
-      hitSlop={12}
-      style={{
-        position: 'absolute',
-        top: 12,
-        right: 12,
-        width: 26,
-        height: 26,
-        borderRadius: 13,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        borderWidth: 1,
-        borderColor: 'rgba(176,163,139,0.28)',
-        zIndex: 5,
-      }}
-    >
-      <Text
-        style={{
-          color: '#B0A38B',
-          fontSize: 14,
-          lineHeight: 16,
-          marginTop: -1,
-        }}
-      >
-        ×
-      </Text>
-    </Pressable>
-  );
-};
-
-/** Legacy floating × button (used by the hero card + history rows).
- *  In the "Then, when you're ready" list this was replaced by the
- *  pill-style RestDeletePill below so the row's right-side actions
- *  read as a consistent row of affordances. */
-const RestDeleteBtn = ({ id, title }: { id: string; title: string }) => {
-  const confirm = useDeleteConfirm(id, title);
-  return (
-    <Pressable
-      onPress={(e) => {
-        // Don't let the outer row's "complete this" press fire too.
-        e.stopPropagation();
-        confirm();
-      }}
-      hitSlop={10}
-      style={{
-        marginLeft: 6,
-        width: 22,
-        height: 22,
-        borderRadius: 11,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(255,255,255,0.04)',
-        borderWidth: 1,
-        borderColor: 'rgba(176,163,139,0.22)',
-      }}
-    >
-      <Text
-        style={{
-          color: '#6E655A',
-          fontSize: 12,
-          lineHeight: 14,
-          marginTop: -1,
-        }}
-      >
-        ×
-      </Text>
-    </Pressable>
-  );
-};
-
-/** Delete pill — used in the rest row's meta line. Styled to match
- *  the Edit pill (same border / padding / typography) so the two
- *  right-side actions read as a single consistent group. */
-const RestDeletePill = ({ id, title }: { id: string; title: string }) => {
-  const confirm = useDeleteConfirm(id, title);
-  return (
-    <Pressable
-      onPress={(e) => {
-        e.stopPropagation();
-        confirm();
-      }}
-      hitSlop={6}
-      accessibilityRole="button"
-      accessibilityLabel="Delete task"
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-        borderWidth: 1,
-        borderColor: 'rgba(176,163,139,0.22)',
-        borderRadius: 100,
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        marginLeft: 6,
-      }}
-    >
-      <Text
-        style={{
-          fontFamily: fonts.inter,
-          fontSize: 12,
-          color: '#B0A38B',
-          lineHeight: 14,
-          marginTop: -1,
-        }}
-      >
-        ×
-      </Text>
-      <Text
-        style={{
-          fontFamily: fonts.interSemi,
-          fontSize: 11,
-          color: '#B0A38B',
-          letterSpacing: -0.1,
-        }}
-      >
-        Delete
-      </Text>
-    </Pressable>
-  );
-};
-
-/**
- * RestNote — note row in the "Then, when you're ready" list.
- *
- * Renders the note clamped to 2 lines and shows a `more` / `less`
- * toggle ONLY when the underlying text actually overflows. Detection
- * is via onTextLayout: first render is unclamped, the layout reports
- * how many lines the full text needs; if > 2, we flip an overflow
- * flag, the next render clamps, and the toggle appears. The user
- * doesn't perceive the pre-clamp frame because React Native paints
- * after both render passes settle.
- */
-// Inline style constants for the rest-note since the makeStyles
-// factory lives inside the screen component closure. Mirrors the
-// values in `restNote` / `restNoteToggle` / `restNoteToggleHit`.
-const REST_NOTE_TEXT = {
-  fontFamily: fonts.fraunces,
-  fontStyle: 'italic' as const,
-  fontSize: 12.5,
-  color: C.mute,
-  marginTop: 3,
-  lineHeight: 18,
-};
-const REST_NOTE_TOGGLE_HIT = {
-  alignSelf: 'flex-start' as const,
-  paddingTop: 2,
-  paddingBottom: 2,
-  marginTop: 2,
-};
-const REST_NOTE_TOGGLE_TEXT = {
-  fontFamily: fonts.interSemi,
-  fontSize: 11.5,
-};
-
 /**
  * HeroComment — boxed "YOUR COMMENT" section on the hero card.
  *
@@ -1008,48 +850,6 @@ const HeroDescription = ({
   );
 };
 
-const RestNote = ({
-  note,
-  open,
-  onToggle,
-  accentColor,
-}: {
-  note: string;
-  open: boolean;
-  onToggle: () => void;
-  accentColor: string;
-}) => {
-  const [overflowing, setOverflowing] = useState(false);
-  return (
-    <>
-      <Text
-        style={REST_NOTE_TEXT}
-        onTextLayout={(e) => {
-          if (!overflowing && e.nativeEvent.lines.length > 2) {
-            setOverflowing(true);
-          }
-        }}
-        numberOfLines={overflowing && !open ? 2 : undefined}
-      >
-        {note}
-      </Text>
-      {overflowing && (
-        <Pressable
-          onPress={onToggle}
-          hitSlop={6}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: open }}
-          style={REST_NOTE_TOGGLE_HIT}
-        >
-          <Text style={[REST_NOTE_TOGGLE_TEXT, { color: accentColor }]}>
-            {open ? 'less' : 'more'}
-          </Text>
-        </Pressable>
-      )}
-    </>
-  );
-};
-
 /** ISO completedAt → "just now" / "12 min ago" / "1 hr ago". Used in
  *  the "Done today" history list so the user sees how recently they
  *  finished each thing. Returns null if we can't read the timestamp. */
@@ -1094,6 +894,11 @@ export default function Home() {
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
   const effectiveWindows = useEffectiveWindows();
+  // Keyboard height — the capture pill rides ABOVE the keyboard when
+  // it opens (it used to vanish underneath), and the scroll gains the
+  // same clearance so the hero / Lumi-suggests card can always scroll
+  // clear of the pill while typing.
+  const keyboardHeight = useKeyboardHeight();
   // Companion-mode flags — gate the playful chrome (Luna, XP, cheer).
   const companion = useCompanionMode();
   // Ambient mood — reflects sleep window, overdue pile, streak.
@@ -1205,14 +1010,12 @@ export default function Home() {
   const [focusPickerOpen, setFocusPickerOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
   const [capText, setCapText] = useState('');
-  const [moreOpen, setMoreOpen] = useState(false);
+  // The waiting card ("N more waiting — Lumi's holding them") —
+  // collapsed by default, same calm-first default as Done today.
+  const [waitingOpen, setWaitingOpen] = useState(false);
   // Someday → real-date sheet target. When set, the MoveBackToDateSheet
   // opens for this task.
   const [movingBack, setMovingBack] = useState<Quest | null>(null);
-  // Which row in "Then, when you're ready" has its note expanded.
-  // Inline "more / less" toggle (per lumi-home-v2 mock) so long notes
-  // are reachable without leaving the list.
-  const [openNoteId, setOpenNoteId] = useState<string | null>(null);
   // The quest currently being edited via EditQuestSheet. When set,
   // the sheet opens with the title + description fields pre-filled.
   const [editingQuest, setEditingQuest] = useState<Quest | null>(null);
@@ -1345,7 +1148,6 @@ export default function Home() {
     ? candidates[swap % candidates.length]
     : null;
   const rest = hero ? candidates.filter((q) => q.id !== hero.id) : [];
-  const visibleRest = moreOpen ? rest : rest.slice(0, 3);
 
   const totalToday = todayQuests.filter((q) => q.window !== 'someday').length;
   // Today's completed quests, freshest first — drives both the progress
@@ -1404,6 +1206,109 @@ export default function Home() {
   }, [todayQuests, now]);
 
   const heroSuggestion: Suggestion | null = suggestions[0] ?? null;
+
+  // ── Pull-forward — when today's clear, offer the NEXT upcoming
+  // task (per lumi-home-oneember): soonest future date wins, biggest
+  // task first within it. Tomorrow, Friday, next week — whatever
+  // comes next. Recurring templates and someday are excluded (a
+  // template isn't an instance; someday has its own flow).
+  const [pullOfferClosed, setPullOfferClosed] = useState(false);
+  const nextUpcoming = useMemo(() => {
+    if (!(allDone || totallyEmpty)) return null;
+    const today = todayKey();
+    const rank = { high: 0, medium: 1, low: 2 } as const;
+    const future = quests.filter(
+      (q) =>
+        !q.completed &&
+        !q.recur &&
+        q.window !== 'someday' &&
+        !!q.date &&
+        q.date > today,
+    );
+    if (future.length === 0) return null;
+    future.sort(
+      (a, b) =>
+        a.date!.localeCompare(b.date!) ||
+        rank[a.importance] - rank[b.importance] ||
+        ((a.scheduledHour ?? 99) * 60 + (a.scheduledMinute ?? 0)) -
+          ((b.scheduledHour ?? 99) * 60 + (b.scheduledMinute ?? 0)),
+    );
+    return future[0];
+  }, [quests, allDone, totallyEmpty]);
+
+  // "tomorrow" / "friday" / "Jul 9" — however far out it lives.
+  const pullLabel = useMemo(() => {
+    if (!nextUpcoming?.date) return '';
+    const [y, m, d] = nextUpcoming.date.split('-').map(Number);
+    const target = new Date(y, m - 1, d);
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    const off = Math.round((target.getTime() - start.getTime()) / 86400000);
+    if (off === 1) return 'tomorrow';
+    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    if (off > 1 && off <= 6) return days[target.getDay()];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${months[target.getMonth()]} ${target.getDate()}`;
+  }, [nextUpcoming, now]);
+
+  /** Borrow it: land the task on today (setDate un-anchors — its old
+   *  clock time belonged to another day) and let the hero machinery
+   *  surface it. */
+  const pullForward = () => {
+    if (!nextUpcoming) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setQuestDate(nextUpcoming.id, todayKey());
+    setSwap(0);
+    showToast(`Borrowed from ${pullLabel} — you're ahead.`);
+  };
+
+  // ── Header readout — one italic dusk line that frames the day ────
+  // Per the lumi-home-capture-4 mock, but with honest numbers (the
+  // mock hardcoded "nothing urgent"; we don't claim that). Hidden in
+  // the all-done / empty states — those cards already speak.
+  const windowPhrase =
+    cw === sharpWindow
+      ? 'your peak window is open now'
+      : `your ${effectiveWindows[cw].label.toLowerCase()} window is open now`;
+  const readout =
+    allDone || totallyEmpty
+      ? null
+      : doneToday > 0
+        ? `${doneToday === 1 ? 'One' : doneToday} down already — ${candidates.length} to go, and ${windowPhrase}.`
+        : `${candidates.length} thing${candidates.length === 1 ? '' : 's'} on today — ${windowPhrase}.`;
+
+  // ── Day-thread data — the whole day as one quiet line ────────────
+  // Done dots use REAL completion stamps (the mockup faked spacing);
+  // upcoming dots sit at their anchored time, or their window's start
+  // when the task is windowed.
+  const threadDone = useMemo(
+    () =>
+      doneTodayList
+        .filter((q) => q.completedAt)
+        .map((q) => {
+          const d = new Date(q.completedAt as string);
+          return { min: d.getHours() * 60 + d.getMinutes(), color: C.lichen };
+        }),
+    [doneTodayList],
+  );
+  const threadUpcoming = useMemo(
+    () =>
+      todayQuests
+        .filter((q) => !q.completed && q.window !== 'someday')
+        .map((q) => {
+          const min =
+            q.scheduledHour != null
+              ? q.scheduledHour * 60 + (q.scheduledMinute ?? 0)
+              : effectiveWindows[q.window].start != null
+                ? (effectiveWindows[q.window].start as number) * 60
+                : null;
+          return min != null
+            ? { min, color: WINDOWS[q.window].color }
+            : null;
+        })
+        .filter((d): d is { min: number; color: string } => d != null),
+    [todayQuests, effectiveWindows],
+  );
 
   // ── Actions ──────────────────────────────────────────────────────
   const showToast = (text: string) => {
@@ -1470,6 +1375,16 @@ export default function Home() {
     }, 6000);
   };
 
+  /** "now" on a waiting row — surface that task as the hero
+   *  immediately. hero = candidates[swap % length], so pointing swap
+   *  at the task's index in candidates does it in one state write. */
+  const surfaceNow = (q: Quest) => {
+    const idx = candidates.findIndex((c) => c.id === q.id);
+    if (idx < 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSwap(idx);
+  };
+
   /** Tap the Undo chip on the post-complete toast. Flips the task
    *  back to not-done; XP stays banked (see XP guardrail). */
   const undoComplete = () => {
@@ -1529,41 +1444,12 @@ export default function Home() {
   const commitTask = (t: SmartTask) => {
     const hasTime = t.at != null;
 
-    // When the user captures a windowed task on TODAY and the chosen
-    // window is already in progress (e.g. "meditate sometime today"
-    // captured at 12:30 PM, midday = 11–14), anchor it to a stable
-    // clock time NOW + 5 min so the Time tab renders it at one fixed
-    // spot — not dynamically against the live `nowMin`, which made it
-    // shift every minute ("in 5 min", "in 4 min", "in 3 min"…). For
-    // tasks captured before the window opens or after it ends, leave
-    // windowed — Time tab renders at the window start and tags it
-    // "missed" if past.
-    let derivedAt: number | null = null;
-    if (
-      !hasTime &&
-      t.timeMode === 'windowed' &&
-      t.window !== 'someday' &&
-      (!t.date || t.date === todayKey())
-    ) {
-      const winStart = effectiveWindows[t.window].start;
-      const winEnd = effectiveWindows[t.window].end;
-      if (winStart != null && winEnd != null) {
-        const startMin = winStart * 60;
-        const endMin = winEnd * 60;
-        const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
-        if (nowMin >= startMin && nowMin < endMin) {
-          derivedAt = Math.min(nowMin + 5, endMin - 5);
-        }
-      }
-    }
-    const effectiveAt = hasTime ? (t.at as number) : derivedAt;
-    const writeAnchor = effectiveAt != null;
-
     // Length: prefer what the LLM extracted / the user picked. If
     // still unknown (LLM didn't infer, user didn't override), fall
     // back to a sane importance-keyed default — never the old
     // hardcoded 30, which over-booked Trials and under-budgeted
-    // Whims.
+    // Whims. (Computed BEFORE the slot search — the slot needs to
+    // know how long the task is.)
     const defaultDurationForImportance: Record<Importance, number> = {
       high: 60,
       medium: 30,
@@ -1571,6 +1457,38 @@ export default function Home() {
     };
     const effectiveDuration =
       t.durationMinutes ?? defaultDurationForImportance[t.importance];
+
+    // AUTO-SLOT — a windowed task with no explicit time gets the next
+    // open :15 slot in its window (after anchors + everything already
+    // scheduled), decided ONCE here at commit. Five "morning" tasks
+    // cascade 8:15 → 8:30 → … instead of piling up at the window
+    // start. Quests are read FRESH from the store (not the render
+    // closure) so batch captures see each other's slots. If the
+    // window is genuinely full, fall back to plain windowed — the
+    // pickers gray full windows out, so this stays rare.
+    let derivedAt: number | null = null;
+    if (
+      !hasTime &&
+      t.timeMode === 'windowed' &&
+      t.window !== 'someday' &&
+      !t.recur
+    ) {
+      const targetISO = t.date ?? todayKey();
+      derivedAt = findWindowSlot({
+        window: t.window,
+        dateISO: targetISO,
+        durationMin: effectiveDuration,
+        quests: useQuestStore.getState().quests,
+        anchors,
+        effectiveWindows,
+        nowMin:
+          targetISO === todayKey()
+            ? new Date().getHours() * 60 + new Date().getMinutes()
+            : null,
+      });
+    }
+    const effectiveAt = hasTime ? (t.at as number) : derivedAt;
+    const writeAnchor = effectiveAt != null;
 
     const quest = addQuest({
       title: t.title,
@@ -2328,32 +2246,38 @@ export default function Home() {
   ) => {
     const s = suggestions.find((x) => x.id === sugInput.id);
     if (!s) return;
-    const recurAt =
-      opts.exactMinute != null ? opts.exactMinute : (s.guess.at ?? undefined);
-    // The card only exposes the four part-of-day windows (no
-    // 'someday'), so this cast is safe — the constraint is enforced
-    // by the WINDOWS array in LumiSuggestCard.
-    const recurPart = opts.window as import('../../constants/recur').RecurPart;
-    const rule = {
-      ...s.guess,
-      part: recurPart,
-      ...(recurAt != null ? { at: recurAt } : {}),
-    };
-    addQuest({
-      title: s.title,
-      difficulty: 'medium',
-      importance: s.importance,
-      window: opts.window,
-      durationMinutes: opts.durationMin,
-      ...(opts.exactMinute != null && {
-        scheduledHour: Math.floor(opts.exactMinute / 60),
-        scheduledMinute: opts.exactMinute % 60,
-      }),
-      recur: rule,
-    });
+    // The card's "Make it repeat" section owns the rule now — it was
+    // prefilled from s.guess, so opts.recur IS the user-confirmed
+    // version of Lumi's guess. Toggled off → they want it once.
+    if (opts.recur) {
+      addQuest({
+        title: s.title,
+        difficulty: 'medium',
+        importance: s.importance,
+        window: opts.window,
+        durationMinutes: opts.durationMin,
+        ...(opts.exactMinute != null && {
+          scheduledHour: Math.floor(opts.exactMinute / 60),
+          scheduledMinute: opts.exactMinute % 60,
+        }),
+        recur: opts.recur,
+      });
+    } else {
+      addQuest({
+        title: s.title,
+        difficulty: 'medium',
+        importance: s.importance,
+        window: opts.window,
+        durationMinutes: opts.durationMin,
+        ...(opts.exactMinute != null && {
+          scheduledHour: Math.floor(opts.exactMinute / 60),
+          scheduledMinute: opts.exactMinute % 60,
+        }),
+      });
+    }
     consumeSuggestion(s.id);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    showToast('Added to your day 💛');
+    showToast(opts.recur ? 'Set to repeat 🔁' : 'Added to your day 💛');
   };
 
   const dismissSuggestionFromCard = (
@@ -2375,18 +2299,44 @@ export default function Home() {
     const idx = Number(sugInput.id.replace('preview_', ''));
     const t = previewTasks[idx];
     if (!t) return;
+    // Recurrence: the card's "Make it repeat" section is the source
+    // of truth now — the user SAW and could edit it there (it used
+    // to pass through invisibly from the LLM parse). opts.recur is
+    // null when the toggle is off, even if the LLM guessed a cadence.
+    const recur = opts.recur;
+    // No pinned time → auto-slot into the chosen window (next open
+    // :15 after anchors + everything scheduled). Same cascade as
+    // commitTask; fresh store read so back-to-back accepts stack.
+    // Recurring tasks skip slotting — they're templates.
+    const targetISO = t.date ?? todayKey();
+    const autoSlot =
+      opts.exactMinute == null && !recur
+        ? findWindowSlot({
+            window: opts.window,
+            dateISO: targetISO,
+            durationMin: opts.durationMin,
+            quests: useQuestStore.getState().quests,
+            anchors,
+            effectiveWindows,
+            nowMin:
+              targetISO === todayKey()
+                ? now.getHours() * 60 + now.getMinutes()
+                : null,
+          })
+        : null;
+    const anchorMinute = opts.exactMinute ?? autoSlot;
     addQuest({
       title: t.title,
       difficulty: 'medium',
       importance: t.importance,
       window: opts.window,
       durationMinutes: opts.durationMin,
-      ...(opts.exactMinute != null && {
-        scheduledHour: Math.floor(opts.exactMinute / 60),
-        scheduledMinute: opts.exactMinute % 60,
+      ...(anchorMinute != null && {
+        scheduledHour: Math.floor(anchorMinute / 60),
+        scheduledMinute: anchorMinute % 60,
       }),
       ...(t.date && { date: t.date }),
-      ...(t.recur && { recur: t.recur }),
+      ...(recur && { recur }),
     });
     // Remove this task from the queue; if it was the last, close
     // the preview card entirely.
@@ -2460,6 +2410,17 @@ export default function Home() {
         cy={0.05}
         style={styles.ambientGlow}
       />
+      {/* Twinkling motes — four tiny fireflies around the header,
+         staggered so they never pulse in unison. Positions + delays
+         from lumi-home-capture-4.jsx. Pure ambience (no touches). */}
+      <TwinkleMotes
+        motes={[
+          { x: 66, y: 96, r: 3, color: C.glow, delay: 0 },
+          { x: 318, y: 156, r: 2.5, color: C.dusk, delay: 0.7 },
+          { x: 236, y: 64, r: 2, color: C.ember, delay: 1.3 },
+          { x: 38, y: 220, r: 2, color: C.dusk, delay: 1.9 },
+        ]}
+      />
 
       {toast && (
         <View style={styles.toast}>
@@ -2481,7 +2442,12 @@ export default function Home() {
       )}
 
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[
+          styles.scroll,
+          keyboardHeight > 0 && {
+            paddingBottom: keyboardHeight + 96,
+          },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* ── Header: date + greeting + Luna nook ── */}
@@ -2491,6 +2457,9 @@ export default function Home() {
             <Text style={styles.greeting}>
               {greeting(now.getHours() + now.getMinutes() / 60)}.
             </Text>
+            {readout && (
+              <Text style={styles.headerReadout}>{readout}</Text>
+            )}
           </View>
           {/* The Luna nook IS the profile entry on Home — tap to
               open profile/settings. No separate profile icon up here
@@ -2503,16 +2472,14 @@ export default function Home() {
             style={styles.lunaNook}
             hitSlop={6}
           >
-            {/* When the day is cleared, the DAY CLEARED card below
-               already features Luna front-and-center, so the nook
-               here would just duplicate the cat. Swap to the same
-               person glyph the ProfileIcon uses elsewhere so this
-               corner still reads as the profile entry. When the
-               day still has work, keep the GIF cat.
-               In Focused companion mode (no cat anywhere) we ALSO
-               fall back to the person glyph so the user still has
-               a tappable profile-entry corner. */}
-            {allDone || !companion.showLuna ? (
+            {/* Luna ALWAYS keeps her nook — even when the day is
+               cleared (she used to swap out for a person glyph
+               there, which read as her leaving; the DAY CLEARED
+               card's sleeping Luna is a scene, this is her home).
+               Only Focused companion mode (no cat anywhere) falls
+               back to the person glyph so the corner still reads
+               as the profile entry. */}
+            {!companion.showLuna ? (
               <Svg
                 width={36}
                 height={36}
@@ -2547,12 +2514,12 @@ export default function Home() {
                    state (sleeping past bedtime, sad if overdue
                    piles, happy on a long streak, idle by default),
                    PLUS a 30-second 'happy' celebration window
-                   whenever a quest gets completed.
-                   32×32 native asset rendered at 64×64 = clean 2×
-                   for sharp pixels. */}
+                   whenever a quest gets completed. 52pt in the
+                   shrunken 62pt tile (1.625× of the 32px source —
+                   soft, but the tile reads cleaner small). */}
                 <Image
                   source={lunaSource(nookMood, lunaSkin)}
-                  style={{ width: 64, height: 64 }}
+                  style={{ width: 52, height: 52 }}
                   resizeMode="contain"
                   accessibilityLabel="Luna"
                 />
@@ -2561,8 +2528,9 @@ export default function Home() {
           </Pressable>
         </View>
 
-        {/* ── Quiet "today" line — streak · progress · done/total · +xp ──
-            Companion-mode gates:
+        {/* ── The day, as one thread — streak · DayThread · done · +xp ──
+            (Replaces the old progress-segment row per the
+            lumi-home-capture-4 mock.) Companion-mode gates:
               showStreak → streak chip (kept in Minimal, off in Focused)
               showXp     → "+N xp" tint (kept in Full only) */}
         <View style={styles.todayLine}>
@@ -2572,19 +2540,15 @@ export default function Home() {
               <Text style={styles.streakNum}>{streak}</Text>
             </View>
           )}
-          <View style={styles.progressRow}>
-            {Array.from({ length: Math.max(totalToday, 1) }).map((_, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.progressSeg,
-                  i < doneToday && { backgroundColor: accent.fg },
-                ]}
-              />
-            ))}
-          </View>
+          <DayThread
+            nowMin={now.getHours() * 60 + now.getMinutes()}
+            wakeMin={anchors.wake}
+            sleepMin={anchors.sleep}
+            done={threadDone}
+            upcoming={threadUpcoming}
+          />
           <Text style={styles.todayCount}>
-            {doneToday}/{totalToday}
+            {doneToday} done
             {companion.showXp && (
               <>
                 {' · '}
@@ -2598,29 +2562,19 @@ export default function Home() {
 
         {/* ═══ THE ONE THING ═══ */}
         {allDone ? (
+          /* Compact text card — Luna lives in her nook now (she used
+             to be duplicated here at 96px, which made this card tall
+             and put two cats on screen). The nook's mood already
+             reads content/sleepy when the day is cleared. */
           <View style={styles.doneCard}>
             <SoftGlow
               color={C.glow}
-              opacity={0.22}
+              opacity={0.18}
               fade={0.7}
               cx={0.5}
-              cy={0.42}
+              cy={0.3}
               style={styles.doneGlow}
             />
-            {/* Luna in the DAY CLEARED card — reads from the same
-               ambient mood hook as the nook. When the user clears
-               the day, the hook returns 'happy' (that's the second
-               priority); past bedtime it returns 'sleep' (which is
-               actually right — the card's body copy already nudges
-               rest). 96×96 = clean 3× scale of the 32×32 source. */}
-            <View style={styles.doneLuna}>
-              <Image
-                source={lunaSource(ambientMood, lunaSkin)}
-                style={{ width: 96, height: 96 }}
-                resizeMode="contain"
-                accessibilityLabel="Luna"
-              />
-            </View>
             <Text style={styles.doneEyebrow}>Day cleared</Text>
             <Text style={styles.doneTitle}>
               That&apos;s everything. Luna&apos;s content.
@@ -2647,7 +2601,15 @@ export default function Home() {
               ambientMood={ambientMood}
               xpReward={hero.xpReward}
               onMarkItDone={() => completeQuest(hero)}
-              onOpenPicker={() => setFocusPickerOpen(true)}
+              onOpenPicker={
+                // "Focus on another task →" only makes sense when
+                // there IS another task to switch to. If the hero
+                // is the day's only incomplete quest, drop the
+                // link entirely so it doesn't dangle.
+                candidates.length > 1
+                  ? () => setFocusPickerOpen(true)
+                  : undefined
+              }
               onSwap={
                 candidates.length > 1
                   ? () => setSwap((s) => s + 1)
@@ -2717,6 +2679,60 @@ export default function Home() {
           </View>
         ) : null}
 
+        {/* ── Pull-forward — "feeling it? the next thread —" ─────────
+            Only when today's clear and something waits on a future
+            date. One task at a time, never the whole pile; dismiss
+            folds it into a quiet dashed chip. */}
+        {(allDone || totallyEmpty) && nextUpcoming && !pullOfferClosed && (
+          <View style={styles.pullCard}>
+            <View style={styles.pullHead}>
+              <Text style={styles.pullSpark}>✦</Text>
+              <Text style={styles.pullEyebrow}>
+                Feeling it? {pullLabel}&apos;s first thread —
+              </Text>
+            </View>
+            <Text style={styles.pullTitle}>{nextUpcoming.title}</Text>
+            <Text style={styles.pullWhy}>
+              {nextUpcoming.note ??
+                `a head start now makes ${pullLabel} lighter.`}
+            </Text>
+            <View style={styles.pullBtnRow}>
+              <Pressable onPress={pullForward} style={styles.pullBtn}>
+                <Text style={styles.pullBtnText}>Pull it into today</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setPullOfferClosed(true);
+                  showToast('Good call. Rest counts.');
+                }}
+                style={styles.pullDismissBtn}
+              >
+                <Text style={styles.pullDismissText}>
+                  I&apos;m done for today
+                </Text>
+              </Pressable>
+            </View>
+            <Text style={styles.pullFootnote}>
+              one at a time — {pullLabel} never lands on you all at once
+            </Text>
+          </View>
+        )}
+        {(allDone || totallyEmpty) && nextUpcoming && pullOfferClosed && (
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync();
+              setPullOfferClosed(false);
+            }}
+            style={styles.pullReopenChip}
+          >
+            <Text style={styles.pullSpark}>✦</Text>
+            <Text style={styles.pullReopenText}>
+              changed your mind? {pullLabel}&apos;s thread is still here
+            </Text>
+          </Pressable>
+        )}
+
         {/* The expanded brain-dump surface no longer renders inline
             in the scroll — it was popping up somewhere mid-page
             depending on scroll position and reading as buggy. It's
@@ -2774,11 +2790,29 @@ export default function Home() {
                     ? 'evening'
                     : previewTasks[0].window,
                 defaultExactMinute: previewTasks[0].at ?? null,
+                // LLM-detected cadence prefills the repeat section —
+                // visible + editable instead of silently committed.
+                defaultRecur: previewTasks[0].recur ?? null,
               }}
               total={previewTasks.length}
               index={0}
               onAccept={acceptPreviewTaskFromCard}
               onDismiss={dismissPreviewTaskFromCard}
+              isWindowFull={(w, d) => {
+                const targetISO = previewTasks[0].date ?? todayKey();
+                return windowIsFull({
+                  window: w,
+                  dateISO: targetISO,
+                  durationMin: d,
+                  quests,
+                  anchors,
+                  effectiveWindows,
+                  nowMin:
+                    targetISO === todayKey()
+                      ? now.getHours() * 60 + now.getMinutes()
+                      : null,
+                });
+              }}
             />
             {previewTasks.length > 1 && (
               <View style={styles.bulkActionsRow}>
@@ -2823,6 +2857,10 @@ export default function Home() {
                 defaultWindow:
                   (heroSuggestion.guess?.part as WindowKey) ?? 'evening',
                 defaultExactMinute: heroSuggestion.guess?.at ?? null,
+                // Recurrence suggestions ARE about repeating — the
+                // repeat section starts on, prefilled with the
+                // detector's guess for the user to confirm or adjust.
+                defaultRecur: heroSuggestion.guess ?? null,
               }}
               total={suggestions.length}
               index={0}
@@ -2832,48 +2870,68 @@ export default function Home() {
           </View>
         )}
 
-        {/* ── "Then, when you're ready" — collapsed rest ── */}
+        {/* ── "N more waiting — Lumi's holding them" ─────────────────
+            The rest of the day lives INSIDE Lumi, not on a wall list
+            (per the lumi-holding mock). Collapsed pill by default;
+            expanding shows each waiting task with a complete-checkbox
+            (tier-colored), its window, and a "now" pill that surfaces
+            it as the hero immediately. Long-press a row to edit;
+            tapping "someday" on a someday row opens the move-back
+            sheet. Delete intentionally lives on the hero card only. */}
         {rest.length > 0 && (
-          <View style={styles.restSection}>
-            <Text style={styles.restEyebrow}>Then, when you&apos;re ready</Text>
-            {visibleRest.map((q) => {
-              const noteOpen = openNoteId === q.id;
-              return (
-              <View key={q.id} style={styles.restRow}>
-                {/* Checkbox — own tap target. Marks done. */}
-                <Pressable
-                  onPress={() => completeQuest(q)}
-                  hitSlop={8}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Mark done: ${q.title}`}
-                  style={styles.restCheckbox}
-                />
-                {/* Middle column — title wraps, note clamps + expand,
-                   meta row underneath. Per lumi-home-v2.jsx: text
-                   gets full row width and never competes with the
-                   trailing icons. */}
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.restTitle} numberOfLines={2}>
-                    {q.title}
-                  </Text>
-                  {q.note && (
-                    <RestNote
-                      note={q.note}
-                      open={noteOpen}
-                      onToggle={() => setOpenNoteId(noteOpen ? null : q.id)}
-                      accentColor={accent.fg}
+          <View style={styles.waitingCard}>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setWaitingOpen((o) => !o);
+              }}
+              style={styles.waitingHead}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: waitingOpen }}
+            >
+              <Text style={styles.waitingSpark}>✦</Text>
+              <Text style={styles.waitingHeadTitle}>
+                {rest.length} more waiting — Lumi&apos;s holding{' '}
+                {rest.length === 1 ? 'it' : 'them'}
+              </Text>
+              <View style={{ flex: 1 }} />
+              <Text style={styles.waitingChev}>
+                {waitingOpen ? '▴' : '▾'}
+              </Text>
+            </Pressable>
+            {waitingOpen && (
+              <>
+                {rest.map((q) => (
+                  <Pressable
+                    key={q.id}
+                    onLongPress={() => {
+                      Haptics.selectionAsync();
+                      setEditingQuest(q);
+                    }}
+                    delayLongPress={350}
+                    style={styles.waitingRow}
+                  >
+                    <Pressable
+                      onPress={() => completeQuest(q)}
+                      hitSlop={10}
+                      accessibilityRole="checkbox"
+                      accessibilityLabel={`Mark done: ${q.title}`}
+                      style={[
+                        styles.waitingCheck,
+                        { borderColor: IMPORTANCE[q.importance].color },
+                      ]}
                     />
-                  )}
-                  {/* Meta row — time · window/move-back · tier. Moved
-                     under the title so it never squeezes the text. */}
-                  <View style={styles.restMetaRow}>
-                    {fmtScheduled(q) && (
-                      <Text
-                        style={[styles.restTime, { color: accent.fg }]}
-                      >
-                        {fmtScheduled(q)}
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text numberOfLines={1} style={styles.waitingRowTitle}>
+                        {q.title}
                       </Text>
-                    )}
+                      {q.note && (
+                        <Text numberOfLines={1} style={styles.waitingNote}>
+                          {q.note}
+                        </Text>
+                      )}
+                    </View>
                     {q.window === 'someday' ? (
                       <Pressable
                         onPress={() => {
@@ -2883,136 +2941,134 @@ export default function Home() {
                         hitSlop={6}
                         accessibilityRole="button"
                         accessibilityLabel="Move back to a real day"
-                        style={styles.restMoveBackBtn}
                       >
-                        <Text style={styles.restMoveBackGlyph}>↺</Text>
+                        <Text style={[styles.waitingWindow, { color: C.mute }]}>
+                          someday
+                        </Text>
                       </Pressable>
                     ) : (
                       <Text
                         style={[
-                          styles.restWindow,
+                          styles.waitingWindow,
                           { color: WINDOWS[q.window].color },
                         ]}
                       >
-                        {WINDOWS[q.window].glyph}{' '}
-                        {effectiveWindows[q.window].label}
+                        {fmtScheduled(q) ??
+                          effectiveWindows[q.window].label.toLowerCase()}
                       </Text>
                     )}
-                    <Text
-                      style={[
-                        styles.restTier,
-                        { color: IMPORTANCE[q.importance].color },
-                      ]}
-                    >
-                      {IMPORTANCE[q.importance].sigil}
-                    </Text>
-                    {/* Edit pill — opens EditQuestSheet so the user
-                       can update the title and add / edit the
-                       description. Sits at the END of the meta
-                       row so it's always reachable regardless of
-                       how wide the time / window labels are. */}
-                    <View style={{ flex: 1 }} />
                     <Pressable
-                      onPress={() => {
-                        Haptics.selectionAsync();
-                        setEditingQuest(q);
-                      }}
+                      onPress={() => surfaceNow(q)}
                       hitSlop={6}
                       accessibilityRole="button"
-                      accessibilityLabel="Edit task"
-                      style={styles.restEditPill}
+                      accessibilityLabel={`Surface now: ${q.title}`}
+                      style={styles.nowPill}
                     >
-                      <Text style={styles.restEditGlyph}>✎</Text>
-                      <Text style={styles.restEditText}>Edit</Text>
+                      <Text style={styles.nowPillText}>now</Text>
                     </Pressable>
-                    {/* Delete pill — matches the Edit pill's style so
-                       the row's right-side actions read as a single
-                       row of affordances instead of one inline pill +
-                       one floating circle in the corner. */}
-                    <RestDeletePill id={q.id} title={q.title} />
-                  </View>
-                </View>
-              </View>
-              );
-            })}
-            {rest.length > 3 && (
-              <Pressable
-                onPress={() => setMoreOpen((o) => !o)}
-                style={styles.moreToggle}
-              >
-                <Text style={styles.moreText}>
-                  {moreOpen ? 'show less' : `+ ${rest.length - 3} more`}
+                  </Pressable>
+                ))}
+                <Text style={styles.waitingFooter}>
+                  they&apos;ll surface one at a time — no pile, promise
                 </Text>
-              </Pressable>
+              </>
             )}
           </View>
         )}
 
-        {/* ── Done today — quiet history with one-tap undo. ───────── */}
+        {/* ── DONE TODAY — the waiting card's sibling, but lichen-lit
+            and celebratory: the day's collected wins, not another
+            list. Check badge instead of the ✦ spark, a warm tally
+            headline, quiet +xp per row, and its own promise line
+            (undo, no judgment). Collapsed by default, same calm. */}
         {doneTodayList.length > 0 && (
-          <View style={styles.historySection}>
+          <View style={styles.doneTodayCard}>
             <Pressable
               onPress={() => {
                 Haptics.selectionAsync();
                 setHistoryOpen((o) => !o);
               }}
-              style={styles.historyEyebrowRow}
+              style={styles.doneTodayHead}
               hitSlop={6}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: historyOpen }}
             >
-              <Text style={styles.historyEyebrow}>Done today</Text>
-              <Text style={styles.historyCount}>{doneTodayList.length}</Text>
+              <View style={styles.doneTodayBadge}>
+                <Text style={styles.doneTodayBadgeGlyph}>✓</Text>
+              </View>
+              <Text numberOfLines={1} style={styles.doneTodayHeadTitle}>
+                {doneTodayList.length} done today —{' '}
+                {doneTodayList.length >= 5
+                  ? 'a genuinely full day'
+                  : doneTodayList.length === 1
+                    ? 'the first one counts double'
+                    : 'quietly stacking up'}
+              </Text>
               <View style={{ flex: 1 }} />
-              <Text style={styles.historyChev}>
-                {historyOpen ? '▾' : '▸'}
+              <Text style={styles.doneTodayChev}>
+                {historyOpen ? '▴' : '▾'}
               </Text>
             </Pressable>
-            {historyOpen &&
-              (moreDoneOpen ? doneTodayList : doneTodayList.slice(0, 3)).map(
-              (q) => {
-                const ago = fmtAgo(q.completedAt, now);
-                return (
-                  <View key={q.id} style={styles.historyRow}>
-                    <View style={styles.historyCheck}>
-                      <Text style={styles.historyCheckGlyph}>✓</Text>
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.historyTitle} numberOfLines={1}>
-                        {q.title}
-                      </Text>
-                      <Text style={styles.historyMeta}>
-                        {ago ? ago : 'today'}
-                        {q.window !== 'someday' && q.window
-                          ? ` · ${effectiveWindows[q.window].label}`
-                          : ''}
-                      </Text>
-                    </View>
-                    <Pressable
-                      onPress={() => undoFromHistory(q)}
-                      hitSlop={6}
-                      style={styles.undoPill}
-                    >
-                      <Text style={styles.undoPillGlyph}>↺</Text>
-                      <Text
-                        style={[styles.undoPillText, { color: accent.fg }]}
+            {historyOpen && (
+              <>
+                {(moreDoneOpen
+                  ? doneTodayList
+                  : doneTodayList.slice(0, 3)
+                ).map((q) => {
+                  const ago = fmtAgo(q.completedAt, now);
+                  return (
+                    <View key={q.id} style={styles.doneTodayRow}>
+                      <View style={styles.historyCheck}>
+                        <Text style={styles.historyCheckGlyph}>✓</Text>
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.historyTitle} numberOfLines={1}>
+                          {q.title}
+                        </Text>
+                        <Text style={styles.historyMeta}>
+                          {ago ? ago : 'today'}
+                          {q.window !== 'someday' && q.window
+                            ? ` · ${effectiveWindows[q.window].label}`
+                            : ''}
+                        </Text>
+                      </View>
+                      {companion.showXp && (
+                        <Text style={styles.doneTodayXp}>
+                          +{q.xpReward}
+                        </Text>
+                      )}
+                      <Pressable
+                        onPress={() => undoFromHistory(q)}
+                        hitSlop={6}
+                        style={styles.undoPill}
                       >
-                        Undo
-                      </Text>
-                    </Pressable>
-                  </View>
-                );
-              },
-            )}
-            {historyOpen && doneTodayList.length > 3 && (
-              <Pressable
-                onPress={() => setMoreDoneOpen((o) => !o)}
-                style={styles.moreToggle}
-              >
-                <Text style={styles.moreText}>
-                  {moreDoneOpen
-                    ? 'show less'
-                    : `+ ${doneTodayList.length - 3} more`}
+                        <Text style={styles.undoPillGlyph}>↺</Text>
+                        <Text
+                          style={[styles.undoPillText, { color: accent.fg }]}
+                        >
+                          Undo
+                        </Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+                {doneTodayList.length > 3 && (
+                  <Pressable
+                    onPress={() => setMoreDoneOpen((o) => !o)}
+                    style={styles.moreToggle}
+                  >
+                    <Text style={styles.moreText}>
+                      {moreDoneOpen
+                        ? 'show less'
+                        : `+ ${doneTodayList.length - 3} more`}
+                    </Text>
+                  </Pressable>
+                )}
+                <Text style={styles.doneTodayFooter}>
+                  changed your mind? undo brings it right back — no
+                  judgment
                 </Text>
-              </Pressable>
+              </>
             )}
           </View>
         )}
@@ -3037,7 +3093,18 @@ export default function Home() {
           single ember-filled ↑ submit button that runs sendCapture,
           matching the mockup's quick-fire capture pattern. */}
       {!capOpen && !previewTasks && !sortingRaw && (
-        <View style={styles.capturePill} pointerEvents="box-none">
+        <View
+          // Tour target — the capture-pill rewrite dropped this ref,
+          // which left the tour's first step spotlighting nothing.
+          ref={captureRef as never}
+          style={[
+            styles.capturePill,
+            // Keyboard open → sit right on top of it (the nav below
+            // is buried anyway). Closed → back to the nav clearance.
+            keyboardHeight > 0 && { bottom: keyboardHeight + 8 },
+          ]}
+          pointerEvents="box-none"
+        >
           <View style={styles.capturePillInner}>
             <Text
               style={[styles.capturePillSpark, { color: accent.fg }]}
@@ -3254,12 +3321,15 @@ const makeStyles = (accent: Accent) =>
   StyleSheet.create({
     safe: { flex: 1, backgroundColor: C.void },
     // SoftGlow handles the fade — this style is just the position+size.
+    // Sized to the mockup's wash (radial 135%×52% at 82% 2%): wide
+    // enough to bleed past mid-screen so the page reads "lit from the
+    // corner", not "sticker in the corner".
     ambientGlow: {
       position: 'absolute',
       top: 0,
       right: 0,
-      width: 360,
-      height: 360,
+      width: 460,
+      height: 420,
     },
     scroll: {
       paddingHorizontal: 22,
@@ -3342,9 +3412,11 @@ const makeStyles = (accent: Accent) =>
     },
     undoToast: {
       position: 'absolute',
-      // Above the floating glass nav, with a small gap so the toast
-      // doesn't kiss the pill.
-      bottom: FLOATING_NAV_CLEARANCE + 8,
+      // Above the CAPTURE PILL, not on it — the pill lives at
+      // FLOATING_NAV_CLEARANCE + 4 and is ~56pt tall; parking the
+      // toast at the same altitude buried the text/mic input for the
+      // whole 6-second undo window. +72 clears the pill with a gap.
+      bottom: FLOATING_NAV_CLEARANCE + 72,
       left: 22,
       right: 22,
       flexDirection: 'row',
@@ -3403,10 +3475,22 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: -0.7,
       lineHeight: 32,
     },
+    headerReadout: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 14,
+      color: C.dusk,
+      marginTop: 7,
+      lineHeight: 21,
+      letterSpacing: -0.1,
+      maxWidth: 250,
+    },
+    // Shrunk 78 → 62 (mock proportions) — the nook is a home, not a
+    // billboard; smaller reads cleaner beside the greeting.
     lunaNook: {
-      width: 78,
-      height: 78,
-      borderRadius: 20,
+      width: 62,
+      height: 62,
+      borderRadius: 16,
       borderWidth: 1,
       borderColor: C.hair,
       backgroundColor: C.surface,
@@ -3417,11 +3501,11 @@ const makeStyles = (accent: Accent) =>
     // Container only — SoftGlow paints the radial fade inside.
     lunaNookGlow: {
       position: 'absolute',
-      top: -10,
+      top: -8,
       left: '50%',
-      marginLeft: -55,
-      width: 110,
-      height: 90,
+      marginLeft: -44,
+      width: 88,
+      height: 72,
     },
 
     // ── Quiet today line ──
@@ -3442,18 +3526,6 @@ const makeStyles = (accent: Accent) =>
       fontSize: 12.5,
       color: C.boneDim,
     },
-    progressRow: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-    },
-    progressSeg: {
-      flex: 1,
-      height: 3,
-      borderRadius: 2,
-      backgroundColor: C.hair,
-    },
     todayCount: {
       fontFamily: fonts.inter,
       fontSize: 12,
@@ -3464,30 +3536,31 @@ const makeStyles = (accent: Accent) =>
       fontStyle: 'italic',
     },
 
-    // ── Done state ──
+    // ── Done state — compact text card (Luna stays in her nook) ──
     doneCard: {
-      borderRadius: 24,
+      borderRadius: 22,
       paddingHorizontal: 24,
-      paddingTop: 34,
-      paddingBottom: 30,
+      paddingTop: 24,
+      paddingBottom: 22,
       alignItems: 'center',
       backgroundColor: C.void2,
       borderWidth: 1,
       borderColor: hexA(C.glow, 0.4),
-      marginBottom: 26,
+      // Followers (pull-forward card, Done today) own their own
+      // marginTop: 14 — a big bottom margin here doubled up with
+      // them into a ~40px chasm while everything below sat ~18 apart.
+      marginBottom: 2,
       overflow: 'hidden',
     },
-    // Container the bloom paints inside. Spans the full width of the
-    // card so cx=0.5 lands center; height covers Luna's nook so
-    // cy=0.42 puts the brightest spot just above her head.
+    // Container the bloom paints inside — full card width, warm
+    // center just above the title.
     doneGlow: {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
-      height: 220,
+      height: 140,
     },
-    doneLuna: { marginBottom: 6 },
     doneEyebrow: {
       fontFamily: fonts.interSemi,
       fontSize: 10,
@@ -3515,6 +3588,111 @@ const makeStyles = (accent: Accent) =>
       maxWidth: 270,
     },
 
+    // ── Pull-forward offer (lumi-home-oneember) ──
+    pullCard: {
+      marginTop: 14,
+      marginBottom: 4,
+      paddingHorizontal: 15,
+      paddingVertical: 14,
+      borderRadius: 16,
+      backgroundColor: hexA(C.dusk, 0.07),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.28),
+    },
+    pullHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+    },
+    pullSpark: {
+      color: C.dusk,
+      fontSize: 11,
+    },
+    pullEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9.5,
+      letterSpacing: 1.8,
+      textTransform: 'uppercase',
+      color: C.dusk,
+      flexShrink: 1,
+    },
+    pullTitle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.2,
+      lineHeight: 19,
+      marginTop: 9,
+    },
+    pullWhy: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: C.dusk,
+      lineHeight: 17,
+      marginTop: 5,
+    },
+    pullBtnRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 13,
+    },
+    pullBtn: {
+      flex: 1.4,
+      paddingVertical: 12,
+      borderRadius: 12,
+      backgroundColor: hexA(C.dusk, 0.14),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.45),
+      alignItems: 'center',
+    },
+    pullBtnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 13,
+      color: C.dusk,
+    },
+    pullDismissBtn: {
+      flex: 1,
+      paddingVertical: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: hexA(C.bone, 0.13),
+      alignItems: 'center',
+    },
+    pullDismissText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12.5,
+      color: C.boneDim,
+    },
+    pullFootnote: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 10,
+      color: C.mute,
+      marginTop: 9,
+    },
+    pullReopenChip: {
+      alignSelf: 'center',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      paddingHorizontal: 16,
+      paddingVertical: 9,
+      marginTop: 14,
+      marginBottom: 4,
+      borderRadius: 100,
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: hexA(C.dusk, 0.35),
+    },
+    pullReopenText: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: hexA(C.dusk, 0.9),
+    },
+
     // ── Empty state ──
     emptyCard: {
       borderRadius: 20,
@@ -3522,7 +3700,8 @@ const makeStyles = (accent: Accent) =>
       borderColor: C.hair,
       backgroundColor: C.void2,
       padding: 22,
-      marginBottom: 26,
+      // Same rhythm as doneCard — followers bring their own gap.
+      marginBottom: 2,
     },
     emptyEyebrow: {
       fontFamily: fonts.interSemi,
@@ -4233,61 +4412,6 @@ const makeStyles = (accent: Accent) =>
       color: C.mute,
     },
 
-    // ── Rest list ──
-    restSection: {},
-    restEyebrow: {
-      fontFamily: fonts.interSemi,
-      fontSize: 10,
-      letterSpacing: 2,
-      textTransform: 'uppercase',
-      color: C.mute,
-      marginBottom: 8,
-    },
-    restRow: {
-      flexDirection: 'row',
-      // flex-start so the checkbox + × button sit at the top
-      // of the title row instead of jumping to the middle as the
-      // content grows (long title wraps, note expands, etc.).
-      alignItems: 'flex-start',
-      gap: 13,
-      paddingVertical: 14,
-      paddingHorizontal: 2,
-      borderBottomWidth: 1,
-      borderBottomColor: hexA(C.hair, 0.7),
-    },
-    restCheckbox: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
-      borderWidth: 1.5,
-      borderColor: C.ash,
-      marginTop: 1,
-    },
-    restTitle: {
-      fontFamily: fonts.inter,
-      fontSize: 14.5,
-      color: C.boneDim,
-      letterSpacing: -0.15,
-      lineHeight: 19,
-    },
-    restNote: {
-      fontFamily: fonts.fraunces,
-      fontStyle: 'italic',
-      fontSize: 12.5,
-      color: C.mute,
-      marginTop: 3,
-      lineHeight: 18,
-    },
-    restNoteToggleHit: {
-      alignSelf: 'flex-start',
-      paddingTop: 2,
-      paddingBottom: 2,
-      marginTop: 2,
-    },
-    restNoteToggle: {
-      fontFamily: fonts.interSemi,
-      fontSize: 11.5,
-    },
     previewNote: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
@@ -4296,72 +4420,94 @@ const makeStyles = (accent: Accent) =>
       marginTop: 4,
       lineHeight: 17,
     },
-    // ── Meta row under the title (time · window · tier). Moved
-    //    below per lumi-home-v2 so titles never get squeezed. ──
-    restMetaRow: {
+
+    // ── "N more waiting — Lumi's holding them" (lumi-holding mock) ──
+    waitingCard: {
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: C.hair,
+      backgroundColor: hexA(C.void2, 0.7),
+      marginTop: 2,
+      overflow: 'hidden',
+    },
+    waitingHead: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
-      marginTop: 7,
-      flexWrap: 'wrap',
+      gap: 9,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
     },
-    restTime: {
+    waitingSpark: {
+      color: C.dusk,
+      fontSize: 12,
+    },
+    waitingHeadTitle: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 11,
+      fontSize: 15.5,
+      color: C.dusk,
       letterSpacing: -0.2,
     },
-    restWindow: {
-      fontFamily: fonts.inter,
-      fontSize: 10.5,
+    waitingChev: {
+      color: C.mute,
+      fontSize: 12,
     },
-    // ── Move-back icon button (Someday rows only) — sized to match
-    //    the delete × button so the row stays compact.
-    restMoveBackBtn: {
-      marginRight: 6,
-      width: 22,
-      height: 22,
-      borderRadius: 11,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: 'rgba(255,255,255,0.04)',
-      borderWidth: 1,
-      borderColor: 'rgba(176,163,139,0.22)',
-    },
-    restMoveBackGlyph: {
-      color: '#B0A38B',
-      fontSize: 13,
-      lineHeight: 15,
-      marginTop: -1,
-    },
-    restTier: {
-      width: 24,
-      textAlign: 'right',
-      fontSize: 8,
-      letterSpacing: -1,
-    },
-    // ── Edit pill (in meta row) ──
-    restEditPill: {
+    waitingRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 5,
-      borderWidth: 1,
-      borderColor: 'rgba(176,163,139,0.22)',
-      borderRadius: 100,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.hair, 0.7),
     },
-    restEditGlyph: {
+    waitingCheck: {
+      width: 18,
+      height: 18,
+      borderRadius: 6,
+      borderWidth: 1.5,
+      backgroundColor: hexA(C.void, 0.4),
+      flexShrink: 0,
+    },
+    waitingRowTitle: {
+      fontFamily: fonts.interMed,
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.15,
+    },
+    waitingNote: {
       fontFamily: fonts.inter,
-      fontSize: 10.5,
-      color: C.boneDim,
-      marginTop: -1,
+      fontSize: 11.5,
+      color: C.mute,
+      marginTop: 2,
     },
-    restEditText: {
+    waitingWindow: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      flexShrink: 0,
+    },
+    nowPill: {
+      borderWidth: 1,
+      borderColor: hexA(C.ember, 0.5),
+      borderRadius: 100,
+      paddingHorizontal: 13,
+      paddingVertical: 6,
+      flexShrink: 0,
+    },
+    nowPillText: {
       fontFamily: fonts.interSemi,
-      fontSize: 11,
-      color: C.boneDim,
-      letterSpacing: -0.1,
+      fontSize: 12.5,
+      color: C.ember,
+    },
+    waitingFooter: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: C.mute,
+      paddingVertical: 11,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.hair, 0.7),
     },
     moreToggle: {
       paddingVertical: 14,
@@ -4374,50 +4520,79 @@ const makeStyles = (accent: Accent) =>
       color: C.mute,
     },
 
-    // ── "Done today" — quiet history with one-tap undo. ────────────
-    // Lichen accent on the check (the only place "done" lives in the
-    // palette). Title is dim + line-through so the row reads as past.
-    // Undo pill uses the user accent (ember by default) — the user's
-    // action color, since reactivating is THEIR move.
-    historySection: {
-      marginTop: 28,
-      paddingTop: 18,
-      borderTopWidth: 1,
-      borderTopColor: hexA(C.lichen, 0.18),
+    // ── DONE TODAY — the waiting card's lichen-lit sibling. ────────
+    // Same collapsible-card bones as waitingCard, its own soul: the
+    // done color throughout (border, dividers, badge), a warm tally
+    // headline, quiet +xp per row (glow), and the no-judgment undo
+    // promise. Undo pill keeps the user accent — reactivating is
+    // THEIR move.
+    doneTodayCard: {
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.28),
+      backgroundColor: hexA(C.lichen, 0.04),
+      marginTop: 14,
+      overflow: 'hidden',
     },
-    historyEyebrowRow: {
+    doneTodayHead: {
       flexDirection: 'row',
-      alignItems: 'baseline',
-      gap: 8,
-      marginBottom: 10,
-      paddingLeft: 2,
+      alignItems: 'center',
+      gap: 9,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
     },
-    historyEyebrow: {
+    doneTodayBadge: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: hexA(C.lichen, 0.16),
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.5),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    doneTodayBadgeGlyph: {
       fontFamily: fonts.interSemi,
       fontSize: 10,
-      letterSpacing: 2,
-      textTransform: 'uppercase',
       color: C.lichen,
+      lineHeight: 12,
     },
-    historyCount: {
+    doneTodayHeadTitle: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 13,
-      color: C.lichen,
+      fontSize: 15.5,
+      color: C.lichenLt,
+      letterSpacing: -0.2,
+      flexShrink: 1,
     },
-    historyChev: {
-      fontSize: 13,
+    doneTodayChev: {
       color: hexA(C.lichen, 0.7),
-      marginLeft: 'auto',
+      fontSize: 12,
     },
-    historyRow: {
+    doneTodayRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.lichen, 0.14),
+    },
+    doneTodayXp: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 12.5,
+      color: C.glow,
+    },
+    doneTodayFooter: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: hexA(C.lichenLt, 0.8),
       paddingVertical: 11,
-      paddingHorizontal: 2,
-      borderBottomWidth: 1,
-      borderBottomColor: hexA(C.hair, 0.55),
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.lichen, 0.14),
     },
     historyCheck: {
       width: 22,

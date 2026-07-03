@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Encrypted at-rest (security audit §6): AES via lib/secureStorage —
+// key in Keychain/Keystore, ciphertext in AsyncStorage. Legacy
+// plaintext values migrate in place on first read.
+import { secureStorage } from '../lib/secureStorage';
 import { xpForQuest, todayKey } from '../lib/gamification';
 import { Importance, importanceFromDifficulty } from '../constants/importance';
 import {
@@ -511,7 +514,7 @@ export const useQuestStore = create<QuestState>()(
     }),
     {
       name: 'lumi.quests',
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createJSONStorage(() => secureStorage),
       version: 4,
       migrate: (persisted: unknown, version) => {
         if (!persisted || typeof persisted !== 'object')

@@ -40,6 +40,13 @@ const ALLOWED_KINDS: AiKind[] = [
 ];
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
+// Model allowlist (security audit §3) — the client may only pick from
+// models we've priced for. Anything else silently falls back to the
+// default instead of being passed through to Anthropic.
+const ALLOWED_MODELS = new Set([
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5-20251001",
+]);
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 // Hard cap so a malicious client can't run up bills by asking for
@@ -98,7 +105,10 @@ const validateBody = (raw: unknown): CallBody | { error: string } => {
     system: (b.system as string | undefined) ?? "",
     messages: b.messages as CallBody["messages"],
     max_tokens: max,
-    model: typeof b.model === "string" ? b.model : DEFAULT_MODEL,
+    model:
+      typeof b.model === "string" && ALLOWED_MODELS.has(b.model)
+        ? b.model
+        : DEFAULT_MODEL,
   };
 };
 

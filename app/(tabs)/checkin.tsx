@@ -61,6 +61,7 @@ import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
 import { useUserStore } from '../../store/userStore';
 import { MicIcon } from '../../components/MicIcon';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
+import { useKeyboardHeight } from '../../lib/useKeyboard';
 import {
   useCorrectionsStore,
   summarizeCorrections,
@@ -1088,6 +1089,14 @@ export default function Untangle() {
           imp === 'high' ? 'hard' : imp === 'medium' ? 'medium' : 'easy';
         const defaultDur =
           imp === 'high' ? 60 : imp === 'medium' ? 30 : 15;
+        // Defense-in-depth clamp (security audit §4): llmUntangle
+        // already caps durations upstream, but this is the last stop
+        // before the store — a bypassed/hostile value must not write
+        // a 999999-minute task.
+        const safeDur =
+          p.durationMin != null && Number.isFinite(p.durationMin)
+            ? Math.max(5, Math.min(600, Math.round(p.durationMin)))
+            : defaultDur;
         // Time landing logic. If the LLM gave a clock time, anchor to
         // it. Else fall back to a window — defaulting to morning for
         // high importance, evening for low.
@@ -1095,14 +1104,25 @@ export default function Untangle() {
           const [hStr, mStr] = p.at.split(':');
           const h = parseInt(hStr, 10);
           const m = parseInt(mStr, 10);
-          if (Number.isFinite(h) && Number.isFinite(m)) {
+          // Bounds-check the clock (security audit §4): the regex
+          // alone admits "25:99", and a hostile/hallucinated model
+          // response shouldn't be able to write an impossible time
+          // into the store. Out of range → windowed fallback below.
+          if (
+            Number.isFinite(h) &&
+            Number.isFinite(m) &&
+            h >= 0 &&
+            h <= 23 &&
+            m >= 0 &&
+            m <= 59
+          ) {
             useQuestStore.getState().addQuest({
               title: p.title.trim(),
               difficulty,
               importance: imp,
               scheduledHour: h,
               scheduledMinute: m,
-              durationMinutes: p.durationMin ?? defaultDur,
+              durationMinutes: safeDur,
               ...(p.date ? { date: p.date } : { date: selectedDate }),
             });
             applied += 1;
@@ -1122,7 +1142,7 @@ export default function Untangle() {
           difficulty,
           importance: imp,
           window: win,
-          durationMinutes: p.durationMin ?? defaultDur,
+          durationMinutes: safeDur,
           ...(p.date ? { date: p.date } : { date: selectedDate }),
         });
         applied += 1;
@@ -1396,6 +1416,9 @@ export default function Untangle() {
   //  is steady while the user does the talking.
   const chatMood: LunaMood = 'idle';
 
+  // Keyboard-aware input clearance — see the inputWrap override below.
+  const keyboardHeight = useKeyboardHeight();
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView
@@ -1636,7 +1659,16 @@ export default function Untangle() {
         </ScrollView>
 
         {/* ─── Input (ember) ─── */}
-        <View style={styles.inputWrap}>
+        {/* While the keyboard is up, the floating nav is buried under
+            it — so the input drops its nav clearance and sits snug on
+            the keyboard instead of floating ~100px above it (the
+            KeyboardAvoidingView already adds the keyboard's height). */}
+        <View
+          style={[
+            styles.inputWrap,
+            keyboardHeight > 0 && { paddingBottom: 14 },
+          ]}
+        >
           <View
             style={[
               styles.inputBar,

@@ -11,6 +11,7 @@
  * multi-device users yet.
  */
 import { useEffect, useRef } from 'react';
+import { create } from 'zustand';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from './supabase';
 import { useUserStore } from '../store/userStore';
@@ -21,7 +22,11 @@ import {
   getEffectiveWindows,
   type WindowKey,
 } from '../constants/windows';
-import { useCheckinStore, type Checkin } from '../store/checkinStore';
+import {
+  useCheckinStore,
+  pruneOldCheckins,
+  type Checkin,
+} from '../store/checkinStore';
 import { readState, energyValue } from '../constants/moodMap';
 import { usePetStore } from '../store/petStore';
 
@@ -191,6 +196,19 @@ const pushPet = async (userId: string) => {
 };
 
 // ── pull: full snapshot → local stores ──────────────────────────────────
+/**
+ * Reactive "has the first pull finished for this uid" flag. The
+ * cross-account wipe in _layout WAITS on this: wiping before the pull
+ * has spoken is how returning Google/Apple sign-ins kept losing their
+ * check-ins (rhythm reset to zero) — the wipe fired on a missing
+ * local receipt that the pull was about to mint from the server.
+ * Fail-safe: a failed pull never sets the flag, so no wipe happens on
+ * flaky networks (it re-arms next launch).
+ */
+export const useSyncStatus = create<{
+  pulledFor: Record<string, true>;
+}>(() => ({ pulledFor: {} }));
+
 export const pullAll = async (userId: string): Promise<void> => {
   const [u, q, c, eq, owned, pet, sos] = await Promise.all([
     supabase.from('users').select('*').eq('id', userId).maybeSingle(),
@@ -251,6 +269,17 @@ export const pullAll = async (userId: string): Promise<void> => {
       subscriptionTier: nextSubTier,
       subscriptionCurrentPeriodEnd: nextSubEnd,
     });
+
+    // Mint the PER-USER onboarding receipt from the server signal.
+    // The routing gate checks `onboardedUserIds[uid]` — a device-local
+    // receipt — so a returning user on a fresh install (or one who
+    // onboarded before receipts shipped) got bounced through
+    // onboarding again even though the server knew them. The server's
+    // `onboarded` flag (pushed on completion) or any existing quests
+    // are proof enough.
+    if (userRow.onboarded) {
+      useUserStore.getState().markOnboardedForUser(userId);
+    }
   }
 
   // Quests — merge by id, cloud version wins on conflict.
@@ -286,6 +315,12 @@ export const pullAll = async (userId: string): Promise<void> => {
       });
     }
     useQuestStore.setState({ quests: Array.from(byId.values()) });
+    // Backstop for rows that predate the `onboarded` column push:
+    // having ANY quests server-side proves this user has been through
+    // the app before — don't re-onboard them.
+    if (q.data.length > 0) {
+      useUserStore.getState().markOnboardedForUser(userId);
+    }
   }
 
   // Checkins — merge by id.
@@ -327,7 +362,10 @@ export const pullAll = async (userId: string): Promise<void> => {
     const merged = Array.from(byId.values()).sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt),
     );
-    useCheckinStore.setState({ checkins: merged });
+    // Local retention: the pull would otherwise resurrect years of
+    // server history onto the device — keep the local copy at the
+    // store's 90-day window (the cloud remains the full archive).
+    useCheckinStore.setState({ checkins: pruneOldCheckins(merged) });
   }
 
   // Pet: traits/skin/adventure/last_care.
@@ -391,12 +429,33 @@ export const pullAll = async (userId: string): Promise<void> => {
       ),
     });
   }
+
+  // Pull finished — the cross-account wipe may now make its call
+  // (receipt was minted above if the server knew this user).
+  useSyncStatus.setState((s) => ({
+    pulledFor: { ...s.pulledFor, [userId]: true },
+  }));
 };
 
 /**
  * Mount once at the root. Pulls on login, subscribes each store, debounces
  * pushes. No-ops when offline / unconfigured / signed out.
  */
+/**
+ * Immediate, undebounced push of everything local — the sign-out
+ * flow runs this BEFORE wiping local data so the wipe can never
+ * destroy unsynced work. Throws if any push fails (caller then
+ * keeps the local data as the fail-safe).
+ */
+export const pushAllNow = async (userId: string): Promise<void> => {
+  await Promise.all([
+    pushUser(userId),
+    pushQuests(userId),
+    pushCheckins(userId),
+    pushPet(userId),
+  ]);
+};
+
 export const useCloudSync = (session: Session | null) => {
   const offlineMode = useUserStore((s) => s.offlineMode);
   const pulledRef = useRef<string | null>(null);

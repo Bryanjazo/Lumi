@@ -26,13 +26,14 @@ import {
 } from '@expo-google-fonts/inter-tight';
 import { View, ActivityIndicator } from 'react-native';
 import { colors } from '../constants/colors';
-import { useUserStore, DEFAULT_ANCHORS } from '../store/userStore';
+import { useUserStore } from '../store/userStore';
+import { resetLocalUserData } from '../lib/localData';
 import { useQuestStore } from '../store/questStore';
 import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { useSession, handleAuthDeepLink } from '../lib/auth';
 import { isSupabaseConfigured } from '../lib/supabase';
-import { useCloudSync } from '../lib/sync';
+import { useCloudSync, useSyncStatus } from '../lib/sync';
 import { useWidgetSync } from '../lib/widget';
 import {
   configureRevenueCat,
@@ -77,6 +78,8 @@ export default function RootLayout() {
   const markOnboardedForUser = useUserStore((s) => s.markOnboardedForUser);
   const { session, loading: sessionLoading } = useSession();
   useCloudSync(session);
+  // First-pull-per-user flags — the cross-account wipe waits on these.
+  const pulledFor = useSyncStatus((s) => s.pulledFor);
   // Push the cat's mood + completion count to the iOS home-screen
   // widget whenever they change. No-op on Android / Expo Go / web.
   useWidgetSync();
@@ -136,6 +139,15 @@ export default function RootLayout() {
     if (!uid) return;
     // Already known on this device — keep their data.
     if (onboardedUserIds[uid]) return;
+    // WAIT for the first cloud pull before wiping. The pull mints the
+    // onboarding receipt from the server (users.onboarded / existing
+    // quests) — wiping before it spoke is how returning Google/Apple
+    // sign-ins kept losing their check-ins (rhythm reset to zero).
+    // A genuinely NEW account still gets wiped right after its pull
+    // completes (no receipt gets minted for it). A failed pull never
+    // sets the flag → no wipe on flaky networks (fail-safe; re-arms
+    // next launch).
+    if (!pulledFor[uid]) return;
     // First-launch legacy adoption (only fires when the map is fully
     // empty AND local `onboarded` is still true from before v7). Don't
     // wipe — the bridge above adopts the existing data.
@@ -156,42 +168,13 @@ export default function RootLayout() {
         useSuggestionsStore.getState().suggestions.length > 0;
       if (!hasData) return;
 
-      useQuestStore.getState().reset();
-      useCheckinStore.getState().reset();
-      useSuggestionsStore.getState().reset();
-      // Wipe learned LLM corrections too — they're per-user
-      // preferences, not device defaults.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('../store/correctionsStore').useCorrectionsStore.getState().reset();
-      useUserStore.setState({
-        // identity
-        name: '',
-        // Default pet name matches the app brand — both are "Lumi".
-        petName: 'Lumi',
-        adhdType: null,
-        avatar: 'default',
-        // progression
-        xp: 0,
-        streak: 0,
-        lastActiveDate: null,
-        shieldAvailable: true,
-        shieldUsedThisWeek: false,
-        shards: 0,
-        // onboarding seeds
-        struggles: [],
-        sharpWindow: null,
-        foggyWindow: null,
-        wakeHour: 7,
-        anchors: DEFAULT_ANCHORS,
-        windowOverrides: { midday: 11, afternoon: 14, evening: 17 },
-        // legacy onboarding flag (per-user gate is onboardedUserIds)
-        onboarded: false,
-        onboardedAt: null,
-      });
+      // Shared wipe — the same reset signOut() uses (lib/localData),
+      // so "what counts as personal data" lives in exactly one place.
+      resetLocalUserData();
     } catch (e) {
       console.warn('[lumi] cross-account wipe failed', e);
     }
-  }, [session, onboardedUserIds, onboarded, onboardedAt]);
+  }, [session, onboardedUserIds, onboarded, onboardedAt, pulledFor]);
 
   // ── Legacy adoption (one-shot, single user):
   //

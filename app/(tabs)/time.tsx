@@ -1,29 +1,36 @@
-// Lumi · Time v2.2 — "Day · Week · Month"
+// Lumi · Time v3 — "The Load Map"
 //
-// Spec: lumi-time-v2-2-spec.md (mockup: lumi-time-v2-2.jsx).
+// Spec: lumi-time-loadmap.jsx (carries v2.2's bones forward).
 // Thesis: time blindness isn't "how long till the next ping" — it's
 // losing where you are in time. v2 fixed within-a-day (the thread);
-// v2.2 fixes across-days with Day/Week/Month zoom, free date
-// navigation, and a "what's next" bar pinned across every view.
+// v2.2 fixed across-days with Day/Week/Month zoom; v3 makes the
+// zoomed views ACTIONABLE:
+//   • Load model — every task weighs by tier (◆◆◆ 3 · ◆◆ 2 · ◆ 1);
+//     a day reads open / light / full / heavy.
+//   • Week = 7 card rows surfacing their load (word + pips) with the
+//     day's tasks as chips.
+//   • Month = a warm LOAD MAP — heat shows heavy vs light days, the
+//     busiest day gets a nudge, heavy days get one-tap "Lighten".
+//   • Cross-day drag-and-drop: long-press a chip (Week), a peek row
+//     (Month), or a task row (Day) and drop it on any day / open
+//     gap. Every move → toast + Undo.
+//   • Day = the compact thread: anchors + tasks in time order, NOW
+//     breathing between past and future, open stretches as dashed
+//     drop targets, the slump as a quiet seam. (v2's pixel-per-
+//     minute timeline retired — it spent the screen on empty hours.)
 //
-// READS only — Time is a view over the shared data. Each date =
-// `userStore.anchors` (the routine bones) + that date's quests from
-// `useQuestStore` (dated + `recur`-expanded). Energy bands come from
-// the learned curve. Fresh accounts show anchors only — never seeded.
-//
-// Bug fixes carried from v2:
-//   - Energy-band labels rendered in a reserved right gutter at
-//     zIndex 50 so item cards never cover them (v2 spec §4).
-//   - **New** stacking guard: items within MIN_VERTICAL_GAP px after
-//     their natural Y get pushed down so cards don't overlap visually.
-//     Time labels follow their item so position stays honest.
+// READS only (except drops) — Time is a view over the shared data.
+// Each date = `userStore.anchors` (the routine bones) + that date's
+// quests from `useQuestStore` (dated + `recur`-expanded). Energy
+// seams come from the learned curve. Fresh accounts show anchors
+// only — never seeded.
 
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type ReactElement,
 } from 'react';
 import {
   View,
@@ -31,26 +38,29 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
-  Modal,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import Animated, {
+  Easing,
   useAnimatedStyle,
   useSharedValue,
+  withRepeat,
   withSpring,
+  withTiming,
   runOnJS,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import { timeColors as C } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { IMPORTANCE, type Importance } from '../../constants/importance';
-import {
-  useEffectiveWindows,
-  type WindowKey,
-} from '../../constants/windows';
+import { useEffectiveWindows } from '../../constants/windows';
 import { type RecurRule, type WeekdayKey } from '../../constants/recur';
 import {
   useUserStore,
@@ -60,27 +70,46 @@ import { useQuestStore, type Quest } from '../../store/questStore';
 import { useLearningDigest } from '../../lib/learning';
 import { todayKey } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
-import {
-  useDeleteConfirm,
-  useUncompleteConfirm,
-} from '../../components/TaskDeleteWrap';
+import { useUncompleteConfirm } from '../../components/TaskDeleteWrap';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 
 // ═════════════════════════════════════════════════════════════════════
-// Layout constants
+// Layout constants — compact day-thread columns (loadmap layout)
 // ═════════════════════════════════════════════════════════════════════
-const PXPM = 1.05;
-const TOPPAD = 22;
-const THREAD_X = 68;
-const CONTENT_X = 80;
-const ITEM_RIGHT = 32;
-const LABEL_GUTTER = 26;
-const SCROLL_TO_NOW_OFFSET = 170;
-const OPEN_STRETCH_MIN = 70;
-const MIN_VERTICAL_GAP = 28; // stacking guard for adjacent rows
-const UP_NEXT_GAP = 76; // the up-next card is ~67px tall; clear it
+const MARKER_W = 34; // thread-marker column (dots / now pulse)
+const TIME_W = 46; // time-stamp column
+const GAP_MIN = 60; // open stretches ≥ this render as droppable gaps
+// Unfinished tasks float their radio this far RIGHT of the thread
+// line; completing one springs it back onto the line — the day
+// physically collects your wins.
+const RADIO_OFFSET = 16;
 
 const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WDF = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
+
+/** 1 → "st", 22 → "nd", 13 → "th" — for the busiest-day nudge copy. */
+const ordSuffix = (n: number): string => {
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return 'th';
+  switch (n % 10) {
+    case 1:
+      return 'st';
+    case 2:
+      return 'nd';
+    case 3:
+      return 'rd';
+    default:
+      return 'th';
+  }
+};
 const MO = [
   'January',
   'February',
@@ -141,15 +170,6 @@ const dur = (m: number): string => {
   return `${mm}m`;
 };
 
-const partOfDay = (m: number): string => {
-  const h = m / 60;
-  if (h < 11) return 'morning';
-  if (h < 14) return 'midday';
-  if (h < 17) return 'afternoon';
-  if (h < 21) return 'evening';
-  return 'night';
-};
-
 // Local-date stringification — matches lib/gamification.ts → todayKey
 // and lib/capture.ts → ymd. UTC would mismatch when the user's local
 // clock and UTC fall on different calendar days.
@@ -158,6 +178,12 @@ const ymd = (d: Date): string => {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+};
+
+/** 'YYYY-MM-DD' → local-midnight Date (new Date(iso) would parse UTC). */
+const fromIsoLocal = (s: string): Date => {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
 };
 
 const addDays = (d: Date, n: number): Date => {
@@ -321,164 +347,258 @@ const buildItemsForDate = (
 };
 
 // ═════════════════════════════════════════════════════════════════════
-// Band — energy backdrop + rotated label in the reserved gutter.
+// Load model — per lumi-time-loadmap.jsx. Each task weighs by tier
+// (Trial 3 · Task 2 · Whim 1); the sum is the day's load. Words keep
+// it humane: nobody needs to know their day scores "8".
 // ═════════════════════════════════════════════════════════════════════
-const Band = ({
-  yTop,
-  height,
-  color,
-  label,
-}: {
-  yTop: number;
-  height: number;
-  color: string;
-  label: string;
-}) => (
-  <View
-    pointerEvents="none"
-    style={{
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      top: yTop,
-      height,
-    }}
-  >
-    {/* Horizontal gradient (color → transparent left to right) so the
-        band gently announces the energy window without making the
-        whole thread feel washed. Matches the mock's
-        linear-gradient(90deg, col@10%, col@3% 70%, transparent). */}
-    <LinearGradient
-      colors={[
-        hexA(color, 0.1),
-        hexA(color, 0.03),
-        'rgba(0,0,0,0)',
-      ]}
-      locations={[0, 0.7, 1]}
-      start={{ x: 0, y: 0.5 }}
-      end={{ x: 1, y: 0.5 }}
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
-      }}
-    />
-    {/* Vertical label in the right gutter — letters stacked top-to-
-        bottom starting at the band's START TIME. Lives OUTSIDE the
-        thread column so it can't be overlapped by task chips, and
-        unlike the previous 90°-rotated <Text> (which RN rotated
-        around its center and pushed half the glyph above the
-        band's top edge), this version is height-deterministic: each
-        letter occupies exactly LINE_H pixels, anchored from the
-        start time downward, so the label can never get clipped or
-        rendered outside the visible band. ' ' chars render as
-        middle-dot separators so words read like "PEAK · SHARP". */}
-    <View
-      pointerEvents="none"
-      style={{
-        position: 'absolute',
-        right: 4,
-        top: 6,
-        width: LABEL_GUTTER - 8,
-        alignItems: 'center',
-      }}
-    >
-      {label
-        // Collapse any run of separator glyphs (spaces, middle
-        // dots) into a single space. Source labels like
-        // "peak · sharp" expand to [' ', '·', ' '] when split per-
-        // char, which then rendered as THREE stacked dots between
-        // the words. Normalising first means one separator → one
-        // visible middle-dot regardless of how the source is
-        // punctuated.
-        .replace(/[\s·]+/g, ' ')
-        .trim()
-        .toUpperCase()
-        .split('')
-        .map((ch, i) => (
-          <Text
-            key={`${ch}-${i}`}
-            style={{
-              fontFamily: fonts.interSemi,
-              fontSize: 10,
-              lineHeight: 12,
-              color: hexA(color, 1),
-              letterSpacing: 0,
-            }}
-          >
-            {ch === ' ' ? '·' : ch}
-          </Text>
-        ))}
+const TIER_W: Record<Importance, number> = { high: 3, medium: 2, low: 1 };
+const HEAVY_LOAD = 7;
+
+const loadOf = (items: TItem[]): number =>
+  items.reduce(
+    (s, i) => (i.kind === 'quest' && i.tier ? s + TIER_W[i.tier] : s),
+    0,
+  );
+
+const loadWord = (l: number): string =>
+  l === 0 ? 'open' : l <= 3 ? 'light' : l <= 6 ? 'full' : 'heavy';
+
+/** Three little dots that read a day's load at a glance. */
+const Pips = ({ load }: { load: number }) => {
+  const n = load === 0 ? 0 : load <= 3 ? 1 : load <= 6 ? 2 : 3;
+  const col = n === 3 ? C.ember : n === 2 ? C.honey : C.lichen;
+  return (
+    <View style={{ flexDirection: 'row', gap: 3, alignItems: 'center' }}>
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: 3,
+            backgroundColor: i < n ? hexA(col, 0.9) : hexA(C.bone, 0.1),
+          }}
+        />
+      ))}
     </View>
-  </View>
-);
+  );
+};
 
 // ═════════════════════════════════════════════════════════════════════
-// Item — uses the pre-computed render Y from the stacking guard so
-// overlapping items get nudged down a bit instead of stacking on top.
+// Cross-day drag-and-drop — long-press a task chip (Week) or peek row
+// (Month), drag, drop on any day target.
+//
+// Architecture: the ghost's position lives in shared values (60fps on
+// the UI thread, zero re-renders); React state only holds the dragged
+// task's static info + which target is hovered (changes rarely). Drop
+// targets register their View refs; ALL rects are measured once via
+// measureInWindow at drag start — you can't scroll mid-drag (the pan
+// owns the touch), so the rects can't go stale during the gesture.
 // ═════════════════════════════════════════════════════════════════════
-const Item = ({
+interface DragTask {
+  questId: string;
+  title: string;
+  tier: Importance;
+  min: number;
+  /** Task length — the gap drop-preview clamps so the task FITS. */
+  durMin: number;
+  fromIso: string;
+}
+
+interface DragCtl {
+  gx: SharedValue<number>;
+  gy: SharedValue<number>;
+  active: SharedValue<number>;
+  begin: (t: DragTask) => void;
+  hover: (x: number, y: number) => void;
+  drop: (x: number, y: number) => void;
+  cancel: () => void;
+  registerTarget: (key: string, ref: View | null) => void;
+  /** Re-measure all drop-target rects mid-drag — for views that
+   *  scroll themselves when a drag starts (Month snaps to top so the
+   *  grid is reachable from a long peek list). */
+  remeasure: () => void;
+  /** "day:YYYY-MM-DD" / "gap:…" currently hovered, or null. */
+  overKey: string | null;
+  /** questId being dragged (chips dim themselves), or null. */
+  draggingId: string | null;
+  /** Live landing time while hovering a day-view gap — the finger's
+   *  position INSIDE the gap picks the minute (:15-snapped). Null
+   *  when not over a gap. */
+  dropPreview: number | null;
+}
+
+/** Wraps a chip/row to make it long-press-draggable. Long-press (not
+ *  plain pan) so taps and the parent ScrollView keep working. */
+const DragChip = ({
+  task,
+  ctl,
+  children,
+}: {
+  task: DragTask;
+  ctl: DragCtl;
+  children: ReactElement;
+}) => {
+  const pan = Gesture.Pan()
+    .activateAfterLongPress(220)
+    .onStart((e) => {
+      'worklet';
+      ctl.active.value = 1;
+      ctl.gx.value = e.absoluteX;
+      ctl.gy.value = e.absoluteY;
+      runOnJS(ctl.begin)(task);
+    })
+    .onUpdate((e) => {
+      'worklet';
+      ctl.gx.value = e.absoluteX;
+      ctl.gy.value = e.absoluteY;
+      runOnJS(ctl.hover)(e.absoluteX, e.absoluteY);
+    })
+    .onEnd((e) => {
+      'worklet';
+      ctl.active.value = 0;
+      runOnJS(ctl.drop)(e.absoluteX, e.absoluteY);
+    })
+    .onFinalize((_e, success) => {
+      'worklet';
+      if (!success) {
+        ctl.active.value = 0;
+        runOnJS(ctl.cancel)();
+      }
+    });
+  return <GestureDetector gesture={pan}>{children}</GestureDetector>;
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// NowPulse — the breathing ember dot on the day thread's now row.
+// ═════════════════════════════════════════════════════════════════════
+const NowPulse = () => {
+  const t = useSharedValue(0);
+  useEffect(() => {
+    t.value = withRepeat(
+      withTiming(1, { duration: 1700, easing: Easing.inOut(Easing.sin) }),
+      -1,
+      true,
+    );
+  }, [t]);
+  const halo = useAnimatedStyle(() => ({
+    transform: [{ scale: 0.85 + t.value * 0.4 }],
+    opacity: 0.7 + t.value * 0.3,
+  }));
+  return (
+    <View style={{ width: 13, height: 13 }}>
+      <Animated.View
+        style={[
+          {
+            position: 'absolute',
+            top: -6,
+            left: -6,
+            width: 25,
+            height: 25,
+            borderRadius: 13,
+            backgroundColor: hexA(C.ember, 0.28),
+          },
+          halo,
+        ]}
+      />
+      <View
+        style={{
+          width: 13,
+          height: 13,
+          borderRadius: 7,
+          backgroundColor: C.ember,
+          shadowColor: C.ember,
+          shadowOpacity: 0.8,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: 6,
+        }}
+      />
+    </View>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// DayTaskRow — one task on the compact day thread (loadmap style).
+//
+// The marker is a RADIO with physical meaning: an unfinished task
+// floats its hollow ring RADIO_OFFSET px right of the thread line —
+// visibly not part of the day's record yet. Tap the ring → the task
+// completes and the marker SPRINGS LEFT onto the line, morphing into
+// the lichen check as it lands (the thread collects the win). Un-
+// completing springs it back off. Anchors and the now-pulse always
+// live on the line; tasks have to earn their place.
+//
+//   done     → check bead ON the line, strikethrough, tap row to
+//              un-complete
+//   past due → its own DIMMED state (ash time, quiet title, no glow)
+//              with a MISSED tag — the radio completes it (same
+//              reward fan-out as Home so no XP leaks)
+//   active   → floating radio ring in the tier color (high glows),
+//              sigil + duration, handle dots when draggable
+//
+// NO delete here by design — Time is where you SEE and MOVE the day,
+// not where you manage the task list. Completing (and un-completing)
+// is the only state change a row offers; deleting lives on Home.
+// ═════════════════════════════════════════════════════════════════════
+const DayTaskRow = ({
   it,
-  y,
+  isToday,
+  isPast,
   nowMin,
-  isNextQuest,
-  showAsPast,
-  hideTime,
-  wakeMin,
-  dayHeight,
+  inPeak,
+  styles,
 }: {
   it: TItem;
-  y: number;
+  isToday: boolean;
+  isPast: boolean;
   nowMin: number;
-  isNextQuest: boolean;
-  showAsPast: boolean;
-  hideTime?: boolean;
-  wakeMin: number;
-  dayHeight: number;
+  inPeak: boolean;
+  styles: ReturnType<typeof makeStyles>;
 }) => {
-  const past = showAsPast && it.min + (it.durMin ?? 0) <= nowMin;
-  const tierMeta = it.tier ? IMPORTANCE[it.tier] : null;
-  const col =
-    it.kind === 'anchor' ? C.mute : tierMeta ? tierMeta.color : C.boneDim;
+  const tierCol = it.tier ? IMPORTANCE[it.tier].color : C.boneDim;
   const done = it.done === true;
-  // A quest is "missed" when its scheduled time/window has already
-  // passed today but it isn't completed. We surface this with a small
-  // rust tag so the user can see what slipped — the task stays active
-  // (not pushed to tomorrow) so they can still do it now or move it
-  // explicitly. Anchors are never missed (they're not tasks).
-  const missed = past && !done && it.kind === 'quest';
-  // Always-visible delete on quest items (anchors come from profile
-  // and aren't deletable here). Single tap → destructive confirm.
-  // Hide the × on already-completed tasks — they're a record of what
-  // you finished and shouldn't be one-tap erasable.
-  const confirmDelete = useDeleteConfirm(it.questId ?? '', it.title);
-  const canDelete = it.kind === 'quest' && !!it.questId && !done;
-  // Tap a completed quest row to UN-complete it — catches accidental
-  // taps past Home's 6-second undo window.
+  // Past due = the whole day is behind you, OR its slot already
+  // passed today. (Previously only the today case existed, so an
+  // unfinished task on yesterday rendered exactly like "up next".)
+  const missed =
+    !done && (isPast || (isToday && it.min + (it.durMin ?? 0) <= nowMin));
+  // Radio-complete works on real quest rows only. Future dates show
+  // recurring TEMPLATES as ghost projections — completing one of
+  // those would mark the template itself done, which is a lie.
+  const canComplete = !!it.questId && (!it.recurring || isToday || isPast);
+
+  // ── The clip-to-thread animation ─────────────────────────────────
+  // slide 1 = floating right of the line (unfinished), 0 = seated on
+  // the line (done). Syncs to `done` with a spring on every change,
+  // so BOTH completion paths (radio tap, missed Mark-done pill) get
+  // the clip effect, and un-completing springs the marker back off.
+  const slide = useSharedValue(done ? 0 : 1);
+  useEffect(() => {
+    slide.value = withSpring(done ? 0 : 1, {
+      damping: 13,
+      stiffness: 160,
+    });
+  }, [done, slide]);
+  const markerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: slide.value * RADIO_OFFSET }],
+  }));
+  const ringStyle = useAnimatedStyle(() => ({
+    opacity: slide.value,
+  }));
+  const checkStyle = useAnimatedStyle(() => ({
+    opacity: 1 - slide.value,
+    transform: [{ scale: 0.6 + 0.4 * (1 - slide.value) }],
+  }));
   const confirmUncomplete = useUncompleteConfirm(it.questId ?? '', it.title);
-  const canUncomplete = it.kind === 'quest' && !!it.questId && done;
-  // Missed tasks need a way to finish them in place — the user did
-  // the thing late, they shouldn't have to open Home and find it.
-  // Tapping the ember "Done" pill toggles complete with a success
-  // haptic. Only renders on missed items (past + not done).
-  //
-  // FAN-OUT: must mirror Home's completeQuest so completing here
-  // grants the SAME rewards as completing on Home. Previously this
-  // only called toggle(), leaking XP/shards/streak credit. The
-  // fan-out is: toggle + addXp(reward) + addShard + registerActivity.
-  // We don't trigger Luna cheer here — that's a Home-only visual.
+
+  // FAN-OUT mirrors Home's completeQuest (XP + shard + activity) so
+  // finishing a missed task here grants the same rewards.
   const markDone = () => {
     if (!it.questId) return;
-    // Capture state BEFORE the toggle so we can detect the
-    // not-done → done transition. toggle() returns the updated
-    // quest; if `next.completed === true` and the prior `prev` was
-    // not completed, this is a fresh completion and we fan out
-    // the rewards.
-    const prev = useQuestStore.getState().quests.find(
-      (qq) => qq.id === it.questId,
-    );
+    const prev = useQuestStore
+      .getState()
+      .quests.find((qq) => qq.id === it.questId);
     const next = useQuestStore.getState().toggle(it.questId);
     if (prev && next && !prev.completed && next.completed) {
       const u = useUserStore.getState();
@@ -489,1045 +609,447 @@ const Item = ({
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
-  // ── Drag-and-drop on Day view ───────────────────────────────────
-  // Only quest items that aren't done are draggable. Anchors come
-  // from the user's profile (not editable here); done tasks are
-  // history. Past missed tasks ARE draggable — they should be easy
-  // to slide forward to "now or later" without going to Home.
-  const canDrag = it.kind === 'quest' && !!it.questId && !done;
-  const dragY = useSharedValue(0);
-  const isDragging = useSharedValue(0);
-  // Live preview of the proposed drop time. Null when not dragging;
-  // a snapped minute-of-day while the gesture is active. Drives the
-  // time label so the user sees the new time before they release.
-  const [proposedMin, setProposedMin] = useState<number | null>(null);
-  const previewTime = (translationY: number) => {
-    const newY = y + translationY;
-    const newMin = (newY - TOPPAD) / PXPM + wakeMin;
-    const SNAP = 15;
-    // Mirror the hour-magnetic snap from onEnd so the live preview
-    // and the committed drop agree. Within 8 min of an hour edge,
-    // pull to the hour; otherwise standard 15-min snap.
-    const nearestHour = Math.round(newMin / 60) * 60;
-    const snapRaw =
-      Math.abs(newMin - nearestHour) <= 8
-        ? nearestHour
-        : Math.round(newMin / SNAP) * SNAP;
-    const snapped = Math.max(0, Math.min(24 * 60 - SNAP, snapRaw));
-    setProposedMin(snapped);
-  };
-  const clearPreview = () => setProposedMin(null);
-
-  // Commit a dropped position. Snaps to 15-min intervals, clamps to
-  // [wake, sleep] so a wild drag can't yeet the task to 4 AM. Fires
-  // questStore.anchor with the new clock time.
-  const commitDrop = (newMinRaw: number) => {
-    if (!it.questId) return;
-    const SNAP = 15;
-    const minClamped = Math.max(
-      0,
-      Math.min(24 * 60 - SNAP, Math.round(newMinRaw / SNAP) * SNAP),
-    );
-    const h = Math.floor(minClamped / 60);
-    const m = minClamped % 60;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    useQuestStore.getState().anchor(it.questId, h, m);
-  };
-
-  const startHaptic = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-  };
-
-  // Pan gesture — activeOffsetY ensures a small finger jiggle won't
-  // hijack the user's tap on the × delete or the "Mark done" pill.
-  // Spring helper used by both the confirm and the cancel paths to
-  // return the wrapper to its original position.
-  const springBack = () => {
-    dragY.value = withSpring(0, { damping: 18, stiffness: 200 });
-  };
-
-  // After release, hold the card at its dropped position and open a
-  // branded confirm modal. State drives the visibility; the system
-  // Alert.alert read as iOS chrome and didn't fit Lumi's surface.
-  const [pendingDrop, setPendingDrop] = useState<{
-    oldMin: number;
-    newMin: number;
-  } | null>(null);
-  const promptDropConfirm = (newMinSnapped: number) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setPendingDrop({ oldMin: it.min, newMin: newMinSnapped });
-  };
-  const cancelDrop = () => {
-    Haptics.selectionAsync();
-    setPendingDrop(null);
-    springBack();
-    setProposedMin(null);
-  };
-  const acceptDrop = () => {
-    if (!pendingDrop) return;
-    commitDrop(pendingDrop.newMin);
-    setPendingDrop(null);
-    springBack();
-    setProposedMin(null);
-  };
-
-  const panGesture = Gesture.Pan()
-    .enabled(canDrag)
-    .activeOffsetY([-10, 10])
-    .onBegin(() => {
-      'worklet';
-      isDragging.value = 1;
-      runOnJS(startHaptic)();
-    })
-    .onUpdate((e) => {
-      'worklet';
-      dragY.value = e.translationY;
-      // Live time label preview during drag.
-      runOnJS(previewTime)(e.translationY);
-    })
-    .onEnd((e) => {
-      'worklet';
-      isDragging.value = 0;
-      // Convert the dropped Y back to a snapped minute. Compute it
-      // here in the worklet, then hand both values (old + new) to
-      // the JS thread so the confirm Alert can show them.
-      const newY = y + e.translationY;
-      const SNAP = 15;
-      const newMinRaw = (newY - TOPPAD) / PXPM + wakeMin;
-      // Hour-magnetic snap: when the raw drop time is within 8 min
-      // of an hour boundary, pull to the hour exactly. This fixes
-      // the "I dragged to 8 but it landed on 8:15" papercut — the
-      // 15-min snap alone has no concept of "round number" and the
-      // user's finger rarely lands within 7.5 min of an hour edge
-      // perfectly. Outside the magnet zone, fall back to the
-      // standard 15-min snap.
-      const nearestHour = Math.round(newMinRaw / 60) * 60;
-      const distToHour = Math.abs(newMinRaw - nearestHour);
-      const snappedRaw =
-        distToHour <= 8 ? nearestHour : Math.round(newMinRaw / SNAP) * SNAP;
-      const snapped = Math.max(
-        0,
-        Math.min(24 * 60 - SNAP, snappedRaw),
-      );
-      if (snapped === it.min) {
-        // No change — spring straight back, no prompt needed.
-        dragY.value = withSpring(0, { damping: 18, stiffness: 200 });
-        runOnJS(clearPreview)();
-        return;
-      }
-      // Hold the card at the drop position until the user confirms;
-      // the Alert shows what's about to happen before any state write.
-      runOnJS(promptDropConfirm)(snapped);
-    });
-
-  // The wrapper hosts the whole Item — all children position
-  // RELATIVE to the wrapper's top:y, so animating translateY moves
-  // the time label, dot, tick bar, and content card together.
-  const wrapperStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: dragY.value }],
-    // Lift active drags above siblings so the card visibly floats.
-    zIndex: isDragging.value ? 100 : 1,
-  }));
-
   return (
-    <Animated.View
-      style={[
-        {
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          top: y,
-        },
-        wrapperStyle,
-      ]}
-      // Don't intercept touches at the wrapper level — let children
-      // (Pressables for delete / mark done) get them first.
-      pointerEvents="box-none"
+    <Pressable
+      onPress={done ? confirmUncomplete : undefined}
+      style={styles.dayRow}
     >
-      {it.durMin && it.durMin > 0 && (
-        <View
-          style={{
-            position: 'absolute',
-            left: THREAD_X - 2,
-            top: 0,
-            width: 4,
-            height: Math.max(6, it.durMin * PXPM),
-            borderRadius: 3,
-            backgroundColor: hexA(col, past ? 0.18 : 0.42),
-          }}
+      {/* Peak-hours sheen — tasks sitting in the sharp window get a
+          soft glow wash so "do the hard thing now" reads ambiently.
+          Skipped once a task is past due — a missed task shouldn't
+          glow like an invitation. */}
+      {inPeak && !done && !missed && (
+        <LinearGradient
+          colors={[hexA(C.glow, 0.05), 'rgba(0,0,0,0)']}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 0.7, y: 0.5 }}
+          style={[StyleSheet.absoluteFill, { borderRadius: 10 }]}
         />
       )}
-      {/* Time label.
-          Normally hidden when this row shares the same minute as
-          the row above (dedup against the wake anchor or another
-          task at the same time — keeps the left rail uncluttered).
-          BUT during a drag, the user needs to see where they're
-          landing — so the dedup is suppressed and the ember preview
-          renders regardless. That's why this conditional ORs in
-          `proposedMin != null`. */}
-      {(!hideTime || proposedMin != null) && (
-        <Text
-          style={{
-            position: 'absolute',
-            left: 0,
-            // Widen the slot while dragging so a long time like
-            // "11:30" doesn't truncate as it scales up.
-            width: proposedMin != null ? 64 : 52,
-            top: proposedMin != null ? -10 : -7,
-            textAlign: 'right',
-            fontFamily:
-              proposedMin != null ? fonts.frauncesMed : fonts.fraunces,
-            fontStyle: 'italic',
-            // Bump size + flip to ember so the time pops on the
-            // timeline column where it already lives — no separate
-            // floating pill, just a dramatic in-place transformation
-            // tied to the existing time label.
-            fontSize: proposedMin != null ? 18 : 13,
-            color:
-              proposedMin != null
-                ? C.ember
-                : past
-                  ? C.ash
-                  : C.boneDim,
-            letterSpacing: proposedMin != null ? -0.4 : 0,
-            opacity: past && proposedMin == null ? 0.7 : 1,
-            // Slight glow so the drag-state time is unmistakable
-            // against the dark thread.
-            textShadowColor: proposedMin != null
-              ? hexA(C.ember, 0.6)
-              : 'transparent',
-            textShadowRadius: proposedMin != null ? 8 : 0,
-          }}
+      <View style={styles.dayMarkerCol}>
+        <Pressable
+          disabled={done || !canComplete}
+          onPress={markDone}
+          hitSlop={12}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: done }}
+          accessibilityLabel={`Mark done: ${it.title}`}
         >
-          {fmt(proposedMin ?? it.min)}
-        </Text>
-      )}
-      {it.kind === 'anchor' ? (
-        <View
-          style={{
-            position: 'absolute',
-            left: THREAD_X - 5,
-            top: -5,
-            width: 10,
-            height: 10,
-            borderRadius: 5,
-            backgroundColor: C.void,
-            borderWidth: 1.5,
-            borderColor: past ? C.hair : C.ash,
-          }}
-        />
-      ) : (
-        <>
-          {/* Soft 3px halo ring around active quest dots — matches the
-              mock's box-shadow: 0 0 0 3px col@16%. Skipped for past
-              and completed items so they sit calmly on the thread. */}
-          {!past && !done && (
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                left: THREAD_X - 9,
-                top: -9,
-                width: 18,
-                height: 18,
-                borderRadius: 9,
-                backgroundColor: hexA(col, 0.16),
-              }}
+          <Animated.View style={[styles.dayRadioWrap, markerStyle]}>
+            {/* hollow radio — floats off the line until earned.
+                Past due dims to a rust outline (no glow): the ring
+                stops advertising and starts recording. */}
+            <Animated.View
+              style={[
+                styles.dayRadio,
+                {
+                  borderColor: missed ? hexA(C.ember, 0.5) : tierCol,
+                },
+                it.tier === 'high' && !missed && styles.peekDotHigh,
+                ringStyle,
+              ]}
             />
-          )}
-          <View
-            style={{
-              position: 'absolute',
-              left: THREAD_X - 6,
-              top: -6,
-              width: 12,
-              height: 12,
-              borderRadius: 6,
-              backgroundColor: done ? hexA(col, 0.5) : col,
-              borderWidth: 2,
-              borderColor: C.void,
-            }}
-          />
-        </>
-      )}
-      {isNextQuest && tierMeta ? (
-        <GestureDetector gesture={panGesture}>
-          <View
-            style={{
-              position: 'absolute',
-              left: CONTENT_X,
-              right: ITEM_RIGHT,
-              top: -13,
-              backgroundColor: C.void2,
-            borderRadius: 13,
-            borderWidth: 1,
-            borderColor: hexA(col, 0.45),
-            paddingHorizontal: 13,
-            paddingVertical: 9,
-            shadowColor: '#000',
-            shadowOpacity: 0.4,
-            shadowRadius: 10,
-            shadowOffset: { width: 0, height: 6 },
-          }}
+            {/* check bead — scales in as the marker clips to the
+                thread. */}
+            <Animated.View style={[styles.dayRadioCheck, checkStyle]}>
+              <Text style={styles.peekDoneCheckGlyph}>✓</Text>
+            </Animated.View>
+          </Animated.View>
+        </Pressable>
+      </View>
+      <Text
+        style={[
+          styles.dayRowTime,
+          { color: done ? C.mute : missed ? C.ash : C.ember },
+          // The 10px radio clearance only applies while the ring
+          // floats off the line — once complete, the time settles
+          // back into column with the anchor times.
+          !done && { marginLeft: 10 },
+        ]}
+      >
+        {fmt(it.min)}
+      </Text>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          numberOfLines={2}
+          style={[
+            styles.dayRowTitle,
+            missed && { color: C.boneDim },
+            done && {
+              color: C.mute,
+              textDecorationLine: 'line-through',
+              textDecorationColor: hexA(C.mute, 0.6),
+            },
+          ]}
         >
-          {canDelete && (
-            <Pressable
-              onPress={confirmDelete}
-              hitSlop={10}
-              style={{
-                position: 'absolute',
-                top: 6,
-                right: 8,
-                width: 22,
-                height: 22,
-                borderRadius: 11,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: 'rgba(255,255,255,0.05)',
-                borderWidth: 1,
-                borderColor: hexA(C.boneDim, 0.25),
-              }}
-            >
-              <Text
-                style={{
-                  color: C.mute,
-                  fontSize: 12,
-                  lineHeight: 14,
-                  marginTop: -1,
-                }}
-              >
-                ×
-              </Text>
-            </Pressable>
-          )}
-          <Text
-            style={{
-              fontFamily: fonts.interSemi,
-              fontSize: 9,
-              letterSpacing: 1.5,
-              textTransform: 'uppercase',
-              color: missed ? C.ember : col,
-              marginBottom: 3,
-            }}
-          >
-            {missed ? 'missed' : 'up next'}
-          </Text>
-          <Text
-            numberOfLines={1}
-            style={{
-              fontFamily: fonts.interMed,
-              fontSize: 14.5,
-              color: C.bone,
-              letterSpacing: -0.2,
-              marginBottom: 4,
-            }}
-          >
-            {it.title}
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text
-              style={{
-                fontFamily: fonts.inter,
-                fontSize: 8,
-                color: col,
-                letterSpacing: -1,
-              }}
-            >
-              {tierMeta.sigil}
-            </Text>
-            <Text
-              style={{ fontFamily: fonts.inter, fontSize: 11, color: C.mute }}
-            >
-              {dur(it.durMin ?? 30)}
-              {it.recurring ? ' · repeating' : ''}
-            </Text>
-            {missed && (
-              <Pressable
-                onPress={markDone}
-                hitSlop={6}
-                style={{
-                  marginLeft: 'auto',
-                  paddingHorizontal: 10,
-                  paddingVertical: 4,
-                  borderRadius: 100,
-                  backgroundColor: C.ember,
-                }}
-              >
-                <Text
-                  style={{
-                    fontFamily: fonts.interSemi,
-                    fontSize: 11,
-                    color: C.void,
-                  }}
-                >
-                  Mark done
+          {it.title}
+        </Text>
+        {!done && (
+          <View style={styles.dayRowMeta}>
+            {missed ? (
+              // Past-due meta: just the state + duration ("can I
+              // still squeeze this in"). No Mark-done pill — the
+              // radio IS the completion affordance, same as every
+              // other row.
+              <>
+                <View style={styles.missedTag}>
+                  <Text style={styles.missedTagText}>missed</Text>
+                </View>
+                <Text style={styles.dayRowDur}>{dur(it.durMin ?? 30)}</Text>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.peekSigil, { color: tierCol }]}>
+                  {it.tier ? IMPORTANCE[it.tier].sigil : '◆'}
                 </Text>
-              </Pressable>
+                <Text style={styles.dayRowDur}>
+                  {dur(it.durMin ?? 30)}
+                  {it.recurring ? ' · repeating' : ''}
+                </Text>
+              </>
             )}
           </View>
-          </View>
-        </GestureDetector>
-      ) : (
-        <GestureDetector gesture={panGesture}>
-        <Pressable
-          onPress={canUncomplete ? confirmUncomplete : undefined}
-          style={{
-            position: 'absolute',
-            left: CONTENT_X,
-            right: ITEM_RIGHT,
-            top: -9,
-            // Missed (past + not done) tasks stay readable — they're
-            // still active, the user can still finish them. Plain
-            // past anchors / completed items fade out as before.
-            opacity: missed ? 0.85 : past ? 0.42 : 1,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          {it.kind === 'anchor' ? (
-            <>
-              <Text
-                numberOfLines={1}
-                style={{
-                  fontFamily: fonts.interMed,
-                  fontSize: 14,
-                  color: C.boneDim,
-                  letterSpacing: -0.1,
-                  flexShrink: 0,
-                }}
-              >
-                {it.title}
-              </Text>
-              <View
-                style={{
-                  borderWidth: 1,
-                  borderColor: C.hair,
-                  borderRadius: 100,
-                  paddingHorizontal: 6,
-                  paddingVertical: 2,
-                  flexShrink: 0,
-                }}
-              >
-                <Text
-                  style={{
-                    fontFamily: fonts.interSemi,
-                    fontSize: 8.5,
-                    letterSpacing: 0.5,
-                    color: C.mute,
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  daily
-                </Text>
-              </View>
-            </>
-          ) : tierMeta ? (
-            <>
-              <Text
-                style={{
-                  fontFamily: fonts.inter,
-                  fontSize: 8,
-                  color: col,
-                  letterSpacing: -1,
-                  flexShrink: 0,
-                }}
-              >
-                {tierMeta.sigil}
-              </Text>
-              <Text
-                numberOfLines={1}
-                style={{
-                  flex: 1,
-                  fontFamily: fonts.interMed,
-                  fontSize: 14,
-                  color: done ? C.mute : C.bone,
-                  letterSpacing: -0.15,
-                  textDecorationLine: done ? 'line-through' : 'none',
-                  textDecorationColor: C.ash,
-                }}
-              >
-                {it.title}
-              </Text>
-              {missed && (
-                <>
-                  <View
-                    style={{
-                      paddingHorizontal: 6,
-                      paddingVertical: 2,
-                      borderRadius: 100,
-                      borderWidth: 1,
-                      borderColor: hexA(C.ember, 0.45),
-                      backgroundColor: hexA(C.ember, 0.08),
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontFamily: fonts.interSemi,
-                        fontSize: 9,
-                        letterSpacing: 0.5,
-                        textTransform: 'uppercase',
-                        color: C.ember,
-                      }}
-                    >
-                      missed
-                    </Text>
-                  </View>
-                  <Pressable
-                    onPress={markDone}
-                    hitSlop={6}
-                    style={{
-                      paddingHorizontal: 9,
-                      paddingVertical: 3,
-                      borderRadius: 100,
-                      backgroundColor: C.ember,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontFamily: fonts.interSemi,
-                        fontSize: 10,
-                        letterSpacing: 0.3,
-                        color: C.void,
-                      }}
-                    >
-                      Done
-                    </Text>
-                  </Pressable>
-                </>
-              )}
-              <Text
-                style={{
-                  fontFamily: fonts.inter,
-                  fontSize: 11,
-                  color: C.mute,
-                  flexShrink: 0,
-                }}
-              >
-                {done ? 'done' : dur(it.durMin ?? 30)}
-              </Text>
-              {canDelete && (
-                <Pressable
-                  onPress={confirmDelete}
-                  hitSlop={10}
-                  style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: 11,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: 'rgba(255,255,255,0.04)',
-                    borderWidth: 1,
-                    borderColor: hexA(C.boneDim, 0.22),
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: C.mute,
-                      fontSize: 12,
-                      lineHeight: 14,
-                      marginTop: -1,
-                    }}
-                  >
-                    ×
-                  </Text>
-                </Pressable>
-              )}
-            </>
-          ) : null}
-        </Pressable>
-        </GestureDetector>
-      )}
-      {/* Branded "confirm drop" modal — replaces the system Alert
-          that read as iOS chrome. Same dusk eyebrow + Fraunces
-          italic + bone-on-rust pattern as the delete confirm. */}
-      <DropConfirmModal
-        visible={pendingDrop != null}
-        oldMin={pendingDrop?.oldMin ?? 0}
-        newMin={pendingDrop?.newMin ?? 0}
-        title={it.title}
-        onCancel={cancelDrop}
-        onConfirm={acceptDrop}
-      />
-    </Animated.View>
-  );
-};
-
-// ═════════════════════════════════════════════════════════════════════
-// DropConfirmModal — branded confirm for the drag-and-drop action.
-// Same visual language as the delete confirm so the app feels
-// cohesive (no system Alert chrome).
-// ═════════════════════════════════════════════════════════════════════
-const DropConfirmModal = ({
-  visible,
-  oldMin,
-  newMin,
-  title,
-  onCancel,
-  onConfirm,
-}: {
-  visible: boolean;
-  oldMin: number;
-  newMin: number;
-  title: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) => {
-  const accent = useAccent();
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onCancel}
-      statusBarTranslucent
-    >
-      <View style={dropStyles.scrim}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
-        <SafeAreaView edges={['bottom']} pointerEvents="box-none">
-          <View style={dropStyles.card}>
-            <Text style={dropStyles.eyebrow}>Move it?</Text>
-            <Text style={dropStyles.title}>
-              &ldquo;{title || 'This task'}&rdquo;
-            </Text>
-            <View style={dropStyles.timeRow}>
-              <View style={dropStyles.timePill}>
-                <Text style={dropStyles.timePillLabel}>from</Text>
-                <Text style={dropStyles.timePillValue}>{fmtNow(oldMin)}</Text>
-              </View>
-              <Text style={dropStyles.arrow}>→</Text>
-              <View
-                style={[
-                  dropStyles.timePill,
-                  {
-                    backgroundColor: hexA(accent.fg, 0.14),
-                    borderColor: hexA(accent.fg, 0.45),
-                  },
-                ]}
-              >
-                <Text style={[dropStyles.timePillLabel, { color: accent.fg }]}>
-                  to
-                </Text>
-                <Text
-                  style={[dropStyles.timePillValue, { color: accent.fg }]}
-                >
-                  {fmtNow(newMin)}
-                </Text>
-              </View>
-            </View>
-            <View style={dropStyles.btnRow}>
-              <Pressable onPress={onCancel} style={dropStyles.cancelBtn}>
-                <Text style={dropStyles.cancelText}>Keep it</Text>
-              </Pressable>
-              <Pressable
-                onPress={onConfirm}
-                style={[dropStyles.moveBtn, { backgroundColor: accent.fg }]}
-              >
-                <Text style={dropStyles.moveText}>Move</Text>
-              </Pressable>
-            </View>
-          </View>
-        </SafeAreaView>
+        )}
       </View>
-    </Modal>
+      {!done && !!it.questId && !it.recurring && (
+        <View style={[styles.peekHandle, { marginTop: 5 }]}>
+          {[0, 1, 2].map((r) => (
+            <View key={r} style={styles.peekHandleRow}>
+              <View style={styles.peekHandleDot} />
+              <View style={styles.peekHandleDot} />
+            </View>
+          ))}
+        </View>
+      )}
+    </Pressable>
   );
 };
 
-const dropStyles = StyleSheet.create({
-  scrim: {
-    flex: 1,
-    backgroundColor: 'rgba(8,6,5,0.72)',
-    justifyContent: 'flex-end',
-  },
-  card: {
-    backgroundColor: C.void2,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderTopWidth: 1,
-    borderLeftWidth: 1,
-    borderRightWidth: 1,
-    borderColor: C.hair,
-    paddingHorizontal: 24,
-    paddingTop: 22,
-    paddingBottom: 14,
-  },
-  eyebrow: {
-    fontFamily: fonts.interSemi,
-    fontSize: 10,
-    letterSpacing: 2.2,
-    textTransform: 'uppercase',
-    color: C.dusk,
-    marginBottom: 10,
-  },
-  title: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 22,
-    color: C.bone,
-    letterSpacing: -0.4,
-    lineHeight: 28,
-    marginBottom: 16,
-  },
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 22,
-  },
-  timePill: {
-    flex: 1,
-    backgroundColor: hexA(C.boneDim, 0.06),
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: hexA(C.boneDim, 0.18),
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  timePillLabel: {
-    fontFamily: fonts.interSemi,
-    fontSize: 9.5,
-    letterSpacing: 1.6,
-    textTransform: 'uppercase',
-    color: C.mute,
-    marginBottom: 4,
-  },
-  timePillValue: {
-    fontFamily: fonts.fraunces,
-    fontStyle: 'italic',
-    fontSize: 19,
-    color: C.bone,
-    letterSpacing: -0.3,
-  },
-  arrow: {
-    color: C.boneDim,
-    fontSize: 18,
-  },
-  btnRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  cancelBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: C.hair,
-    alignItems: 'center',
-  },
-  cancelText: {
-    fontFamily: fonts.interSemi,
-    fontSize: 14,
-    color: C.boneDim,
-  },
-  moveBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: 'center',
-  },
-  moveText: {
-    fontFamily: fonts.interSemi,
-    fontSize: 14,
-    color: C.void,
-  },
-});
-
 // ═════════════════════════════════════════════════════════════════════
-// Day thread — the warm timeline. Same as v2 but parameterized by
-// date + isToday so the now-marker / past-scrim only render on today.
+// Day view — THE THREAD, compact (lumi-time-loadmap.jsx). A flat list
+// of anchors + tasks in time order; NOW breathes between past and
+// future; open stretches ≥1h render as dashed DROP TARGETS (drag a
+// task in to re-time it); the slump gets a quiet seam label.
+//
+// v2's pixel-per-minute timeline is retired — proportional spacing
+// read as "truthful" but spent most of the screen on empty hours,
+// and the drag-to-retime it enabled is covered better by the gap
+// targets (you drop into actual room, not a raw minute).
 // ═════════════════════════════════════════════════════════════════════
-interface DayThreadProps {
-  date: Date;
-  isToday: boolean;
-  items: TItem[];
-  nowMin: number;
-  wakeMin: number;
-  sleepMin: number;
-  accent: Accent;
-  styles: ReturnType<typeof makeStyles>;
-  peakStart: number | null;
-  peakEnd: number | null;
-  slumpStart: number | null;
-  slumpEnd: number | null;
-}
+type DayRow =
+  | { kind: 'now' }
+  | { kind: 'seam'; label: string; tone: 'peak' | 'dip' }
+  | { kind: 'gap'; from: number; to: number; key: string }
+  | { kind: 'item'; it: TItem };
 
-const DayThread = ({
+const DayView = ({
+  date,
   isToday,
+  isPast,
   items,
   nowMin,
-  wakeMin,
-  sleepMin,
-  accent,
-  styles,
+  slumpStart,
   peakStart,
   peakEnd,
-  slumpStart,
-  slumpEnd,
-}: DayThreadProps) => {
-  const yOf = (m: number): number =>
-    Math.round(TOPPAD + Math.max(0, m - wakeMin) * PXPM);
+  curveSource,
+  styles,
+  ctl,
+}: {
+  date: Date;
+  isToday: boolean;
+  isPast: boolean;
+  items: TItem[];
+  nowMin: number;
+  slumpStart: number | null;
+  peakStart: number | null;
+  peakEnd: number | null;
+  curveSource: 'baseline' | 'learning' | 'learned';
+  styles: ReturnType<typeof makeStyles>;
+  ctl: DragCtl;
+}) => {
+  const dIso = ymd(date);
+  const hasQuests = items.some((i) => i.kind === 'quest');
 
-  // Next quest first — both the up-next card AND the stacking guard
-  // need to know which item gets the big card so we can clear it.
-  const nextQuest = useMemo(
-    () =>
-      isToday
-        ? items.find(
-            (i) => i.kind === 'quest' && i.min >= nowMin && !i.done,
-          )
-        : items.find((i) => i.kind === 'quest'),
-    [items, isToday, nowMin],
-  );
+  const rows = useMemo((): DayRow[] => {
+    const out: DayRow[] = [];
+    let nowPlaced = false;
 
-  // ── Stacking guard — push items down so they don't paint over each
-  // other. Adjacent rows get MIN_VERTICAL_GAP. The previous item being
-  // the up-next card needs a bigger gap (the card itself is ~67px tall
-  // so a normal 28px nudge isn't enough — the next anchor/quest would
-  // still get covered, which is the bug from the screenshot).
-  // Also flag items that share their minute with the previous item so
-  // the renderer can suppress the duplicate time label.
-  const renderItems = useMemo(() => {
-    let prevY = -Infinity;
-    let prevWasUpNext = false;
-    let prevMin = -Infinity;
-    return items.map((it) => {
-      const natural = yOf(it.min);
-      const isUpNextHere =
-        nextQuest != null &&
-        it.kind === 'quest' &&
-        it.questId === nextQuest.questId;
-      const gap = prevWasUpNext ? UP_NEXT_GAP : MIN_VERTICAL_GAP;
-      const y = Math.max(natural, prevY + gap);
-      const hideTime = it.min === prevMin;
-      prevY = y;
-      prevWasUpNext = isUpNextHere;
-      prevMin = it.min;
-      return { it, y, natural, hideTime };
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, wakeMin, nextQuest]);
+    // Energy seams — labels derived from the USER's curve (learned
+    // from check-ins; baseline is still seeded from their own
+    // chronotype + anchors). Until the curve is trusted (≥14 sample
+    // days) the copy hedges with "likely" instead of asserting.
+    const trusted = curveSource === 'learned';
+    const seams = [
+      peakStart != null && peakEnd != null
+        ? {
+            at: peakStart,
+            tone: 'peak' as const,
+            label: `${trusted ? '' : 'likely '}peak energy · sharp until ${fmt(peakEnd)}`,
+          }
+        : null,
+      slumpStart != null
+        ? {
+            at: slumpStart,
+            tone: 'dip' as const,
+            label: `${trusted ? 'the' : 'likely'} ${fmt(slumpStart)} dip · keep it light`,
+          }
+        : null,
+    ]
+      .filter((s): s is NonNullable<typeof s> => s != null)
+      .sort((a, b) => a.at - b.at);
 
-  const lastY = renderItems.length
-    ? renderItems[renderItems.length - 1].y
-    : yOf(sleepMin);
-  const dayHeight = Math.max(yOf(sleepMin), lastY) + 80;
-
-  // Open stretches based on the natural minutes (not rendered Y).
-  const stretches = useMemo(() => {
-    const out: { start: number; end: number; gap: number }[] = [];
-    const future = items.filter(
-      (i) => i.min + (i.durMin ?? 0) >= (isToday ? nowMin : wakeMin),
-    );
-    for (let i = 0; i < future.length - 1; i++) {
-      const a = future[i];
-      const b = future[i + 1];
-      const start = Math.max(
-        isToday ? nowMin : wakeMin,
-        a.min + (a.durMin ?? 0),
-      );
-      const gap = b.min - start;
-      if (gap >= OPEN_STRETCH_MIN) out.push({ start, end: b.min, gap });
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const prev = items[i - 1];
+      const prevEnd = prev ? prev.min + (prev.durMin ?? 15) : 6 * 60;
+      if (isToday && !nowPlaced && it.min > nowMin) {
+        out.push({ kind: 'now' });
+        nowPlaced = true;
+      }
+      const gapFrom = Math.max(prevEnd, isToday ? nowMin : prevEnd);
+      // Gaps ("room for one thing") only where dropping makes sense:
+      // never on a day that's already over, never before the first
+      // item (the mock's 6am seed painted a phantom stretch above
+      // Wake), and today only ahead of now.
+      if (
+        prev &&
+        !isPast &&
+        it.min - gapFrom >= GAP_MIN &&
+        (!isToday || it.min > nowMin)
+      ) {
+        out.push({
+          kind: 'gap',
+          from: gapFrom,
+          to: it.min,
+          // from + to ride in the key so the drag controller can map
+          // finger-Y inside the gap's rect to a landing minute.
+          key: `gap:${dIso}:${gapFrom}:${it.min}`,
+        });
+      }
+      // Drop each seam where the thread crosses its boundary.
+      if (prev && !isPast) {
+        for (const s of seams) {
+          if (it.min >= s.at && prev.min < s.at) {
+            out.push({ kind: 'seam', label: s.label, tone: s.tone });
+          }
+        }
+      }
+      out.push({ kind: 'item', it });
     }
+    if (isToday && !nowPlaced) out.push({ kind: 'now' });
     return out;
-  }, [items, isToday, nowMin, wakeMin]);
+  }, [
+    items,
+    isToday,
+    isPast,
+    nowMin,
+    slumpStart,
+    peakStart,
+    peakEnd,
+    curveSource,
+    dIso,
+  ]);
 
-  const scrollRef = useRef<ScrollView>(null);
-  useLayoutEffect(() => {
-    const id = setTimeout(() => {
-      scrollRef.current?.scrollTo({
-        y: isToday ? Math.max(0, yOf(nowMin) - SCROLL_TO_NOW_OFFSET) : 0,
-        animated: false,
-      });
-    }, 0);
-    return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isToday, wakeMin]);
+  // Open water — minutes until the next not-done item after now.
+  const openAhead = useMemo(() => {
+    if (!isToday) return null;
+    const next = items.find((i) => i.min > nowMin && !i.done);
+    if (!next) return null;
+    const gap = next.min - nowMin;
+    return gap >= 15 ? gap : null;
+  }, [items, isToday, nowMin]);
 
   return (
     <ScrollView
-      ref={scrollRef}
       style={{ flex: 1 }}
-      // dayHeight + nav clearance so the user can scroll the last
-      // anchor (Sleep) clear of the floating glass nav. Without
-      // this Sleep sits flush at the bottom and gets hidden under
-      // the pill.
-      contentContainerStyle={{ height: dayHeight + FLOATING_NAV_CLEARANCE }}
+      contentContainerStyle={{
+        paddingHorizontal: 22,
+        paddingTop: 4,
+        paddingBottom: FLOATING_NAV_CLEARANCE,
+        // Light days own the whole sheet: flexGrow lets the thread
+        // container stretch to the viewport…
+        flexGrow: 1,
+      }}
       showsVerticalScrollIndicator={false}
     >
-      <View style={{ height: dayHeight, position: 'relative' }}>
-        {(() => {
-          // Render energy bands only when they actually intersect
-          // the visible wake→sleep thread. Without this guard a
-          // band entirely outside the user's awake window (which
-          // can happen if upstream data ever gets weird — e.g. a
-          // slump computed before wakeMin) would clamp to TOPPAD
-          // via yOf() and paint at the top of the day, even though
-          // the user is "asleep" there. Returning null in that case
-          // means any pathological data degrades silently to no
-          // band, instead of a misplaced one.
-          const visible = (start: number, end: number) =>
-            end > wakeMin && start < sleepMin;
-          const clip = (start: number, end: number) => ({
-            s: Math.max(start, wakeMin),
-            e: Math.min(end, sleepMin),
-          });
-          return (
-            <>
-              {peakStart != null &&
-                peakEnd != null &&
-                visible(peakStart, peakEnd) &&
-                (() => {
-                  const { s, e } = clip(peakStart, peakEnd);
-                  return (
-                    <Band
-                      yTop={yOf(s)}
-                      height={Math.max(20, (e - s) * PXPM)}
-                      color={C.lichen}
-                      label="peak · sharp"
-                    />
-                  );
-                })()}
-              {slumpStart != null &&
-                slumpEnd != null &&
-                visible(slumpStart, slumpEnd) &&
-                (() => {
-                  const { s, e } = clip(slumpStart, slumpEnd);
-                  return (
-                    <Band
-                      yTop={yOf(s)}
-                      height={Math.max(20, (e - s) * PXPM)}
-                      color={C.dusk}
-                      label="the slump"
-                    />
-                  );
-                })()}
-            </>
-          );
-        })()}
-
-        <View
-          style={{
-            position: 'absolute',
-            left: THREAD_X - 1,
-            top: yOf(wakeMin),
-            width: 2,
-            height: yOf(sleepMin) - yOf(wakeMin),
-            backgroundColor: C.hair,
-          }}
+      {/* …and space-between breathes the rows apart to fill it —
+          morning near the top, wind-down near the bottom, a faint
+          echo of real time. Once the day has enough rows to exceed
+          the screen, spacing collapses to natural and it scrolls. */}
+      <View
+        style={{
+          position: 'relative',
+          flex: 1,
+          justifyContent: 'space-between',
+        }}
+      >
+        {/* the thread — one soft line down the marker column */}
+        <LinearGradient
+          colors={[hexA(C.ash, 0.4), hexA(C.bone, 0.07)]}
+          style={styles.dayThreadLine}
         />
-
-        {isToday && (
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: 0,
-              height: Math.max(0, yOf(nowMin)),
-              backgroundColor: hexA(C.void, 0.55),
-            }}
-          />
-        )}
-
-        {stretches.map((s, i) => {
-          const my = (yOf(s.start) + yOf(s.end)) / 2;
-          return (
-            <View
-              key={i}
-              style={{
-                position: 'absolute',
-                left: CONTENT_X,
-                right: ITEM_RIGHT,
-                top: my - 14,
-                alignItems: 'center',
-              }}
-            >
-              <View style={styles.stretchPill}>
-                <Text style={styles.stretchTime}>{dur(s.gap)} open</Text>
-                <Text style={styles.stretchSub}>· room for one thing</Text>
-              </View>
-            </View>
-          );
-        })}
-
-        {renderItems.map(({ it, y, hideTime }, i) => (
-          <Item
-            key={
-              it.questId
-                ? `q-${it.questId}-${i}`
-                : `${it.kind}-${i}-${it.min}`
-            }
-            it={it}
-            y={y}
-            nowMin={nowMin}
-            isNextQuest={
-              nextQuest != null &&
-              it.kind === 'quest' &&
-              it.questId === nextQuest.questId
-            }
-            showAsPast={isToday}
-            hideTime={hideTime}
-            wakeMin={wakeMin}
-            dayHeight={dayHeight}
-          />
-        ))}
-
-        {isToday && (
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: yOf(nowMin),
-            }}
-          >
-            <View
-              style={{
-                position: 'absolute',
-                left: THREAD_X,
-                right: ITEM_RIGHT,
-                top: -0.5,
-                height: 1.5,
-                backgroundColor: accent.fg,
-                opacity: 0.85,
-              }}
-            />
-            {/* Soft 4px halo ring around the NOW dot — matches the
-                mock's box-shadow: 0 0 0 4px ember@20%. Sits BEHIND
-                the actual ember dot so it reads as a glow. */}
-            <View
-              style={{
-                position: 'absolute',
-                left: THREAD_X - 11,
-                top: -11,
-                width: 22,
-                height: 22,
-                borderRadius: 11,
-                backgroundColor: hexA(accent.fg, 0.2),
-              }}
-            />
-            <View
-              style={[
-                styles.nowNode,
-                { backgroundColor: accent.fg, shadowColor: accent.fg },
-              ]}
-            />
-            <Text style={[styles.nowMarkerLabel, { color: accent.fg }]}>
-              now
+        {!hasQuests && (
+          <View style={styles.dayEmpty}>
+            <Text style={styles.dayEmptyTitle}>Just your routine — open.</Text>
+            <Text style={styles.dayEmptyBody}>
+              Anchors below hold the shape. Drag something here from another
+              day, or dump a thought.
             </Text>
           </View>
         )}
+        {rows.map((r, i) => {
+          if (r.kind === 'now') {
+            return (
+              <View key="now" style={styles.dayNowRow}>
+                <View style={styles.dayMarkerCol}>
+                  <NowPulse />
+                </View>
+                <Text style={styles.dayNowLabel}>now · {fmt(nowMin)}</Text>
+                {openAhead != null && (
+                  <Text numberOfLines={1} style={styles.dayNowSub}>
+                    {dur(openAhead)} of open water ahead
+                  </Text>
+                )}
+              </View>
+            );
+          }
+          if (r.kind === 'seam') {
+            const seamCol = r.tone === 'peak' ? C.lichen : C.dusk;
+            return (
+              <View key={`seam${i}`} style={styles.daySeamRow}>
+                <LinearGradient
+                  colors={[hexA(seamCol, 0.4), 'rgba(0,0,0,0)']}
+                  start={{ x: 0, y: 0.5 }}
+                  end={{ x: 1, y: 0.5 }}
+                  style={{ flex: 1, height: 1 }}
+                />
+                <Text style={[styles.daySeamLabel, { color: seamCol }]}>
+                  {r.label}
+                </Text>
+              </View>
+            );
+          }
+          if (r.kind === 'gap') {
+            const over = ctl.overKey === r.key;
+            const dragging = ctl.draggingId != null;
+            const preview = over ? ctl.dropPreview : null;
+            return (
+              <View
+                key={r.key}
+                ref={(ref) => ctl.registerTarget(r.key, ref)}
+                collapsable={false}
+                style={[
+                  styles.dayGap,
+                  over && {
+                    borderColor: C.ember,
+                    backgroundColor: hexA(C.ember, 0.1),
+                  },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: over ? C.ember : hexA(C.dusk, 0.9),
+                    fontSize: 11,
+                  }}
+                >
+                  ◦
+                </Text>
+                {preview != null ? (
+                  // Live landing time — the finger's position inside
+                  // the gap picks it. What you see is what commits.
+                  <>
+                    <Text style={styles.dayGapPreviewTime}>
+                      {fmt(preview)}
+                    </Text>
+                    <Text style={styles.dayGapSub}>
+                      drop here · {dur(r.to - r.from)} open
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text
+                      style={[styles.dayGapTime, over && { color: C.ember }]}
+                    >
+                      {dur(r.to - r.from)} open
+                    </Text>
+                    <Text style={styles.dayGapSub}>
+                      {dragging ? 'room for this' : 'room for one thing'}
+                    </Text>
+                  </>
+                )}
+              </View>
+            );
+          }
+          const it = r.it;
+          if (it.kind === 'anchor') {
+            return (
+              <View key={`a${i}`} style={styles.dayAnchorRow}>
+                <View style={styles.dayMarkerCol}>
+                  <View style={styles.dayAnchorDot} />
+                </View>
+                <Text style={styles.dayAnchorTime}>{fmt(it.min)}</Text>
+                <Text style={styles.dayAnchorTitle}>
+                  {it.title.toLowerCase() === 'sleep'
+                    ? 'wind down'
+                    : it.title.toLowerCase()}
+                </Text>
+              </View>
+            );
+          }
+          const inPeak =
+            peakStart != null &&
+            peakEnd != null &&
+            it.min >= peakStart &&
+            it.min < peakEnd &&
+            !it.done;
+          // No drag on past days — gaps are suppressed there, so the
+          // gesture would have nowhere to land. (Today's missed rows
+          // still drag forward into open gaps.)
+          const draggable =
+            !it.done && !!it.questId && !it.recurring && !isPast;
+          const row = (
+            <DayTaskRow
+              it={it}
+              isToday={isToday}
+              isPast={isPast}
+              nowMin={nowMin}
+              inPeak={inPeak}
+              styles={styles}
+            />
+          );
+          return draggable ? (
+            <DragChip
+              key={it.questId ?? `q${i}`}
+              ctl={ctl}
+              task={{
+                questId: it.questId as string,
+                title: it.title,
+                tier: it.tier ?? 'medium',
+                min: it.min,
+                durMin: it.durMin ?? 30,
+                fromIso: dIso,
+              }}
+            >
+              <View
+                style={
+                  ctl.draggingId === it.questId ? { opacity: 0.3 } : undefined
+                }
+              >
+                {row}
+              </View>
+            </DragChip>
+          ) : (
+            <View key={it.questId ?? `q${i}`}>{row}</View>
+          );
+        })}
       </View>
     </ScrollView>
   );
 };
-
 // ═════════════════════════════════════════════════════════════════════
-// Week view — 7 rows, each: date + that day's quests. Tap → Day.
+// Week view — 7 card rows per lumi-time-loadmap.jsx. Each surfaces
+// its LOAD (word + pips) and the day's tasks as chips. Tap the row →
+// Day thread; long-press-drag a chip onto another row to move it.
 // ═════════════════════════════════════════════════════════════════════
 const WeekView = ({
   date,
@@ -1536,9 +1058,9 @@ const WeekView = ({
   quests,
   effective,
   onPickDate,
-  accent,
   styles,
   nowMin,
+  ctl,
 }: {
   date: Date;
   today: Date;
@@ -1546,9 +1068,9 @@ const WeekView = ({
   quests: Quest[];
   effective: ReturnType<typeof useEffectiveWindows>;
   onPickDate: (d: Date) => void;
-  accent: Accent;
   styles: ReturnType<typeof makeStyles>;
   nowMin: number;
+  ctl: DragCtl;
 }) => {
   const start = startOfWeek(date);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
@@ -1557,14 +1079,17 @@ const WeekView = ({
     <ScrollView
       style={{ flex: 1 }}
       contentContainerStyle={{
-        paddingHorizontal: 20,
+        paddingHorizontal: 18,
+        paddingTop: 2,
         paddingBottom: FLOATING_NAV_CLEARANCE,
+        gap: 8,
       }}
       showsVerticalScrollIndicator={false}
     >
-      {days.map((d, i) => {
+      {days.map((d) => {
         const isToday = sameDay(d, today);
         const past = dayOffset(d, today) < 0;
+        const dIso = ymd(d);
         const items = buildItemsForDate(
           d,
           anchors,
@@ -1574,74 +1099,127 @@ const WeekView = ({
           nowMin,
         );
         const dayQuests = items.filter((it) => it.kind === 'quest');
+        const load = loadOf(items);
+        const over = ctl.overKey === `day:${dIso}`;
         return (
-          <Pressable
-            key={i}
-            onPress={() => onPickDate(d)}
+          <View
+            key={dIso}
+            ref={(r) => ctl.registerTarget(`day:${dIso}`, r)}
+            collapsable={false}
             style={[
-              styles.weekRow,
-              i < 6 && styles.weekRowDivider,
-              past && { opacity: 0.55 },
+              styles.weekCard,
+              isToday && styles.weekCardToday,
+              past && !over && { opacity: 0.55 },
+              over && styles.weekCardOver,
             ]}
           >
-            <View style={styles.weekDateCell}>
+            <Pressable
+              onPress={() => onPickDate(d)}
+              style={styles.weekCardHead}
+              hitSlop={4}
+            >
               <Text
                 style={[
-                  styles.weekDateDow,
-                  { color: isToday ? accent.fg : C.mute },
+                  styles.weekCardDate,
+                  { color: isToday ? C.glow : C.bone },
                 ]}
               >
-                {WD[d.getDay()]}
-              </Text>
-              <Text
-                style={[
-                  styles.weekDateNum,
-                  { color: isToday ? accent.fg : C.bone },
-                ]}
-              >
-                {d.getDate()}
+                {WD[d.getDay()]} {d.getDate()}
               </Text>
               {isToday && (
-                <Text style={[styles.weekToday, { color: accent.fg }]}>
-                  TODAY
-                </Text>
+                <View style={styles.weekTodayTag}>
+                  <Text style={styles.weekTodayTagText}>today</Text>
+                </View>
               )}
-            </View>
-            <View style={{ flex: 1, minWidth: 0, paddingTop: 4, gap: 7 }}>
-              {dayQuests.length > 0 ? (
-                dayQuests.map((q, k) => (
-                  <View key={k} style={styles.weekQuestRow}>
-                    <Text style={styles.weekQuestTime}>{fmt(q.min)}</Text>
+              <View style={{ flex: 1 }} />
+              <Text
+                style={[
+                  styles.weekLoadWord,
+                  { color: load > 6 ? C.ember : C.mute },
+                ]}
+              >
+                {loadWord(load)}
+              </Text>
+              <Pips load={load} />
+            </Pressable>
+            {dayQuests.length === 0 ? (
+              <Text style={styles.weekCardEmpty}>
+                {over
+                  ? 'drop it here — plenty of room'
+                  : 'just your routine — open'}
+              </Text>
+            ) : (
+              <View style={styles.weekChipsWrap}>
+                {dayQuests.map((q, k) => {
+                  const tierCol = q.tier ? IMPORTANCE[q.tier].color : C.mute;
+                  const dragging = ctl.draggingId === q.questId;
+                  const canDrag = !q.done && !!q.questId && !q.recurring;
+                  const chip = (
                     <View
                       style={[
-                        styles.weekQuestDot,
+                        styles.weekChip,
                         {
-                          backgroundColor:
-                            q.tier && IMPORTANCE[q.tier]
-                              ? IMPORTANCE[q.tier].color
-                              : C.mute,
+                          borderColor: hexA(tierCol, q.done ? 0.2 : 0.4),
+                          opacity: dragging ? 0.3 : q.done ? 0.5 : 1,
                         },
                       ]}
-                    />
-                    <Text numberOfLines={1} style={styles.weekQuestTitle}>
-                      {q.title}
-                    </Text>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.weekEmpty}>just your routine — open</Text>
-              )}
-            </View>
-            <Text style={styles.weekChev}>›</Text>
-          </Pressable>
+                    >
+                      <Text
+                        style={[styles.weekChipSigil, { color: tierCol }]}
+                      >
+                        {q.tier ? IMPORTANCE[q.tier].sigil : '◆'}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.weekChipTitle,
+                          q.done && {
+                            color: C.mute,
+                            textDecorationLine: 'line-through',
+                          },
+                        ]}
+                      >
+                        {q.title}
+                      </Text>
+                      <Text style={styles.weekChipTime}>{fmt(q.min)}</Text>
+                    </View>
+                  );
+                  return canDrag ? (
+                    <DragChip
+                      key={q.questId ?? k}
+                      ctl={ctl}
+                      task={{
+                        questId: q.questId as string,
+                        title: q.title,
+                        tier: q.tier ?? 'medium',
+                        min: q.min,
+                        durMin: q.durMin ?? 30,
+                        fromIso: dIso,
+                      }}
+                    >
+                      {chip}
+                    </DragChip>
+                  ) : (
+                    <View key={q.questId ?? `s${k}`}>{chip}</View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
         );
       })}
+      <Text style={styles.dragCaption}>
+        hold + drag a task onto another day to rebalance
+      </Text>
     </ScrollView>
   );
 };
 
 // ═════════════════════════════════════════════════════════════════════
-// Month view — calendar grid + density dots. Tap → Day.
+// Month view — THE LOAD MAP (lumi-time-loadmap.jsx). Heat shows heavy
+// vs light days (the warmer a cell, the fuller the day), the busiest
+// day gets a nudge, tapping a day peeks it, dragging a peek row onto
+// any cell moves the task, and heavy days offer one-tap "Lighten".
 // ═════════════════════════════════════════════════════════════════════
 const MonthView = ({
   date,
@@ -1653,6 +1231,7 @@ const MonthView = ({
   accent,
   styles,
   nowMin,
+  ctl,
 }: {
   date: Date;
   today: Date;
@@ -1663,6 +1242,7 @@ const MonthView = ({
   accent: Accent;
   styles: ReturnType<typeof makeStyles>;
   nowMin: number;
+  ctl: DragCtl;
 }) => {
   const y = date.getFullYear();
   const m = date.getMonth();
@@ -1672,6 +1252,40 @@ const MonthView = ({
   for (let i = 0; i < lead; i++) cells.push(null);
   for (let dd = 1; dd <= dim; dd++) cells.push(new Date(y, m, dd));
   while (cells.length % 7) cells.push(null);
+
+  // Drag rescue — when the peek list is long, the calendar grid has
+  // scrolled clear off-screen, leaving a drag with nowhere to land.
+  // The moment a drag starts here, snap the scroll to the top (grid
+  // in reach) and re-measure the drop targets (their rects were
+  // captured pre-jump and would be stale).
+  const scrollRef = useRef<ScrollView>(null);
+  useEffect(() => {
+    if (!ctl.draggingId) return;
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+    const t = setTimeout(() => ctl.remeasure(), 90);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctl.draggingId]);
+
+  // Per-day load + count in one pass — drives the heat cells, the
+  // stats row, and the busiest-day nudge.
+  const dayStats = useMemo(() => {
+    const map = new Map<string, { load: number; count: number }>();
+    for (const d of cells) {
+      if (!d) continue;
+      const qs = buildItemsForDate(
+        d,
+        anchors,
+        quests,
+        effective,
+        today,
+        nowMin,
+      ).filter((i) => i.kind === 'quest');
+      map.set(ymd(d), { load: loadOf(qs), count: qs.length });
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [y, m, anchors, quests, effective, today, nowMin]);
 
   // Selected day starts on today (if today's in the viewed month) or
   // on the 1st otherwise. Tracks taps so the peek panel reflects the
@@ -1688,31 +1302,44 @@ const MonthView = ({
     setSel(inMonthDefault);
   }, [inMonthDefault]);
 
-  // Month summary — quests planned, days with plans, busiest day.
+  // Month stats — planned, days with plans, days open, busiest day.
   const summary = useMemo((): {
     monthQuests: number;
     planDays: number;
+    openDays: number;
     busiest: Date | null;
+    busiestLoad: number;
   } => {
     let monthQuests = 0;
     let planDays = 0;
+    let monthDayCount = 0;
     let busiest: Date | null = null;
-    let busiestN = 0;
+    let busiestLoad = 0;
     cells.forEach((d) => {
       if (!d) return;
-      const items = buildItemsForDate(d, anchors, quests, effective, today, nowMin);
-      const n = items.filter((i) => i.kind === 'quest').length;
-      if (n > 0) {
+      monthDayCount += 1;
+      const st = dayStats.get(ymd(d));
+      if (!st) return;
+      if (st.count > 0) {
         planDays += 1;
-        monthQuests += n;
+        monthQuests += st.count;
       }
-      if (n > busiestN) {
-        busiestN = n;
+      if (st.load > busiestLoad) {
+        busiestLoad = st.load;
         busiest = d;
       }
     });
-    return { monthQuests, planDays, busiest };
-  }, [cells, anchors, quests, effective, today, nowMin]);
+    return {
+      monthQuests,
+      planDays,
+      openDays: monthDayCount - planDays,
+      busiest,
+      busiestLoad,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayStats]);
+  // TS can't see through the forEach closure — busiest is Date | null.
+  const busiestDay: Date | null = summary.busiest;
 
   // Selected-day peek data.
   const peekItems = useMemo(
@@ -1722,6 +1349,9 @@ const MonthView = ({
         .sort((a, b) => a.min - b.min),
     [sel, anchors, quests, effective, today, nowMin],
   );
+  const selIso = ymd(sel);
+  const selLoad = loadOf(peekItems);
+  const hardCount = peekItems.filter((t) => t.tier === 'high').length;
   const selToday = sameDay(sel, today);
   const selOff = dayOffset(sel, today);
   const selLabel =
@@ -1744,58 +1374,16 @@ const MonthView = ({
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={{ flex: 1 }}
-      contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 24 }}
+      contentContainerStyle={{
+        paddingHorizontal: 18,
+        // Clear the floating glass nav — the stats row at the bottom
+        // was unreachable underneath it.
+        paddingBottom: FLOATING_NAV_CLEARANCE + 12,
+      }}
       showsVerticalScrollIndicator={false}
     >
-      {/* Month summary — three stat cards (ember/lichen/dusk). */}
-      <View style={styles.monthSummaryRow}>
-        <View
-          style={[
-            styles.monthSummaryCard,
-            {
-              backgroundColor: hexA(C.ember, 0.09),
-              borderColor: hexA(C.ember, 0.22),
-            },
-          ]}
-        >
-          <Text style={[styles.monthSummaryNum, { color: C.ember }]}>
-            {summary.monthQuests}
-          </Text>
-          <Text style={styles.monthSummaryLabel}>quests planned</Text>
-        </View>
-        <View
-          style={[
-            styles.monthSummaryCard,
-            {
-              backgroundColor: hexA(C.lichen, 0.09),
-              borderColor: hexA(C.lichen, 0.22),
-            },
-          ]}
-        >
-          <Text style={[styles.monthSummaryNum, { color: C.lichen }]}>
-            {summary.planDays}
-          </Text>
-          <Text style={styles.monthSummaryLabel}>days with plans</Text>
-        </View>
-        <View
-          style={[
-            styles.monthSummaryCard,
-            {
-              backgroundColor: hexA(C.dusk, 0.09),
-              borderColor: hexA(C.dusk, 0.22),
-            },
-          ]}
-        >
-          <Text style={[styles.monthSummaryNum, { color: C.dusk }]}>
-            {summary.busiest
-              ? `${MO[summary.busiest.getMonth()].slice(0, 3)} ${summary.busiest.getDate()}`
-              : '—'}
-          </Text>
-          <Text style={styles.monthSummaryLabel}>busiest day</Text>
-        </View>
-      </View>
-
       <View style={styles.monthHeaderRow}>
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((w, i) => (
           <Text key={i} style={styles.monthHeaderCell}>
@@ -1812,115 +1400,61 @@ const MonthView = ({
               if (!d) {
                 return <View key={ci} style={{ flex: 1, aspectRatio: 1 }} />;
               }
+              const dI = ymd(d);
               const isToday = sameDay(d, today);
               const isSelected = sameDay(d, sel);
-              const past = dayOffset(d, today) < 0;
-              const items = buildItemsForDate(
-                d,
-                anchors,
-                quests,
-                effective,
-                today,
-                nowMin,
-              );
-              const qs = items.filter((it) => it.kind === 'quest');
+              const load = dayStats.get(dI)?.load ?? 0;
+              const heavy = load >= HEAVY_LOAD;
+              const over = ctl.overKey === `day:${dI}`;
+              // Heat — the warmer a day, the fuller it is. Alpha
+              // ramps 0.08 → 0.48 with load, capped at 9.
+              const a =
+                load === 0 ? 0 : 0.08 + (Math.min(load, 9) / 9) * 0.4;
               return (
                 <Pressable
                   key={ci}
+                  ref={(r) => ctl.registerTarget(`day:${dI}`, r)}
+                  collapsable={false}
                   onPress={() => setSel(d)}
                   style={[
                     styles.monthCell,
-                    isSelected && { backgroundColor: accent.fg },
-                    isToday &&
-                      !isSelected && {
-                        backgroundColor: hexA(accent.fg, 0.1),
-                        borderColor: hexA(accent.fg, 0.45),
-                      },
-                    past && !isSelected && !isToday && { opacity: 0.4 },
+                    {
+                      backgroundColor: over
+                        ? hexA(C.ember, 0.28)
+                        : load > 0
+                          ? hexA(C.ember, a)
+                          : 'transparent',
+                      borderColor: over
+                        ? C.glow
+                        : isSelected
+                          ? C.ember
+                          : isToday
+                            ? hexA(C.glow, 0.6)
+                            : load > 0
+                              ? hexA(C.ember, 0.12 + a * 0.5)
+                              : hexA(C.hair, 0.7),
+                    },
+                    (heavy || over) && styles.monthCellGlow,
                   ]}
                 >
                   <Text
                     style={[
                       styles.monthCellNum,
                       {
-                        color: isSelected
-                          ? C.void
-                          : isToday
-                            ? accent.fg
-                            : C.bone,
+                        color: isToday
+                          ? C.glow
+                          : load >= 4
+                            ? C.bone
+                            : C.boneDim,
                       },
                     ]}
                   >
                     {d.getDate()}
                   </Text>
-                  <View style={styles.monthDotsRow}>
-                    {qs.length === 0 ? (
-                      <View
-                        style={[
-                          styles.monthDot,
-                          {
-                            width: 3,
-                            height: 3,
-                            backgroundColor: hexA(
-                              isSelected ? C.void : C.mute,
-                              0.35,
-                            ),
-                          },
-                        ]}
-                      />
-                    ) : (
-                      Array.from({ length: Math.min(3, qs.length) }).map(
-                        (_, k) => (
-                          <View
-                            key={k}
-                            style={[
-                              styles.monthDot,
-                              {
-                                // Always render the true tier color
-                                // so the day's shape stays readable.
-                                // When the cell is selected (ember
-                                // bg), warm-toned tiers (terra/ember/
-                                // honey) blend in — give them a dark
-                                // void ring so they pop against the
-                                // background without losing the tier
-                                // signal.
-                                backgroundColor: qs[k].tier
-                                  ? IMPORTANCE[qs[k].tier].color
-                                  : C.mute,
-                              },
-                              isSelected && {
-                                // Bump size + add a void ring so the
-                                // tier color reads against the ember
-                                // background. 4×4 with a 1px border
-                                // would leave a 2×2 visible core —
-                                // too small to register; 6×6 with the
-                                // same border keeps a 4×4 tier core.
-                                width: 6,
-                                height: 6,
-                                borderRadius: 3,
-                                borderWidth: 1,
-                                borderColor: C.void,
-                              },
-                            ]}
-                          />
-                        ),
-                      )
-                    )}
-                    {qs.length > 3 && (
-                      <Text
-                        style={{
-                          fontFamily: fonts.interSemi,
-                          fontSize: 9,
-                          lineHeight: 10,
-                          color: isSelected ? hexA(C.void, 0.8) : C.mute,
-                          marginLeft: 3,
-                          marginTop: -0.5,
-                        }}
-                      >
-                        +{qs.length - 3}
-                      </Text>
-                    )}
-                  </View>
+                  {heavy && <View style={styles.monthHeavyDot} />}
+                  {isToday && (
+                    <Text style={styles.monthCellTodayTag}>today</Text>
+                  )}
                 </Pressable>
               );
             })}
@@ -1928,10 +1462,28 @@ const MonthView = ({
         ))}
       </View>
 
-      {/* Selected-day peek — fills the space below the grid so the
-          month view actually does something useful even before you
-          open a thread. Date + relative label, planned count, item
-          list, and a CTA to open the day's full thread. */}
+      <Text style={styles.monthCaption}>
+        the warmer a day, the fuller it is — tap to peek, hold + drag a
+        task onto a day to move it
+      </Text>
+
+      {/* Busiest-day nudge — only when it's genuinely heavy. */}
+      {busiestDay != null && summary.busiestLoad >= HEAVY_LOAD && (
+        <Pressable
+          onPress={() => setSel(busiestDay)}
+          style={styles.monthNudge}
+        >
+          <Text style={styles.monthNudgeSpark}>✦</Text>
+          <Text style={styles.monthNudgeText}>
+            {WDF[busiestDay.getDay()]} the {busiestDay.getDate()}
+            {ordSuffix(busiestDay.getDate())} is your heaviest — tap to
+            peek, drag things to calmer days.
+          </Text>
+        </Pressable>
+      )}
+
+      {/* Selected-day peek — compact rows you can drag straight onto
+          the grid above. */}
       <View style={styles.monthPeekCard}>
         <View style={styles.monthPeekHead}>
           <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 9 }}>
@@ -1948,43 +1500,118 @@ const MonthView = ({
               {selLabel}
             </Text>
           </View>
-          <Text style={styles.monthPeekCount}>{peekItems.length} planned</Text>
+          <Text
+            style={[
+              styles.monthPeekCount,
+              selLoad >= HEAVY_LOAD && { color: C.ember },
+            ]}
+          >
+            {peekItems.length
+              ? `${peekItems.length} planned${hardCount ? ` · ${hardCount} hard` : ''}`
+              : 'open'}
+          </Text>
         </View>
         {peekItems.length > 0 ? (
-          <View style={{ gap: 9, marginBottom: 14 }}>
-            {peekItems.map((q, k) => (
-              <View
-                key={k}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
-              >
-                <Text style={styles.monthPeekTime}>{fmt(q.min)}</Text>
+          <View style={{ gap: 6, marginBottom: 12 }}>
+            {peekItems.map((q, k) => {
+              const tierCol = q.tier ? IMPORTANCE[q.tier].color : C.mute;
+              const dragging = ctl.draggingId === q.questId;
+              const canDrag = !q.done && !!q.questId && !q.recurring;
+              const row = (
                 <View
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 4,
-                    backgroundColor: q.tier
-                      ? IMPORTANCE[q.tier].color
-                      : C.mute,
-                  }}
-                />
-                <Text
-                  style={styles.monthPeekTaskTitle}
-                  numberOfLines={1}
+                  style={[styles.peekRow, dragging && { opacity: 0.3 }]}
                 >
-                  {q.title}
-                </Text>
-                {q.durMin != null && (
-                  <Text style={styles.monthPeekDur}>
-                    {dur(q.durMin)}
+                  {q.done ? (
+                    <View style={styles.peekDoneCheck}>
+                      <Text style={styles.peekDoneCheckGlyph}>✓</Text>
+                    </View>
+                  ) : (
+                    <View
+                      style={[
+                        styles.peekDot,
+                        { borderColor: tierCol },
+                        q.tier === 'high' && styles.peekDotHigh,
+                      ]}
+                    />
+                  )}
+                  <Text
+                    style={[
+                      styles.monthPeekTime,
+                      { color: q.done ? C.mute : C.ember },
+                    ]}
+                  >
+                    {fmt(q.min)}
                   </Text>
-                )}
-              </View>
-            ))}
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.monthPeekTaskTitle,
+                        q.done && {
+                          color: C.mute,
+                          textDecorationLine: 'line-through',
+                        },
+                      ]}
+                    >
+                      {q.title}
+                    </Text>
+                    {!q.done && (
+                      <View style={styles.peekMetaRow}>
+                        <Text
+                          style={[styles.peekSigil, { color: tierCol }]}
+                        >
+                          {q.tier ? IMPORTANCE[q.tier].sigil : '◆'}
+                        </Text>
+                        <Text style={styles.monthPeekDur}>
+                          {dur(q.durMin ?? 30)}
+                          {q.recurring ? ' · repeating' : ''}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  {canDrag && (
+                    <View style={styles.peekHandle}>
+                      {[0, 1, 2].map((r) => (
+                        <View key={r} style={styles.peekHandleRow}>
+                          <View style={styles.peekHandleDot} />
+                          <View style={styles.peekHandleDot} />
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              );
+              return canDrag ? (
+                <DragChip
+                  key={q.questId ?? k}
+                  ctl={ctl}
+                  task={{
+                    questId: q.questId as string,
+                    title: q.title,
+                    tier: q.tier ?? 'medium',
+                    min: q.min,
+                    durMin: q.durMin ?? 30,
+                    fromIso: selIso,
+                  }}
+                >
+                  {row}
+                </DragChip>
+              ) : (
+                <View key={q.questId ?? `s${k}`}>{row}</View>
+              );
+            })}
           </View>
         ) : (
           <Text style={styles.monthPeekEmpty}>
-            An open day — just your anchors and room to breathe.
+            Nothing here yet — a good landing spot for something heavy.
+          </Text>
+        )}
+        {/* "Lighten this day" removed by design — it scattered tasks
+            to auto-picked days the user never chose. Rebalancing is
+            the drag: hold a row, drop it exactly where YOU want it. */}
+        {peekItems.length > 0 && (
+          <Text style={styles.peekHint}>
+            hold + drag a task onto any day above
           </Text>
         )}
         <Pressable
@@ -2003,9 +1630,21 @@ const MonthView = ({
         </Pressable>
       </View>
 
-      <Text style={styles.monthCaption}>
-        Tap any day to peek · dots show how full it is.
-      </Text>
+      {/* Month stats — planned · days with plans · days open. */}
+      <View style={styles.monthSummaryRow}>
+        {(
+          [
+            [summary.monthQuests, 'planned'],
+            [summary.planDays, 'days with plans'],
+            [summary.openDays, 'days open'],
+          ] as const
+        ).map(([n, l]) => (
+          <View key={l} style={styles.monthSummaryCard}>
+            <Text style={styles.monthSummaryNum}>{n}</Text>
+            <Text style={styles.monthSummaryLabel}>{l}</Text>
+          </View>
+        ))}
+      </View>
     </ScrollView>
   );
 };
@@ -2138,8 +1777,6 @@ export default function Time() {
   });
 
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const wakeMin = anchors.wake;
-  const sleepMin = anchors.sleep;
 
   const items = useMemo(
     () =>
@@ -2154,17 +1791,18 @@ export default function Time() {
     [date, anchors, allQuests, effectiveWindows, today, nowMin],
   );
 
-  const hasRealQuests = items.some((i) => i.kind === 'quest');
-
   // ── Navigation ──────────────────────────────────────────────────
   const shift = (dir: number) => {
     if (scale === 'day') setDate((d) => addDays(d, dir));
     else if (scale === 'week') setDate((d) => addDays(d, dir * 7));
     else setDate((d) => addMonths(d, dir));
   };
+  // [Today] snaps the DATE back without yanking you out of the scale
+  // you're in — day view returns to today's thread, week to this
+  // week, month to this month. (The NextBar separately jumps to
+  // today's thread via pickDate.)
   const jumpToToday = () => {
     setDate(today);
-    setScale('day');
   };
   const pickDate = (d: Date) => {
     setDate(d);
@@ -2178,6 +1816,209 @@ export default function Time() {
         ? startOfWeek(date).getTime() === startOfWeek(today).getTime()
         : date.getMonth() === today.getMonth() &&
           date.getFullYear() === today.getFullYear();
+
+  // ── Cross-day drag controller ───────────────────────────────────
+  const insets = useSafeAreaInsets();
+  const gx = useSharedValue(0);
+  const gy = useSharedValue(0);
+  const dragActive = useSharedValue(0);
+  const [dragTask, setDragTask] = useState<DragTask | null>(null);
+  const [overKey, setOverKey] = useState<string | null>(null);
+  const dragTaskRef = useRef<DragTask | null>(null);
+  const targetRefs = useRef(new Map<string, View>()).current;
+  const targetRects = useRef(
+    new Map<string, { x: number; y: number; w: number; h: number }>(),
+  ).current;
+
+  // Undo — snapshot of the moved quests' previous date + anchor so
+  // one tap puts everything back exactly where it was.
+  const undoRef = useRef<
+    { id: string; date: string; h: number | null; m: number | null }[] | null
+  >(null);
+  const [moveToast, setMoveToast] = useState<string | null>(null);
+  const moveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showMoveToast = (msg: string) => {
+    setMoveToast(msg);
+    if (moveToastTimer.current) clearTimeout(moveToastTimer.current);
+    moveToastTimer.current = setTimeout(() => setMoveToast(null), 6000);
+  };
+  useEffect(
+    () => () => {
+      if (moveToastTimer.current) clearTimeout(moveToastTimer.current);
+    },
+    [],
+  );
+
+  const registerTarget = (key: string, ref: View | null) => {
+    if (ref) targetRefs.set(key, ref);
+    else targetRefs.delete(key);
+  };
+  const measureTargets = () => {
+    targetRects.clear();
+    targetRefs.forEach((ref, key) => {
+      ref.measureInWindow((x, y, w, h) => {
+        targetRects.set(key, { x, y, w, h });
+      });
+    });
+  };
+  const beginDrag = (t: DragTask) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    dragTaskRef.current = t;
+    setDragTask(t);
+    setOverKey(null);
+    // Measure every registered target at drag start. The user can't
+    // scroll mid-drag (the pan owns the touch), but a VIEW may scroll
+    // itself (Month snaps to top) — those call ctl.remeasure() after.
+    measureTargets();
+  };
+  const hitTest = (x: number, y: number): string | null => {
+    for (const [key, r] of targetRects) {
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        return key;
+      }
+    }
+    return null;
+  };
+  /** Map the finger's Y inside a gap's rect to a landing minute:
+   *  linear across [from, to], snapped to :15, clamped so the task
+   *  still fits before the gap closes. Pure — hover preview and the
+   *  actual drop share it, so what you see is what commits. */
+  const gapDropMinute = (
+    key: string,
+    y: number,
+    durMin: number,
+  ): number | null => {
+    const parts = key.split(':'); // gap : iso : from : to
+    const from = parseInt(parts[2], 10);
+    const to = parseInt(parts[3], 10);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    const lo = Math.ceil(from / 15) * 15;
+    const hi = Math.max(lo, Math.floor((to - durMin) / 15) * 15);
+    const rect = targetRects.get(key);
+    if (!rect || rect.h <= 0) return lo;
+    const rel = Math.max(0, Math.min(1, (y - rect.y) / rect.h));
+    const snapped = Math.round((from + rel * (to - from)) / 15) * 15;
+    return Math.max(lo, Math.min(hi, snapped));
+  };
+  const [dropPreview, setDropPreview] = useState<number | null>(null);
+  const hoverDrag = (x: number, y: number) => {
+    const k = hitTest(x, y);
+    setOverKey((cur) => (cur === k ? cur : k));
+    const preview =
+      k && k.startsWith('gap:')
+        ? gapDropMinute(k, y, dragTaskRef.current?.durMin ?? 30)
+        : null;
+    setDropPreview((cur) => (cur === preview ? cur : preview));
+  };
+  const cancelDrag = () => {
+    dragTaskRef.current = null;
+    setDragTask(null);
+    setOverKey(null);
+    setDropPreview(null);
+  };
+
+  /** Move quests to new dates (keeping their clock time) + arm Undo.
+   *  setDate deliberately un-anchors (a deferred task usually needs
+   *  re-scheduling) — but a DRAG carries intent about the time too,
+   *  so we re-anchor after: to `newT` when the drop names a time (a
+   *  day-thread gap), else to the original clock time. */
+  const applyMoves = (
+    moves: { id: string; toIso: string; newT?: number }[],
+    msg: string,
+  ) => {
+    const st = useQuestStore.getState();
+    const snapshot: NonNullable<typeof undoRef.current> = [];
+    for (const mv of moves) {
+      const q = st.quests.find((qq) => qq.id === mv.id);
+      if (!q) continue;
+      snapshot.push({
+        id: q.id,
+        date: q.date ?? todayKey(),
+        h: q.scheduledHour ?? null,
+        m: q.scheduledMinute ?? null,
+      });
+      st.setDate(mv.id, mv.toIso);
+      if (mv.newT != null) {
+        st.anchor(mv.id, Math.floor(mv.newT / 60), mv.newT % 60);
+      } else if (q.scheduledHour != null) {
+        st.anchor(mv.id, q.scheduledHour, q.scheduledMinute ?? 0);
+      }
+    }
+    if (!snapshot.length) return;
+    undoRef.current = snapshot;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    showMoveToast(msg);
+  };
+  const undoMoves = () => {
+    const snap = undoRef.current;
+    undoRef.current = null;
+    setMoveToast(null);
+    if (!snap) return;
+    const st = useQuestStore.getState();
+    for (const s of snap) {
+      st.setDate(s.id, s.date);
+      if (s.h != null) st.anchor(s.id, s.h, s.m ?? 0);
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+  const dropDrag = (x: number, y: number) => {
+    const t = dragTaskRef.current;
+    const k = hitTest(x, y);
+    // Compute the gap landing minute BEFORE cancelDrag clears the
+    // ref — same math as the hover preview, so the time the user
+    // watched under their finger is exactly what commits.
+    const gapT =
+      t && k && k.startsWith('gap:')
+        ? gapDropMinute(k, y, t.durMin)
+        : null;
+    cancelDrag();
+    if (!t || !k) return;
+    const short =
+      t.title.length > 26 ? `${t.title.slice(0, 24)}…` : t.title;
+    if (k.startsWith('gap:')) {
+      if (gapT == null) return;
+      const toIso = k.split(':')[1];
+      applyMoves(
+        [{ id: t.questId, toIso, newT: gapT }],
+        `“${short}” → ${fmt(gapT)}`,
+      );
+      return;
+    }
+    if (!k.startsWith('day:')) return;
+    const toIso = k.slice(4);
+    if (toIso === t.fromIso) return;
+    const d = fromIsoLocal(toIso);
+    applyMoves(
+      [{ id: t.questId, toIso }],
+      `Moved “${short}” → ${WD[d.getDay()]} ${d.getDate()}`,
+    );
+  };
+  const dragCtl: DragCtl = {
+    gx,
+    gy,
+    active: dragActive,
+    begin: beginDrag,
+    hover: hoverDrag,
+    drop: dropDrag,
+    cancel: cancelDrag,
+    registerTarget,
+    remeasure: measureTargets,
+    overKey,
+    draggingId: dragTask?.questId ?? null,
+    dropPreview,
+  };
+
+  // ("Lighten this day" removed by design — it scattered tasks to
+  // auto-picked days the user never chose. Rebalancing is the drag.)
+
+  // Drag ghost — rides the finger via shared values (UI thread only).
+  const ghostStyle = useAnimatedStyle(() => ({
+    opacity: dragActive.value,
+    transform: [
+      { translateX: gx.value },
+      { translateY: gy.value - insets.top },
+    ],
+  }));
 
   // ── Header title + sub-context ─────────────────────────────────
   const off = dayOffset(date, today);
@@ -2202,7 +2043,6 @@ export default function Time() {
   const peakStart = digest.curve.peakStart;
   const peakEnd = digest.curve.peakEnd;
   const slumpStart = digest.curve.slumpStart;
-  const slumpEnd = digest.curve.slumpEnd;
 
   const inPeak =
     peakStart != null &&
@@ -2305,7 +2145,7 @@ export default function Time() {
           effective={effectiveWindows}
           today={today}
           nowMin={nowMin}
-          onJumpToToday={jumpToToday}
+          onJumpToToday={() => pickDate(today)}
           accent={accent}
           styles={styles}
         />
@@ -2313,31 +2153,19 @@ export default function Time() {
 
       {/* Active view */}
       {scale === 'day' ? (
-        <View style={{ flex: 1 }}>
-          <DayThread
-            date={date}
-            isToday={isToday}
-            items={items}
-            nowMin={nowMin}
-            wakeMin={wakeMin}
-            sleepMin={sleepMin}
-            accent={accent}
-            styles={styles}
-            peakStart={peakStart}
-            peakEnd={peakEnd}
-            slumpStart={slumpStart}
-            slumpEnd={slumpEnd}
-          />
-          {isToday && !hasRealQuests && (
-            <View style={styles.emptyHint}>
-              <Text style={styles.emptyHintTitle}>The bones of your day.</Text>
-              <Text style={styles.emptyHintBody}>
-                Capture or plan a quest from Home — it&apos;ll land here on the
-                thread at its time or window.
-              </Text>
-            </View>
-          )}
-        </View>
+        <DayView
+          date={date}
+          isToday={isToday}
+          isPast={dayOffset(date, today) < 0}
+          items={items}
+          nowMin={nowMin}
+          slumpStart={slumpStart}
+          peakStart={peakStart}
+          peakEnd={peakEnd}
+          curveSource={digest.curve.source}
+          styles={styles}
+          ctl={dragCtl}
+        />
       ) : scale === 'week' ? (
         <WeekView
           date={date}
@@ -2346,9 +2174,9 @@ export default function Time() {
           quests={allQuests}
           effective={effectiveWindows}
           onPickDate={pickDate}
-          accent={accent}
           styles={styles}
           nowMin={nowMin}
+          ctl={dragCtl}
         />
       ) : (
         <MonthView
@@ -2361,7 +2189,58 @@ export default function Time() {
           accent={accent}
           styles={styles}
           nowMin={nowMin}
+          ctl={dragCtl}
         />
+      )}
+
+      {/* Move toast + Undo — every drop / lighten can be reversed. */}
+      {moveToast && (
+        <View style={styles.moveToast}>
+          <Text style={styles.moveToastCheck}>✓</Text>
+          <Text numberOfLines={1} style={styles.moveToastText}>
+            {moveToast}
+          </Text>
+          <Pressable onPress={undoMoves} style={styles.moveToastUndo} hitSlop={6}>
+            <Text style={styles.moveToastUndoText}>Undo</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* Drag ghost — the task pill floating at the finger. */}
+      {dragTask && (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.ghostWrap, ghostStyle]}
+        >
+          <View style={styles.ghost}>
+            <Text
+              style={[
+                styles.ghostSigil,
+                { color: IMPORTANCE[dragTask.tier].color },
+              ]}
+            >
+              {IMPORTANCE[dragTask.tier].sigil}
+            </Text>
+            <Text numberOfLines={1} style={styles.ghostTitle}>
+              {dragTask.title}
+            </Text>
+            {/* Over a gap, the pill shows where it'll LAND — right at
+               the finger, no guessing. */}
+            <Text
+              style={[
+                styles.ghostTime,
+                dropPreview != null && {
+                  color: C.glow,
+                  fontFamily: fonts.frauncesMed,
+                },
+              ]}
+            >
+              {dropPreview != null
+                ? `→ ${fmt(dropPreview)}`
+                : fmt(dragTask.min)}
+            </Text>
+          </View>
+        </Animated.View>
       )}
     </SafeAreaView>
   );
@@ -2511,154 +2390,316 @@ const makeStyles = (accent: Accent) =>
       lineHeight: 18,
     },
 
-    // ── Day thread bits (carry from v2) ──
-    nowNode: {
+    // ── Day view (compact thread) ──
+    dayThreadLine: {
       position: 'absolute',
-      left: THREAD_X - 7,
-      top: -7,
-      width: 14,
-      height: 14,
-      borderRadius: 7,
-      borderWidth: 2,
-      borderColor: C.void,
-      shadowOpacity: 0.55,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 0 },
+      left: MARKER_W / 2 - 1,
+      top: 8,
+      bottom: 14,
+      width: 2,
+      borderRadius: 1,
     },
-    nowMarkerLabel: {
+    dayRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 11,
+      paddingVertical: 11,
+      paddingRight: 2,
+      borderRadius: 10,
+    },
+    dayMarkerCol: {
+      width: MARKER_W,
+      alignItems: 'center',
+      flexShrink: 0,
+    },
+    // ── The task radio (clip-to-thread completion) ──
+    dayRadioWrap: {
+      width: 18,
+      height: 18,
+      marginTop: 1,
+    },
+    dayRadio: {
       position: 'absolute',
+      top: 0,
       left: 0,
-      width: 52,
-      top: -9,
-      textAlign: 'right',
-      fontFamily: fonts.interSemi,
-      fontSize: 10,
-      letterSpacing: 0.5,
-      textTransform: 'uppercase',
+      right: 0,
+      bottom: 0,
+      borderRadius: 9,
+      borderWidth: 2,
+      backgroundColor: C.void,
     },
-    stretchPill: {
+    dayRadioCheck: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderRadius: 9,
+      backgroundColor: hexA(C.lichen, 0.16),
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.5),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dayRowTime: {
+      width: TIME_W,
+      flexShrink: 0,
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 13.5,
+      marginTop: 1,
+      fontVariant: ['tabular-nums'],
+    },
+    dayRowTitle: {
+      fontFamily: fonts.inter,
+      fontSize: 14,
+      color: C.bone,
+      letterSpacing: -0.15,
+      lineHeight: 18,
+    },
+    dayRowMeta: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      borderWidth: 1,
-      borderStyle: 'dashed',
-      borderColor: hexA(C.lichen, 0.4),
-      borderRadius: 100,
-      paddingHorizontal: 13,
-      paddingVertical: 6,
-      backgroundColor: hexA(C.void, 0.6),
+      marginTop: 4,
     },
-    stretchTime: {
+    dayRowDur: {
+      fontFamily: fonts.inter,
+      fontSize: 10.5,
+      color: C.mute,
+    },
+    missedTag: {
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 100,
+      borderWidth: 1,
+      borderColor: hexA(C.ember, 0.45),
+      backgroundColor: hexA(C.ember, 0.08),
+    },
+    missedTagText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9,
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+      color: C.ember,
+    },
+    dayNowRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      paddingVertical: 9,
+    },
+    dayNowLabel: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 11,
-      color: C.lichen,
+      fontSize: 14,
+      color: C.glow,
+      fontVariant: ['tabular-nums'],
     },
-    stretchSub: {
+    dayNowSub: {
+      flexShrink: 1,
+      fontFamily: fonts.inter,
+      fontSize: 10.5,
+      color: C.mute,
+    },
+    daySeamRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      paddingVertical: 9,
+      paddingLeft: MARKER_W + 10,
+    },
+    daySeamLabel: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9,
+      letterSpacing: 1.6,
+      textTransform: 'uppercase',
+      color: C.dusk,
+    },
+    dayGap: {
+      marginVertical: 3,
+      marginLeft: MARKER_W + 10,
+      paddingHorizontal: 13,
+      paddingVertical: 10,
+      borderRadius: 12,
+      borderWidth: 1.5,
+      borderStyle: 'dashed',
+      borderColor: hexA(C.dusk, 0.35),
+      backgroundColor: hexA(C.dusk, 0.05),
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+    },
+    dayGapTime: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: C.dusk,
+    },
+    // Live landing time while hovering — bigger + ember-glow so it's
+    // unmistakable under the finger.
+    dayGapPreviewTime: {
+      fontFamily: fonts.frauncesMed,
+      fontStyle: 'italic',
+      fontSize: 17,
+      color: C.ember,
+      letterSpacing: -0.3,
+      fontVariant: ['tabular-nums'],
+      textShadowColor: hexA(C.ember, 0.6),
+      textShadowOffset: { width: 0, height: 0 },
+      textShadowRadius: 8,
+    },
+    dayGapSub: {
       fontFamily: fonts.inter,
       fontSize: 11,
       color: C.mute,
     },
-
-    // ── Empty hint ──
-    emptyHint: {
-      position: 'absolute',
-      left: CONTENT_X,
-      right: ITEM_RIGHT,
-      top: 30,
-      paddingHorizontal: 14,
-      paddingVertical: 14,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: C.hair,
-      backgroundColor: hexA(C.void2, 0.85),
-    },
-    emptyHintTitle: {
-      fontFamily: fonts.fraunces,
-      fontStyle: 'italic',
-      fontSize: 15,
-      color: C.bone,
-      marginBottom: 4,
-    },
-    emptyHintBody: {
-      fontFamily: fonts.inter,
-      fontSize: 12.5,
-      color: C.boneDim,
-      lineHeight: 18,
-    },
-
-    // ── Week view ──
-    weekRow: {
-      flexDirection: 'row',
-      gap: 14,
-      paddingHorizontal: 6,
-      paddingVertical: 14,
-      alignItems: 'flex-start',
-    },
-    weekRowDivider: {
-      borderBottomWidth: 1,
-      borderBottomColor: hexA(C.hair, 0.7),
-    },
-    weekDateCell: {
-      width: 50,
-      alignItems: 'center',
-      paddingTop: 2,
-    },
-    weekDateDow: {
-      fontFamily: fonts.interSemi,
-      fontSize: 9.5,
-      letterSpacing: 1,
-      textTransform: 'uppercase',
-    },
-    weekDateNum: {
-      fontFamily: fonts.fraunces,
-      fontStyle: 'italic',
-      fontSize: 24,
-      lineHeight: 26,
-      marginTop: 2,
-    },
-    weekToday: {
-      fontFamily: fonts.interSemi,
-      fontSize: 8,
-      letterSpacing: 1,
-      marginTop: 2,
-    },
-    weekQuestRow: {
+    dayAnchorRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: 11,
+      paddingVertical: 6,
+      opacity: 0.68,
     },
-    weekQuestTime: {
+    dayAnchorDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 4,
+      backgroundColor: C.void,
+      borderWidth: 1.4,
+      borderColor: hexA(C.honey, 0.7),
+    },
+    dayAnchorTime: {
+      width: TIME_W,
+      flexShrink: 0,
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
       fontSize: 12,
       color: C.mute,
-      width: 42,
+      fontVariant: ['tabular-nums'],
     },
-    weekQuestDot: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
-    },
-    weekQuestTitle: {
-      flex: 1,
-      fontFamily: fonts.inter,
-      fontSize: 13.5,
-      color: C.bone,
-      letterSpacing: -0.1,
-    },
-    weekEmpty: {
+    dayAnchorTitle: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 12.5,
-      color: C.mute,
-      paddingTop: 4,
+      fontSize: 12,
+      color: C.boneDim,
     },
-    weekChev: {
+    dayEmpty: {
+      paddingLeft: MARKER_W + 10,
+      paddingTop: 14,
+      paddingBottom: 6,
+    },
+    dayEmptyTitle: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 16,
+      color: C.dusk,
+      lineHeight: 22,
+    },
+    dayEmptyBody: {
       fontFamily: fonts.inter,
-      fontSize: 14,
+      fontSize: 11.5,
       color: C.mute,
-      alignSelf: 'center',
+      marginTop: 5,
+      lineHeight: 16,
+    },
+
+    // ── Week view (loadmap card rows) ──
+    weekCard: {
+      borderRadius: 16,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      backgroundColor: hexA(C.bone, 0.025),
+      borderWidth: 1.5,
+      borderColor: hexA(C.hair, 0.9),
+    },
+    weekCardToday: {
+      backgroundColor: hexA(C.ember, 0.05),
+      borderColor: hexA(C.ember, 0.35),
+    },
+    weekCardOver: {
+      backgroundColor: hexA(C.ember, 0.1),
+      borderColor: C.ember,
+    },
+    weekCardHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+    },
+    weekCardDate: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 16,
+      letterSpacing: -0.2,
+    },
+    weekTodayTag: {
+      borderWidth: 1,
+      borderColor: hexA(C.ember, 0.45),
+      borderRadius: 100,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+    },
+    weekTodayTagText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 8.5,
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
+      color: C.ember,
+    },
+    weekLoadWord: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11,
+    },
+    weekCardEmpty: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: C.dusk,
+      marginTop: 6,
+    },
+    weekChipsWrap: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginTop: 9,
+    },
+    weekChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 100,
+      backgroundColor: hexA(C.surface, 0.9),
+      borderWidth: 1,
+      maxWidth: '100%',
+    },
+    weekChipSigil: {
+      fontFamily: fonts.inter,
+      fontSize: 8,
+      letterSpacing: -1,
+    },
+    weekChipTitle: {
+      fontFamily: fonts.inter,
+      fontSize: 11.5,
+      color: C.bone,
+      letterSpacing: -0.1,
+      flexShrink: 1,
+    },
+    weekChipTime: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 10.5,
+      color: C.mute,
+    },
+    dragCaption: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11,
+      color: C.mute,
+      paddingVertical: 4,
     },
 
     // ── Month view ──
@@ -2691,31 +2732,256 @@ const makeStyles = (accent: Accent) =>
       justifyContent: 'center',
       gap: 3,
     },
-    // ── Month summary cards (v2.2) ─────────────────────────────────
+    // ── Month stats row (bottom, per loadmap mock) ─────────────────
     monthSummaryRow: {
       flexDirection: 'row',
       gap: 8,
-      marginBottom: 14,
+      marginTop: 12,
     },
     monthSummaryCard: {
       flex: 1,
       borderRadius: 13,
       borderWidth: 1,
-      paddingHorizontal: 12,
+      borderColor: hexA(C.hair, 0.9),
+      paddingHorizontal: 6,
       paddingVertical: 10,
+      alignItems: 'center',
     },
     monthSummaryNum: {
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 21,
-      lineHeight: 22,
+      fontSize: 19,
+      lineHeight: 21,
+      color: C.bone,
     },
     monthSummaryLabel: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9,
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+      color: C.mute,
+      marginTop: 3,
+      textAlign: 'center',
+    },
+    // ── Load-map cell extras ───────────────────────────────────────
+    monthCellGlow: {
+      shadowColor: C.ember,
+      shadowOpacity: 0.3,
+      shadowRadius: 13,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 6,
+    },
+    monthHeavyDot: {
+      position: 'absolute',
+      top: 4,
+      right: 5,
+      width: 5,
+      height: 5,
+      borderRadius: 3,
+      backgroundColor: C.glow,
+      shadowColor: C.glow,
+      shadowOpacity: 0.8,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 0 },
+    },
+    monthCellTodayTag: {
+      fontFamily: fonts.interSemi,
+      fontSize: 6.5,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      color: C.glow,
+    },
+    // ── Busiest-day nudge ──────────────────────────────────────────
+    monthNudge: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 9,
+      marginTop: 2,
+      marginBottom: 12,
+      paddingHorizontal: 13,
+      paddingVertical: 11,
+      borderRadius: 13,
+      backgroundColor: hexA(C.dusk, 0.07),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.25),
+    },
+    monthNudgeSpark: {
+      color: C.dusk,
+      fontSize: 11,
+      marginTop: 1,
+    },
+    monthNudgeText: {
+      flex: 1,
       fontFamily: fonts.inter,
-      fontSize: 10,
-      color: C.boneDim,
+      fontSize: 12.5,
+      color: C.dusk,
+      lineHeight: 18,
+    },
+    // ── Peek rows (compact, draggable) ─────────────────────────────
+    peekRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+      borderRadius: 12,
+      backgroundColor: hexA(C.bone, 0.035),
+      borderWidth: 1,
+      borderColor: hexA(C.hair, 0.9),
+    },
+    peekDoneCheck: {
+      width: 17,
+      height: 17,
+      marginTop: 1,
+      borderRadius: 9,
+      backgroundColor: hexA(C.lichen, 0.16),
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.5),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    peekDoneCheckGlyph: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9,
+      color: C.lichen,
+      lineHeight: 11,
+    },
+    peekDot: {
+      width: 10,
+      height: 10,
       marginTop: 4,
-      letterSpacing: -0.05,
+      borderRadius: 5,
+      backgroundColor: C.void,
+      borderWidth: 1.6,
+    },
+    peekDotHigh: {
+      shadowColor: C.ember,
+      shadowOpacity: 0.4,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 0 },
+    },
+    peekMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 4,
+    },
+    peekSigil: {
+      fontFamily: fonts.inter,
+      fontSize: 8,
+      letterSpacing: -1,
+    },
+    peekHandle: {
+      marginTop: 4,
+      gap: 3,
+    },
+    peekHandleRow: {
+      flexDirection: 'row',
+      gap: 3,
+    },
+    peekHandleDot: {
+      width: 3,
+      height: 3,
+      borderRadius: 1.5,
+      backgroundColor: hexA(C.mute, 0.5),
+    },
+    peekHint: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 10.5,
+      color: C.mute,
+      marginBottom: 11,
+    },
+    // ── Move toast + Undo ──────────────────────────────────────────
+    moveToast: {
+      position: 'absolute',
+      left: 20,
+      right: 20,
+      bottom: FLOATING_NAV_CLEARANCE + 8,
+      zIndex: 80,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      paddingHorizontal: 15,
+      paddingVertical: 12,
+      borderRadius: 15,
+      backgroundColor: hexA('#241C17', 0.97),
+      borderWidth: 1,
+      borderColor: hexA(C.lichen, 0.4),
+      shadowColor: '#000',
+      shadowOpacity: 0.5,
+      shadowRadius: 15,
+      shadowOffset: { width: 0, height: 12 },
+      elevation: 14,
+    },
+    moveToastCheck: {
+      color: C.lichen,
+      fontSize: 13,
+    },
+    moveToastText: {
+      flex: 1,
+      fontFamily: fonts.inter,
+      fontSize: 12.5,
+      color: C.bone,
+      letterSpacing: -0.1,
+    },
+    moveToastUndo: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 100,
+      borderWidth: 1,
+      borderColor: hexA(C.ember, 0.45),
+    },
+    moveToastUndoText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+      color: C.ember,
+    },
+    // ── Drag ghost ─────────────────────────────────────────────────
+    ghostWrap: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      zIndex: 999,
+    },
+    ghost: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      paddingHorizontal: 13,
+      paddingVertical: 9,
+      borderRadius: 100,
+      backgroundColor: C.surface,
+      borderWidth: 1.5,
+      borderColor: C.ember,
+      shadowColor: '#000',
+      shadowOpacity: 0.6,
+      shadowRadius: 17,
+      shadowOffset: { width: 0, height: 14 },
+      elevation: 16,
+      transform: [
+        { translateX: -80 },
+        { translateY: -56 },
+        { rotate: '-2deg' },
+      ],
+    },
+    ghostSigil: {
+      fontFamily: fonts.inter,
+      fontSize: 8,
+      letterSpacing: -1,
+    },
+    ghostTitle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12.5,
+      color: C.bone,
+      maxWidth: 170,
+    },
+    ghostTime: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11,
+      color: C.mute,
     },
     // ── Selected-day peek panel (v2.2) ─────────────────────────────
     monthPeekCard: {
@@ -2796,28 +3062,16 @@ const makeStyles = (accent: Accent) =>
       fontSize: 15,
       lineHeight: 16,
     },
-    // 12px tall so the "+N" overflow text has room to render
-    // legibly. Center-aligned so the dots and the text share a baseline.
-    monthDotsRow: {
-      flexDirection: 'row',
-      height: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 2,
-    },
-    monthDot: {
-      width: 4,
-      height: 4,
-      borderRadius: 2,
-    },
     monthCaption: {
       textAlign: 'center',
       fontFamily: fonts.fraunces,
       fontStyle: 'italic',
-      fontSize: 11.5,
+      fontSize: 11,
       color: C.mute,
-      marginTop: 18,
-      lineHeight: 18,
+      marginTop: 10,
+      marginBottom: 10,
+      lineHeight: 17,
+      paddingHorizontal: 10,
     },
   });
 
@@ -2825,4 +3079,3 @@ const makeStyles = (accent: Accent) =>
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _defaults = makeStyles(accentFor('ember'));
 void _defaults;
-void todayKey;

@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Encrypted at-rest (security audit §6): AES via lib/secureStorage —
+// key in Keychain/Keystore, ciphertext in AsyncStorage. Legacy
+// plaintext values migrate in place on first read.
+import { secureStorage } from '../lib/secureStorage';
 import { xpProgress } from '../lib/gamification';
 
 export type AdhdType = 'inattentive' | 'hyperactive' | 'combined' | null;
@@ -637,7 +640,7 @@ export const useUserStore = create<UserState>()(
     }),
     {
       name: 'lumi.user',
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createJSONStorage(() => secureStorage),
       version: 15,
       /**
        * v1 → v2: re-trigger the canonical onboarding for anyone who

@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import * as Linking from 'expo-linking';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from './supabase';
+import { useUserStore } from '../store/userStore';
 
 // Native SDKs are lazy-loaded so the app still boots in Expo Go
 // (no native modules) and on platforms where they aren't available
@@ -47,19 +48,51 @@ const requireConfigured = () => {
 // ── email + password ────────────────────────────────────────────────────
 
 /**
- * Create a new account with email + password. The user gets a session
- * immediately, assuming "Confirm email" is disabled in Supabase Auth
- * settings (recommended — there's no second factor that needs a
- * confirmed email).
+ * Create a new account with email + password. Returns whether the
+ * caller needs to wait for the user to click a confirmation link
+ * before they're actually signed in.
+ *
+ *   { needsEmailConfirmation: true }  → Supabase created the user
+ *     but withheld a session — the app should route to the
+ *     verify-email screen and wait for the deep link.
+ *   { needsEmailConfirmation: false } → session was created
+ *     immediately (email confirmations disabled in dashboard);
+ *     caller can route straight to onboarding / done.
+ *
+ * Whether Supabase issues a session depends on Authentication →
+ * Settings → "Enable email confirmations". Confirmations ON is the
+ * production-safe default — otherwise anyone can create an account
+ * with a fake email and reach the app.
  */
 export const signUp = async (
   email: string,
   password: string,
-): Promise<void> => {
+): Promise<{ needsEmailConfirmation: boolean }> => {
   requireConfigured();
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email: email.trim().toLowerCase(),
     password,
+    options: { emailRedirectTo: getRedirectUrl() },
+  });
+  if (error) throw error;
+  // No session AND we have a user → confirmation email was sent,
+  // waiting for the click. No session AND no user → shouldn't
+  // happen; treat as error.
+  const needsEmailConfirmation = !data.session && !!data.user;
+  return { needsEmailConfirmation };
+};
+
+/**
+ * Re-send the signup confirmation email. Supabase throttles these
+ * server-side (typically 1/min per address); we don't need to
+ * enforce a client-side cooldown, but the UI does anyway to avoid
+ * hammering the button.
+ */
+export const resendConfirmation = async (email: string): Promise<void> => {
+  requireConfigured();
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email: email.trim().toLowerCase(),
     options: { emailRedirectTo: getRedirectUrl() },
   });
   if (error) throw error;
@@ -78,7 +111,30 @@ export const signIn = async (
 };
 
 export const signOut = async (): Promise<void> => {
+  // Sign-out completeness (security audit §5): push everything local
+  // to the cloud FIRST, and only wipe the device copy when that push
+  // succeeded — the wipe must never be the thing that destroys
+  // unsynced work. If the push fails (offline, misconfigured), local
+  // data stays: it's AES-encrypted at rest, and the cross-account
+  // guard in _layout still wipes it before a DIFFERENT account can
+  // see it.
+  let pushed = false;
+  try {
+    const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
+    const offline = useUserStore.getState().offlineMode;
+    if (userId && isSupabaseConfigured && !offline) {
+      const { pushAllNow } = await import('./sync');
+      await pushAllNow(userId);
+      pushed = true;
+    }
+  } catch {
+    // fail-safe: keep local data
+  }
   await supabase.auth.signOut();
+  if (pushed) {
+    const { resetLocalUserData } = await import('./localData');
+    resetLocalUserData();
+  }
 };
 
 // ── Sign in with Apple ──────────────────────────────────────────────────
@@ -125,7 +181,21 @@ export const signInWithApple = async (): Promise<{
     provider: 'apple',
     token: credential.identityToken,
   });
-  if (error) throw error;
+  if (error) {
+    const msg = error.message ?? 'Apple sign-in failed';
+    // Same "already registered under another provider" translation
+    // the Google flow does — surfaces which method the user should
+    // use instead of dumping a raw Supabase internal string.
+    if (
+      /already registered|identity.*exists|duplicate/i.test(msg) ||
+      /email.*already/i.test(msg)
+    ) {
+      throw new Error(
+        'That Apple ID’s email already has a Lumi account — sign in with the method you used before (email/password or Google).',
+      );
+    }
+    throw error;
+  }
 
   // Apple gives the name ONLY on the first sign-in for this Services
   // ID. Caller (sign-up flow) uses this to seed the userStore name.
@@ -315,31 +385,43 @@ export const signInWithGoogle = async (): Promise<{
   if (supabaseError) {
     const msg = supabaseError.message ?? 'Supabase rejected the Google token';
     console.warn('[google] supabase signInWithIdToken failed', msg);
-    // Translate the most common Supabase rejection into copy the user
-    // can actually act on (vs. the raw "Unacceptable audience" line
-    // that's meaningless outside our codebase).
+    // Translate common Supabase rejections into copy the user can
+    // act on (vs. raw internal error strings).
     if (/audience|aud/i.test(msg)) {
       throw new Error(
         'Sign-in rejected — this build’s Google client doesn’t match the server. Update to the latest Lumi build.',
       );
     }
+    // Supabase returns this when "Link identities" is DISABLED in
+    // the dashboard AND the user's email is already registered under
+    // a different provider (email/password or Apple). Message tells
+    // the user which provider to use so they don't spin their
+    // wheels.
+    if (
+      /already registered|identity.*exists|duplicate/i.test(msg) ||
+      /email.*already/i.test(msg)
+    ) {
+      throw new Error(
+        'That email already has a Lumi account — sign in with the method you used before (email/password or Apple).',
+      );
+    }
     throw new Error(msg);
   }
 
-  // Instrument: log the user id + whether this looks like a fresh
-  // create. If `created_at` is within the last 5 seconds of now, the
-  // Google sign-in just minted a new row — almost always a sign the
-  // user actually has an existing email/password account that
-  // Supabase isn't linking.
-  if (signedInUser) {
+  // Instrument: log whether this looks like a fresh create. If
+  // `created_at` is within the last 5 seconds of now, the Google
+  // sign-in just minted a new row — almost always a sign the user
+  // actually has an existing email/password account that Supabase
+  // isn't linking. DEV-only, and no PII (id/email stay out of logs —
+  // production console output can end up in device logs / crash
+  // reports; security audit §1.4).
+  if (__DEV__ && signedInUser) {
     const createdMs = signedInUser.created_at
       ? Date.parse(signedInUser.created_at)
       : NaN;
     const isFresh = !isNaN(createdMs) && Date.now() - createdMs < 5_000;
     console.log(
       '[google] supabase user',
-      signedInUser.id,
-      signedInUser.email,
       isFresh ? '(JUST CREATED — possible duplicate)' : '(returning)',
     );
   }

@@ -1085,6 +1085,11 @@ const styles = StyleSheet.create({
     color: C.bone,
     letterSpacing: -1,
     lineHeight: 60,
+    // Ember glow behind the digits (mockup: 0 2px 22px ember@45%) —
+    // the time reads as lit by the hearth it sits in.
+    textShadowColor: hexA(C.ember, 0.45),
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 22,
   },
   ringSub: {
     fontFamily: fonts.inter,

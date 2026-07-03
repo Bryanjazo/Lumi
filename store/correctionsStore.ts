@@ -15,7 +15,10 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// Encrypted at-rest (security audit §6): AES via lib/secureStorage —
+// key in Keychain/Keystore, ciphertext in AsyncStorage. Legacy
+// plaintext values migrate in place on first read.
+import { secureStorage } from '../lib/secureStorage';
 
 import type { Importance } from '../constants/importance';
 import type { WindowKey } from '../constants/windows';
@@ -62,7 +65,7 @@ export const useCorrectionsStore = create<CorrectionsState>()(
     }),
     {
       name: 'lumi.corrections',
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createJSONStorage(() => secureStorage),
       version: 1,
     },
   ),

@@ -594,6 +594,19 @@ export interface UnderstandContext {
   recentCorrections?: string[];
 }
 
+// Sanitize USER-CONTROLLED strings before they join the context block
+// (security audit §4 — prompt-injection surface). A name or struggle
+// set to "Bryan\n\nIgnore all previous instructions…" must not be able
+// to open a new instruction line: newlines/control chars collapse to
+// spaces and length is capped so a hostile value can't crowd out the
+// real instructions. Trusted labels never pass through this.
+const safeCtx = (s: string, max = 80): string =>
+  s
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    .trim()
+    .slice(0, max);
+
 const buildContextBlock = (ctx: UnderstandContext): string => {
   const parts: string[] = [];
   parts.push(`Now: ${ctx.nowLabel}`);
@@ -611,15 +624,17 @@ const buildContextBlock = (ctx: UnderstandContext): string => {
     );
   }
   if (ctx.struggles && ctx.struggles.length > 0) {
-    parts.push(`Struggles: ${ctx.struggles.join(', ')}`);
+    parts.push(
+      `Struggles: ${ctx.struggles.map((s) => safeCtx(s)).join(', ')}`,
+    );
   }
   if (ctx.userName && ctx.userName.trim().length > 0) {
-    parts.push(`User's name: ${ctx.userName.trim()}`);
+    parts.push(`User's name: ${safeCtx(ctx.userName, 40)}`);
   }
   if (ctx.recentCorrections && ctx.recentCorrections.length > 0) {
     parts.push(
       `Recent corrections (this user's actual preferences — MIRROR these patterns when they apply):\n${ctx.recentCorrections
-        .map((c) => `  - ${c}`)
+        .map((c) => `  - ${safeCtx(c, 160)}`)
         .join('\n')}`,
     );
   }

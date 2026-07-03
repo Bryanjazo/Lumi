@@ -20,20 +20,23 @@ export interface TourStep {
   optional?: boolean;
 }
 
+// Captions match the CURRENT Home (post lumi-home-capture-4 rework):
+// the floating capture pill, the one-thing hero card, and the Me tab's
+// hearthside room. If a section moves again, move these with it.
 export const TOUR_STEPS: TourStep[] = [
   {
     id: 'oracle',
     targetId: 'tour-oracle',
     scope: 'home',
     caption:
-      "Dump your brain here. Type or speak it — I'll sort the mess into quests.",
+      "Dump a thought here — type it or speak it. I'll sort the mess into your day.",
   },
   {
     id: 'first-quest',
     targetId: 'tour-quest',
     scope: 'home',
     caption:
-      'Tap a quest to clear it. Each thing you finish earns XP and keeps your world alive.',
+      "One thing at a time. This card is my pick for right now — mark it done, or start a focus timer on it. The rest? I'm holding it for you.",
     optional: true,
   },
   {
@@ -41,6 +44,6 @@ export const TOUR_STEPS: TourStep[] = [
     targetId: 'tour-nav-me',
     scope: 'tabbar',
     caption:
-      'Your week lives here. Tap Me anytime for your recap, your world, and everything I’ve learned about you.',
+      "Luna's room lives here — plus your road, your week's story, and everything I've learned about you.",
   },
 ];
