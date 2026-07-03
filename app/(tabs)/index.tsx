@@ -1207,6 +1207,61 @@ export default function Home() {
 
   const heroSuggestion: Suggestion | null = suggestions[0] ?? null;
 
+  // ── Pull-forward — when today's clear, offer the NEXT upcoming
+  // task (per lumi-home-oneember): soonest future date wins, biggest
+  // task first within it. Tomorrow, Friday, next week — whatever
+  // comes next. Recurring templates and someday are excluded (a
+  // template isn't an instance; someday has its own flow).
+  const [pullOfferClosed, setPullOfferClosed] = useState(false);
+  const nextUpcoming = useMemo(() => {
+    if (!(allDone || totallyEmpty)) return null;
+    const today = todayKey();
+    const rank = { high: 0, medium: 1, low: 2 } as const;
+    const future = quests.filter(
+      (q) =>
+        !q.completed &&
+        !q.recur &&
+        q.window !== 'someday' &&
+        !!q.date &&
+        q.date > today,
+    );
+    if (future.length === 0) return null;
+    future.sort(
+      (a, b) =>
+        a.date!.localeCompare(b.date!) ||
+        rank[a.importance] - rank[b.importance] ||
+        ((a.scheduledHour ?? 99) * 60 + (a.scheduledMinute ?? 0)) -
+          ((b.scheduledHour ?? 99) * 60 + (b.scheduledMinute ?? 0)),
+    );
+    return future[0];
+  }, [quests, allDone, totallyEmpty]);
+
+  // "tomorrow" / "friday" / "Jul 9" — however far out it lives.
+  const pullLabel = useMemo(() => {
+    if (!nextUpcoming?.date) return '';
+    const [y, m, d] = nextUpcoming.date.split('-').map(Number);
+    const target = new Date(y, m - 1, d);
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    const off = Math.round((target.getTime() - start.getTime()) / 86400000);
+    if (off === 1) return 'tomorrow';
+    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    if (off > 1 && off <= 6) return days[target.getDay()];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${months[target.getMonth()]} ${target.getDate()}`;
+  }, [nextUpcoming, now]);
+
+  /** Borrow it: land the task on today (setDate un-anchors — its old
+   *  clock time belonged to another day) and let the hero machinery
+   *  surface it. */
+  const pullForward = () => {
+    if (!nextUpcoming) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setQuestDate(nextUpcoming.id, todayKey());
+    setSwap(0);
+    showToast(`Borrowed from ${pullLabel} — you're ahead.`);
+  };
+
   // ── Header readout — one italic dusk line that frames the day ────
   // Per the lumi-home-capture-4 mock, but with honest numbers (the
   // mock hardcoded "nothing urgent"; we don't claim that). Hidden in
@@ -2624,6 +2679,60 @@ export default function Home() {
           </View>
         ) : null}
 
+        {/* ── Pull-forward — "feeling it? the next thread —" ─────────
+            Only when today's clear and something waits on a future
+            date. One task at a time, never the whole pile; dismiss
+            folds it into a quiet dashed chip. */}
+        {(allDone || totallyEmpty) && nextUpcoming && !pullOfferClosed && (
+          <View style={styles.pullCard}>
+            <View style={styles.pullHead}>
+              <Text style={styles.pullSpark}>✦</Text>
+              <Text style={styles.pullEyebrow}>
+                Feeling it? {pullLabel}&apos;s first thread —
+              </Text>
+            </View>
+            <Text style={styles.pullTitle}>{nextUpcoming.title}</Text>
+            <Text style={styles.pullWhy}>
+              {nextUpcoming.note ??
+                `a head start now makes ${pullLabel} lighter.`}
+            </Text>
+            <View style={styles.pullBtnRow}>
+              <Pressable onPress={pullForward} style={styles.pullBtn}>
+                <Text style={styles.pullBtnText}>Pull it into today</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setPullOfferClosed(true);
+                  showToast('Good call. Rest counts.');
+                }}
+                style={styles.pullDismissBtn}
+              >
+                <Text style={styles.pullDismissText}>
+                  I&apos;m done for today
+                </Text>
+              </Pressable>
+            </View>
+            <Text style={styles.pullFootnote}>
+              one at a time — {pullLabel} never lands on you all at once
+            </Text>
+          </View>
+        )}
+        {(allDone || totallyEmpty) && nextUpcoming && pullOfferClosed && (
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync();
+              setPullOfferClosed(false);
+            }}
+            style={styles.pullReopenChip}
+          >
+            <Text style={styles.pullSpark}>✦</Text>
+            <Text style={styles.pullReopenText}>
+              changed your mind? {pullLabel}&apos;s thread is still here
+            </Text>
+          </Pressable>
+        )}
+
         {/* The expanded brain-dump surface no longer renders inline
             in the scroll — it was popping up somewhere mid-page
             depending on scroll position and reading as buggy. It's
@@ -3474,6 +3583,111 @@ const makeStyles = (accent: Accent) =>
       lineHeight: 20,
       textAlign: 'center',
       maxWidth: 270,
+    },
+
+    // ── Pull-forward offer (lumi-home-oneember) ──
+    pullCard: {
+      marginTop: 14,
+      marginBottom: 4,
+      paddingHorizontal: 15,
+      paddingVertical: 14,
+      borderRadius: 16,
+      backgroundColor: hexA(C.dusk, 0.07),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.28),
+    },
+    pullHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+    },
+    pullSpark: {
+      color: C.dusk,
+      fontSize: 11,
+    },
+    pullEyebrow: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9.5,
+      letterSpacing: 1.8,
+      textTransform: 'uppercase',
+      color: C.dusk,
+      flexShrink: 1,
+    },
+    pullTitle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.2,
+      lineHeight: 19,
+      marginTop: 9,
+    },
+    pullWhy: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: C.dusk,
+      lineHeight: 17,
+      marginTop: 5,
+    },
+    pullBtnRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: 13,
+    },
+    pullBtn: {
+      flex: 1.4,
+      paddingVertical: 12,
+      borderRadius: 12,
+      backgroundColor: hexA(C.dusk, 0.14),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.45),
+      alignItems: 'center',
+    },
+    pullBtnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 13,
+      color: C.dusk,
+    },
+    pullDismissBtn: {
+      flex: 1,
+      paddingVertical: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: hexA(C.bone, 0.13),
+      alignItems: 'center',
+    },
+    pullDismissText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12.5,
+      color: C.boneDim,
+    },
+    pullFootnote: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 10,
+      color: C.mute,
+      marginTop: 9,
+    },
+    pullReopenChip: {
+      alignSelf: 'center',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      paddingHorizontal: 16,
+      paddingVertical: 9,
+      marginTop: 14,
+      marginBottom: 4,
+      borderRadius: 100,
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: hexA(C.dusk, 0.35),
+    },
+    pullReopenText: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: hexA(C.dusk, 0.9),
     },
 
     // ── Empty state ──
