@@ -75,6 +75,21 @@ export const signUp = async (
     options: { emailRedirectTo: getRedirectUrl() },
   });
   if (error) throw error;
+  // Existing-account detection: with confirmations ON, Supabase
+  // anti-enumeration returns a FAKE success for an email that
+  // already has an account — same shape, no email sent, and the
+  // user would sit on the verify screen waiting forever. The
+  // fingerprint is an obfuscated user with an EMPTY identities
+  // array. Surface the honest message instead.
+  if (
+    data.user &&
+    Array.isArray(data.user.identities) &&
+    data.user.identities.length === 0
+  ) {
+    throw new Error(
+      'An account with this email already exists — try signing in instead.',
+    );
+  }
   // No session AND we have a user → confirmation email was sent,
   // waiting for the click. No session AND no user → shouldn't
   // happen; treat as error.
