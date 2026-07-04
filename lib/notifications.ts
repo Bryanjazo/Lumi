@@ -23,10 +23,15 @@ const ROTATIONS = {
     "Tomorrow's first quest — pick it now while it's easy.",
     "Lights low. You don't owe anyone a full day.",
   ],
+  // Recovery lines OFFER something (emotional-model spec §6) — never
+  // report a deficit or imply Luna was hurt by the absence ("Luna
+  // missed you" reads as gentle guilt; gone). Each line is an action
+  // Lumi can actually do the moment the app opens.
   recovery: [
-    "Hey. No streak to defend. Open the app.",
+    "Want me to shrink today to one small win?",
+    "Need a fresh start? I can reorganize everything.",
     "Coming back is the whole win today.",
-    "Luna missed you. One tap is enough.",
+    "Today looking crowded? I can lighten it.",
   ],
 } as const;
 

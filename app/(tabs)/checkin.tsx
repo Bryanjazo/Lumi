@@ -68,6 +68,7 @@ import {
   useCorrectionsStore,
   summarizeCorrections,
 } from '../../store/correctionsStore';
+import { useRescueStore } from '../../store/rescueStore';
 import { useLearningDigest } from '../../lib/learning';
 import {
   llmUntangle,
@@ -439,8 +440,11 @@ const TaskChip = ({
   const onToday = quest.date === todayKey();
   const slotLabel = showSlot ? (SLOT_LABEL[quest.window as Slot] ?? null) : null;
   const today = todayKey();
+  // "carried" not "overdue" (emotional-model spec §7): the task came
+  // along with the user — the word never blames them for it. Dusk
+  // tone, not alarm-red.
   const tag = quest.date && quest.date < today
-    ? 'overdue'
+    ? 'carried'
     : quest.date === today && !onToday
       ? 'due'
       : '';
@@ -485,13 +489,13 @@ const TaskChip = ({
         <View
           style={[
             styles.chipTag,
-            tag === 'overdue' && { borderColor: hexA(C.ember, 0.4) },
+            tag === 'carried' && { borderColor: hexA(C.dusk, 0.4) },
           ]}
         >
           <Text
             style={[
               styles.chipTagText,
-              tag === 'overdue' && { color: C.ember },
+              tag === 'carried' && { color: C.dusk },
             ]}
           >
             {tag}
@@ -919,6 +923,25 @@ export default function Untangle() {
   );
   const [highlightIds, setHighlightIds] = useState<string[]>([]);
   const scrollRef = useRef<ScrollView>(null);
+
+  // ── Rescue hand-off (emotional-model spec §3) ────────────────────
+  // Home's Rescue Mode "let me explain" button lands here: open with
+  // "life happened" framing instead of the normal greeting, so the
+  // user can just talk and the engine sorts what can wait.
+  const pendingExplain = useRescueStore((s) => s.pendingExplain);
+  const setPendingExplain = useRescueStore((s) => s.setPendingExplain);
+  useEffect(() => {
+    if (!pendingExplain) return;
+    setPendingExplain(false);
+    setMsgs((m) => [
+      ...m,
+      {
+        id: `rescue-${Date.now()}`,
+        from: 'lumi',
+        text: "Life happened — that's allowed. Tell me what's been going on, and I'll sort what can wait, tuck away what's stale, and keep only what really matters today.",
+      },
+    ]);
+  }, [pendingExplain, setPendingExplain]);
 
   // Voice
   const voice = useVoice();

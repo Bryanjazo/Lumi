@@ -46,7 +46,7 @@ import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { timeColors as C } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { lunaSource, useLunaSkin } from '../../lib/luna-source';
-import { useAmbientLunaMood } from '../../lib/luna-mood';
+import { useAmbientLunaMood, textReadsOverwhelmed } from '../../lib/luna-mood';
 import { useCompanionMode } from '../../lib/companion-mode';
 import { IMPORTANCE, Importance } from '../../constants/importance';
 import {
@@ -79,6 +79,14 @@ import {
 } from '../../lib/capture';
 import { personalizeTasks } from '../../lib/personalize';
 import { useAiMetricsStore } from '../../store/aiMetricsStore';
+import { awayStateFor, lastSeenDate, type AwayState } from '../../lib/away';
+import {
+  findStale,
+  dominantStaleCluster,
+} from '../../lib/learning/avoidance';
+import { useRescueStore } from '../../store/rescueStore';
+import { RescueCard } from '../../components/RescueCard';
+import { WelcomeBackCard } from '../../components/WelcomeBackCard';
 import { useVoice } from '../../lib/voice';
 import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
@@ -949,20 +957,46 @@ export default function Home() {
     }, durationMs);
   };
 
+  // ── Empathize moment (emotional-model spec §1) ───────────────────
+  // The ONE sanctioned use of the sad pose: the user just told us
+  // they're overwhelmed. Luna sits WITH them for a few seconds —
+  // "let's carry it together" — then returns to ambient. Never fired
+  // by missed tasks / inactivity / streaks.
+  const [empathizing, setEmpathizing] = useState(false);
+  const empathizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const triggerEmpathize = () => {
+    if (empathizeTimerRef.current) clearTimeout(empathizeTimerRef.current);
+    setEmpathizing(true);
+    empathizeTimerRef.current = setTimeout(() => {
+      setEmpathizing(false);
+      empathizeTimerRef.current = null;
+    }, 7_000);
+  };
+
   // Cleanup on unmount so a stale timeout can't try to setState
   // after the screen's torn down.
   useEffect(
     () => () => {
       if (celebrateTimerRef.current) clearTimeout(celebrateTimerRef.current);
       if (lickTimerRef.current) clearTimeout(lickTimerRef.current);
+      if (empathizeTimerRef.current) {
+        clearTimeout(empathizeTimerRef.current);
+      }
     },
     [],
   );
+  // Priority: the lick beat is a transient action; empathize beats
+  // celebration (sitting with the user matters more than confetti);
+  // then the 30s happy window; then ambient.
   const nookMood = licking
     ? 'lick'
-    : celebrating
-      ? 'happy'
-      : ambientMood;
+    : empathizing
+      ? 'sad'
+      : celebrating
+        ? 'happy'
+        : ambientMood;
 
   // ── Store ────────────────────────────────────────────────────────
   const xp = useUserStore((s) => s.xp);
@@ -1372,6 +1406,24 @@ export default function Home() {
       }, 1200);
     }
 
+    // Meaningful-win moments (emotional-model spec §4): the BIG
+    // emotional peak lands on "you did the avoided/hard thing", not
+    // on checkbox volume. A task carried 5+ days = avoidance finally
+    // broken — that gets NAMED. A Trial gets a nod. Routine
+    // completions keep the quiet warm beat above.
+    const daysCarried = q.createdAt
+      ? Math.floor(
+          (Date.now() - new Date(q.createdAt).getTime()) / 86_400_000,
+        )
+      : 0;
+    if (daysCarried >= 5) {
+      showToast(
+        `That one followed you for ${daysCarried} days — and you just did it ✨`,
+      );
+    } else if (q.importance === 'high') {
+      showToast('The big one. That took real fuel — well done.');
+    }
+
     // Surface an Undo so accidental taps can be reversed within 6s.
     // The XP guardrail in questStore means an undo doesn't subtract
     // XP — you keep the small win for trying.
@@ -1390,6 +1442,164 @@ export default function Home() {
     if (idx < 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSwap(idx);
+  };
+
+  // ── Away/return + Rescue Mode (emotional-model spec §2/§3) ───────
+  // Snapshot how long the user was away BEFORE stamping today as an
+  // open day — the stamp would otherwise erase the signal we're
+  // about to welcome them back with.
+  const registerOpen = useUserStore((s) => s.registerOpen);
+  const rescueDismissedDate = useUserStore((s) => s.rescueDismissedDate);
+  const dismissRescueForToday = useUserStore((s) => s.dismissRescue);
+  const setRescueExplain = useRescueStore((s) => s.setPendingExplain);
+  const [awaySnap, setAwaySnap] = useState<AwayState | null>(null);
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  useEffect(() => {
+    const prevOpen = registerOpen();
+    const prevActive = useUserStore.getState().lastActiveDate;
+    const snap = awayStateFor(lastSeenDate(prevActive, prevOpen));
+    if (snap.stage) setAwaySnap(snap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Open tasks that have slipped past their date (someday excluded —
+  // those are parked on purpose). Drives Rescue Mode + the proactive
+  // backlog card; NEVER rendered as a wall of red.
+  const overdueOpen = useMemo(() => {
+    const t = todayKey();
+    return quests.filter(
+      (q) => !q.completed && q.window !== 'someday' && q.date && q.date < t,
+    );
+  }, [quests]);
+
+  const rescueActive =
+    ((awaySnap?.daysAway ?? 0) >= 3 || overdueOpen.length >= 8) &&
+    rescueDismissedDate !== todayKey() &&
+    !totallyEmpty;
+
+  // 🌱 Just one thing — the smallest, most doable open task. Whims
+  // before Trials, shortest first: the point is a WIN, not the
+  // biggest rock. If today is empty, gently borrow the easiest
+  // thing that slipped.
+  const pendingSurfaceRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pendingSurfaceRef.current) return;
+    const q = candidates.find((c) => c.id === pendingSurfaceRef.current);
+    if (q) {
+      pendingSurfaceRef.current = null;
+      surfaceNow(q);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidates]);
+
+  const rescueOneThing = () => {
+    const openToday = todayQuests.filter(
+      (q) => !q.completed && q.window !== 'someday',
+    );
+    const pool = openToday.length > 0 ? openToday : overdueOpen;
+    dismissRescueForToday();
+    if (pool.length === 0) return;
+    const pick = [...pool].sort(
+      (a, b) =>
+        IMPORTANCE[a.importance].rank - IMPORTANCE[b.importance].rank ||
+        (a.durationMinutes ?? 30) - (b.durationMinutes ?? 30),
+    )[0];
+    if (pick.date !== todayKey()) {
+      setQuestDate(pick.id, todayKey());
+      pendingSurfaceRef.current = pick.id;
+    } else {
+      surfaceNow(pick);
+    }
+    showToast('Just this one — everything else can wait.');
+  };
+
+  // 🧹 Clean up my tasks — deterministic triage, nothing deleted:
+  //   · the 3 most important slipped tasks come to today
+  //   · anything stale for 2+ weeks tucks into someday (recoverable)
+  //   · the rest move to tomorrow
+  const rescueCleanUp = () => {
+    const t = todayKey();
+    const sorted = [...overdueOpen].sort(
+      (a, b) =>
+        IMPORTANCE[b.importance].rank - IMPORTANCE[a.importance].rank,
+    );
+    const keep = sorted.slice(0, 3);
+    let kept = 0;
+    let moved = 0;
+    let tucked = 0;
+    for (const q of keep) {
+      setQuestDate(q.id, t);
+      kept++;
+    }
+    const staleCutoff = new Date();
+    staleCutoff.setDate(staleCutoff.getDate() - 14);
+    const cutoffISO = `${staleCutoff.getFullYear()}-${String(staleCutoff.getMonth() + 1).padStart(2, '0')}-${String(staleCutoff.getDate()).padStart(2, '0')}`;
+    for (const q of sorted.slice(3)) {
+      if (q.date && q.date < cutoffISO) {
+        moveQuestWindow(q.id, 'someday');
+        tucked++;
+      } else {
+        setQuestDate(q.id, offsetDate(1));
+        moved++;
+      }
+    }
+    dismissRescueForToday();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const bits: string[] = [];
+    if (kept > 0) bits.push(`kept ${kept} for today`);
+    if (moved > 0) bits.push(`moved ${moved} to tomorrow`);
+    if (tucked > 0) bits.push(`tucked ${tucked} into someday`);
+    showToast(
+      bits.length > 0
+        ? `All sorted — ${bits.join(', ')}.`
+        : 'All sorted — your plate is clear.',
+    );
+  };
+
+  // 🎙 Let me explain — hand off to Untangle primed for "life
+  // happened". The user talks; the engine reschedules/keeps/drops.
+  const rescueExplain = () => {
+    dismissRescueForToday();
+    setRescueExplain(true);
+    router.push('/(tabs)/checkin');
+  };
+
+  // ── Proactive backlog (emotional-model spec §7) ──────────────────
+  // A couple of tasks slipped but it's not rescue-level: never a
+  // wall of red — one observation + an offer, once a day at most.
+  // Pattern-based (§5): if the slipped tasks cluster ("mostly phone
+  // calls"), say THAT, not a count of failures.
+  const backlogNudgeDismissedDate = useUserStore(
+    (s) => s.backlogNudgeDismissedDate,
+  );
+  const dismissBacklogNudge = useUserStore((s) => s.dismissBacklogNudge);
+  const backlogNudge = useMemo(() => {
+    if (rescueActive) return null;
+    if (backlogNudgeDismissedDate === todayKey()) return null;
+    if (overdueOpen.length < 2) return null;
+    const stale = findStale(quests, { minDays: 2 });
+    const cluster = dominantStaleCluster(stale);
+    const line = cluster
+      ? `A few things have followed you for a couple of days — mostly ${cluster.label}. They might not all be urgent anymore.`
+      : 'A few things have followed you for a couple of days. They might not all be urgent anymore.';
+    return { line };
+  }, [rescueActive, backlogNudgeDismissedDate, overdueOpen, quests]);
+
+  const backlogSnooze = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    for (const q of overdueOpen) setQuestDate(q.id, offsetDate(1));
+    dismissBacklogNudge();
+    showToast(
+      `Snoozed ${overdueOpen.length} to tomorrow — today just got lighter.`,
+    );
+  };
+  const backlogTuck = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    for (const q of overdueOpen) moveQuestWindow(q.id, 'someday');
+    dismissBacklogNudge();
+    showToast(
+      `Tucked ${overdueOpen.length} into someday — they'll wait quietly.`,
+    );
   };
 
   /** Tap the Undo chip on the post-complete toast. Flips the task
@@ -1434,7 +1644,9 @@ export default function Home() {
       }
     }
     if (isMissed) {
-      toastLine = `Brought back · still on today (missed earlier)`;
+      // "from earlier", not "missed earlier" — same fact, no blame
+      // (emotional-model spec §0).
+      toastLine = `Brought back · still on today (from earlier)`;
     }
 
     toggle(q.id);
@@ -1848,6 +2060,13 @@ export default function Home() {
     const detTasks = parseSmartCapture(text, ctx);
     if (detTasks.length === 0) return;
 
+    // The user just said they're overwhelmed — Luna sits with them
+    // (the ONE sanctioned sad pose, emotional-model spec §1).
+    if (textReadsOverwhelmed(text)) {
+      triggerEmpathize();
+      showToast("That sounds like a lot. Let's carry it together.");
+    }
+
     setEditingIdx(null);
     setCapText('');
     setCapOpen(false);
@@ -2190,6 +2409,10 @@ export default function Home() {
       anchors,
     };
     const detTasks = parseSmartCapture(final, ctx);
+    if (textReadsOverwhelmed(final)) {
+      triggerEmpathize();
+      showToast("That sounds like a lot. Let's carry it together.");
+    }
     if (detTasks.length === 0) {
       // Deterministic parser couldn't extract anything — surface the
       // transcript in the expanded capture so the user can edit and
@@ -2641,8 +2864,33 @@ export default function Home() {
           </Text>
         </View>
 
+        {/* ── Welcome back (emotional-model spec §2) — after time
+            away, Lumi kept your spot warm. Never "you missed X". */}
+        {awaySnap?.stage && !rescueActive && !welcomeDismissed && (
+          <WelcomeBackCard
+            stage={awaySnap.stage}
+            line={awaySnap.line ?? ''}
+            scene={awaySnap.scene ?? ''}
+            lunaSkin={lunaSkin}
+            onDismiss={() => setWelcomeDismissed(true)}
+          />
+        )}
+
         {/* ═══ THE ONE THING ═══ */}
-        {allDone ? (
+        {rescueActive ? (
+          /* Rescue Mode (spec §3) — life happened; instead of a wall
+             of overdue, a warm reset with three doors. */
+          <RescueCard
+            lunaSkin={lunaSkin}
+            onOneThing={rescueOneThing}
+            onCleanUp={rescueCleanUp}
+            onExplain={rescueExplain}
+            onDismiss={() => {
+              Haptics.selectionAsync();
+              dismissRescueForToday();
+            }}
+          />
+        ) : allDone ? (
           /* Compact text card — Luna lives in her nook now (she used
              to be duplicated here at 96px, which made this card tall
              and put two cats on screen). The nook's mood already
@@ -2929,7 +3177,7 @@ export default function Home() {
             before the user accepts. Bulk-aware: when multiple
             suggestions are pending, the "1 of N" badge shows up
             and each accept/dismiss reveals the next. */}
-        {heroSuggestion && !allDone && (
+        {heroSuggestion && !allDone && !rescueActive && (
           <View style={{ marginTop: 14 }}>
             <LumiSuggestCard
               // Same remount-per-suggestion reasoning as the preview
@@ -2968,7 +3216,7 @@ export default function Home() {
             it as the hero immediately. Long-press a row to edit;
             tapping "someday" on a someday row opens the move-back
             sheet. Delete intentionally lives on the hero card only. */}
-        {rest.length > 0 && (
+        {rest.length > 0 && !rescueActive && (
           <View style={styles.waitingCard}>
             <Pressable
               onPress={() => {
@@ -3080,6 +3328,31 @@ export default function Home() {
             list. Check badge instead of the ✦ spark, a warm tally
             headline, quiet +xp per row, and its own promise line
             (undo, no judgment). Collapsed by default, same calm. */}
+        {/* ── Backlog, offered not shamed (spec §5/§7) — an
+            observation and two one-tap outs, never a red wall. */}
+        {backlogNudge && (
+          <View style={styles.backlogCard}>
+            <Text style={styles.backlogLine}>{backlogNudge.line}</Text>
+            <View style={styles.backlogRow}>
+              <Pressable onPress={backlogSnooze} style={styles.backlogBtn}>
+                <Text style={styles.backlogBtnText}>Snooze to tomorrow</Text>
+              </Pressable>
+              <Pressable onPress={backlogTuck} style={styles.backlogBtn}>
+                <Text style={styles.backlogBtnText}>Tuck into someday</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  dismissBacklogNudge();
+                }}
+                style={styles.backlogKeep}
+              >
+                <Text style={styles.backlogKeepText}>keep them</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
         {doneTodayList.length > 0 && (
           <View style={styles.doneTodayCard}>
             <Pressable
@@ -4532,6 +4805,46 @@ const makeStyles = (accent: Accent) =>
     },
 
     // ── "N more waiting — Lumi's holding them" (lumi-holding mock) ──
+    backlogCard: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.25),
+      backgroundColor: hexA(C.void2, 0.7),
+      padding: 14,
+      marginTop: 14,
+    },
+    backlogLine: {
+      fontFamily: fonts.frauncesMed,
+      fontSize: 14,
+      lineHeight: 20,
+      color: C.bone,
+    },
+    backlogRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 11,
+    },
+    backlogBtn: {
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.35),
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+    },
+    backlogBtnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+      color: C.dusk,
+    },
+    backlogKeep: { paddingHorizontal: 6, paddingVertical: 7 },
+    backlogKeepText: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.mute,
+      textDecorationLine: 'underline',
+    },
     waitingCard: {
       borderRadius: 18,
       borderWidth: 1,
