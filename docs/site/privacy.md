@@ -1,6 +1,6 @@
 # Lumi Privacy Policy
 
-**Effective date: [DATE]**
+**Effective date: July 4, 2026**
 
 Lumi ("we," "us") is built for minds that carry a lot. That includes carrying your trust — this policy explains, in plain language, what data Lumi handles and why. The short version: your tasks are yours, we don't sell data, we don't run ads, and we collect only what the app needs to work.
 
@@ -50,4 +50,4 @@ If this policy changes materially, we'll note it in the app and update the date 
 
 ## Contact
 
-Questions or requests: **support@[YOURDOMAIN]**
+Questions or requests: **support@lumitasks.app**

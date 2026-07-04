@@ -1,6 +1,6 @@
 # Lumi · App Store metadata (v1.0)
 
-Paste-ready. Swap [YOURDOMAIN] once the domain exists.
+Paste-ready. Swap lumitasks.app once the domain exists.
 
 ---
 
@@ -55,7 +55,7 @@ The core of Lumi is free, forever — capture, organize, focus, learn. Lumi Pro 
 
 Built for ADHD brains. Made for anyone whose mind is loud.
 
-Privacy: your tasks sync securely, encrypted on device, never sold, never used for ads. Full policy: [YOURDOMAIN]/privacy
+Privacy: your tasks sync securely, encrypted on device, never sold, never used for ads. Full policy: lumitasks.app/privacy
 ```
 
 ## What's New (v1.0)
@@ -106,9 +106,9 @@ Style: real app frames on the dark palette, one short Fraunces-italic caption pe
 ## ASC field checklist (version page)
 - [ ] Screenshots 6.9" (iPhone-only now — supportsTablet is false)
 - [ ] Promotional text · Description · Keywords · What's New (above)
-- [ ] Support URL: https://[YOURDOMAIN]/support
-- [ ] Marketing URL (optional): https://[YOURDOMAIN]
-- [ ] Privacy Policy URL (App Privacy section): https://[YOURDOMAIN]/privacy
+- [ ] Support URL: https://lumitasks.app/support
+- [ ] Marketing URL (optional): https://lumitasks.app
+- [ ] Privacy Policy URL (App Privacy section): https://lumitasks.app/privacy
 - [ ] App Review Information: demo account email/password + notes (above) + your contact phone/email
 - [ ] Version release: "Manually release this version" (recommended for launch-day control)
 - [ ] Attach build 52

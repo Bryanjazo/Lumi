@@ -1,6 +1,6 @@
 # Lumi Support
 
-**Need help? Email us: support@[YOURDOMAIN]** — we read everything and usually reply within a day or two.
+**Need help? Email us: support@lumitasks.app** — we read everything and usually reply within a day or two.
 
 ## Common questions
 

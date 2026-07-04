@@ -448,11 +448,11 @@ export default function Paywall() {
 
           {/* ── Terms / Privacy ── */}
           <View style={styles.legalRow}>
-            <Pressable onPress={openLink('https://lumi.app/terms')} hitSlop={8}>
+            <Pressable onPress={openLink('https://lumitasks.app/terms')} hitSlop={8}>
               <Text style={styles.legalLink}>Terms</Text>
             </Pressable>
             <Pressable
-              onPress={openLink('https://lumi.app/privacy')}
+              onPress={openLink('https://lumitasks.app/privacy')}
               hitSlop={8}
             >
               <Text style={styles.legalLink}>Privacy</Text>

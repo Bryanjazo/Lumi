@@ -1,6 +1,6 @@
 # Lumi Terms of Use
 
-**Effective date: [DATE]**
+**Effective date: July 4, 2026**
 
 By using Lumi you agree to these terms.
 
@@ -48,4 +48,4 @@ We may update these terms; material changes will be noted in the app. Continued 
 
 ## Contact
 
-**support@[YOURDOMAIN]**
+**support@lumitasks.app**
