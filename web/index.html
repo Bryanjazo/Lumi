@@ -41,7 +41,7 @@ main{flex:1;width:100%;max-width:620px;margin:0 auto;padding:34px 24px 60px}
 .luna-wrap{display:flex;justify-content:center;margin-bottom:2px}
 .luna-halo{position:relative}
 .luna-halo::before{content:"";position:absolute;inset:-28px;border-radius:50%;background:radial-gradient(circle, rgba(244,201,138,0.17), transparent 70%);animation:wbreathe 3.4s ease-in-out infinite}
-canvas.luna{image-rendering:pixelated;display:block;position:relative}
+img.luna{image-rendering:pixelated;display:block;position:relative}
 .eyebrow{font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--dusk);font-weight:700}
 .hero .eyebrow{margin:10px 0 14px}
 h1{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:46px;line-height:1.1;letter-spacing:-1.2px;text-wrap:pretty}
@@ -141,7 +141,7 @@ footer a{text-decoration:underline;color:var(--mute)}
   <!-- ============ MAIN STATE ============ -->
   <div id="signup">
     <div class="hero">
-      <div class="luna-wrap"><div class="luna-halo"><canvas class="luna" id="luna1" width="64" height="64" style="width:108px;height:108px"></canvas></div></div>
+      <div class="luna-wrap"><div class="luna-halo"><img class="luna" id="luna1" src="/luna-idle.gif" alt="Luna, a small pixel cat" style="width:108px;height:108px"></div></div>
       <div class="eyebrow">✦ Meet Lumi — coming soon</div>
       <h1>Your brain won't shut off.<br>Lumi's listening.</h1>
       <div class="sub">The AI companion that remembers everything so you don't have to.</div>
@@ -191,7 +191,7 @@ footer a{text-decoration:underline;color:var(--mute)}
 
   <!-- ============ JOINED STATE ============ -->
   <div id="joined">
-    <div class="luna-wrap"><div class="luna-halo"><canvas class="luna" id="luna2" width="64" height="64" style="width:116px;height:116px"></canvas></div></div>
+    <div class="luna-wrap"><div class="luna-halo"><img class="luna" id="luna2" src="/luna-happy.gif" alt="Luna, happy" style="width:116px;height:116px"></div></div>
     <div class="eyebrow">Luna will remember you</div>
     <h1>You're <span class="spot" id="spotNum">in line</span>.</h1>
     <div class="sub" id="joinedSub">We saved your spot — and your thoughts. When Lumi opens the door, they'll be waiting, sorted.</div>
@@ -240,53 +240,12 @@ footer a{text-decoration:underline;color:var(--mute)}
     return { tag: 'SORTED', dot: '#F4C98A', est: '~20 min' };
   }
 
-  /* ── Luna canvas (ported from the app) ──────────────────────── */
+  /* ── Luna — the app's real pixel-art GIFs ───────────────────── */
   var lunaMood = 'idle';
-  function startLuna(cv) {
-    if (!cv || !cv.getContext) return;
-    var ctx = cv.getContext('2d');
-    var S = { t: 0, blink: 90, blinking: false };
-    var OL = '#0E0A08', FUR = '#E8DAC0', FUR2 = '#F5EAD0', EAR = '#D88878';
-    function circ(ox, oy, r, c) { ctx.fillStyle = c; for (var dy = -r; dy <= r; dy++) { var w = Math.round(Math.sqrt(Math.max(0, r * r - dy * dy))); if (w > 0) ctx.fillRect(Math.round(ox - w), Math.round(oy + dy), w * 2 + 1, 1); } }
-    function oc(ox, oy, r, f) { circ(ox, oy, r + 1, OL); circ(ox, oy, r, f); }
-    function R(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); }
-    function draw() {
-      if (!cv.isConnected) return;
-      ctx.clearRect(0, 0, 64, 64); ctx.imageSmoothingEnabled = false;
-      var m = lunaMood; S.t++; S.blink--;
-      if (S.blink <= 0) { S.blinking = !S.blinking; S.blink = S.blinking ? 3 : 80 + (Math.random() * 60 | 0); }
-      var happy = m !== 'idle';
-      var by = Math.sin(S.t * (happy ? 0.08 : 0.05)) * (happy ? 1.6 : 1);
-      var cx = 32, cy = 37 + by;
-      ctx.fillStyle = 'rgba(0,0,0,0.22)';
-      for (var sh = -3; sh <= 3; sh++) { var sw = Math.round(Math.sqrt(Math.max(0, 9 - sh * sh)) / 3 * 15); ctx.fillRect(cx - sw, 53 + sh, sw * 2, 1); }
-      var tw = Math.round(Math.sin(S.t * 0.06) * 3);
-      oc(cx + 11, cy + 5, 3, FUR); oc(cx + 14, cy + 5 + tw, 2, FUR2);
-      oc(cx, cy + 3, 12, FUR); circ(cx, cy + 5, 8, FUR2);
-      oc(cx - 7, cy + 13, 3, FUR); oc(cx + 7, cy + 13, 3, FUR);
-      var hx = cx, hy = cy - 9; oc(hx, hy, 10, FUR);
-      oc(hx - 8, hy - 8, 4, FUR); oc(hx + 8, hy - 8, 4, FUR);
-      circ(hx - 8, hy - 8, 2, alpha(EAR, 0.55)); circ(hx + 8, hy - 8, 2, alpha(EAR, 0.55));
-      if (happy) { circ(hx - 6, hy + 3, 2.4, 'rgba(216,136,120,0.28)'); circ(hx + 6, hy + 3, 2.4, 'rgba(216,136,120,0.28)'); }
-      if (S.blinking) { R(hx - 6, hy - 1, 4, 2, OL); R(hx + 3, hy - 1, 4, 2, OL); }
-      else {
-        oc(hx - 4, hy, 3, '#9AB4C4'); oc(hx + 4, hy, 3, '#9AB4C4');
-        circ(hx - 4, hy, 1.5, OL); circ(hx + 4, hy, 1.5, OL);
-        R(hx - 5, hy - 1, 1.4, 1.4, '#FFF'); R(hx + 3, hy - 1, 1.4, 1.4, '#FFF');
-      }
-      R(hx - 1, hy + 4, 3, 2, EAR);
-      if (happy) R(hx - 2, hy + 6, 5, 2, OL);
-      else { R(hx, hy + 6, 1, 2, OL); R(hx - 2, hy + 7, 2, 1, OL); R(hx + 1, hy + 7, 2, 1, OL); }
-      ctx.strokeStyle = alpha('#C9BBA0', 0.5); ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(hx - 6, hy + 5); ctx.lineTo(hx - 13, hy + 4);
-      ctx.moveTo(hx - 6, hy + 6); ctx.lineTo(hx - 13, hy + 7);
-      ctx.moveTo(hx + 6, hy + 5); ctx.lineTo(hx + 13, hy + 4);
-      ctx.moveTo(hx + 6, hy + 6); ctx.lineTo(hx + 13, hy + 7);
-      ctx.stroke();
-      requestAnimationFrame(draw);
-    }
-    draw();
+  function setLunaMood(m) {
+    lunaMood = m;
+    var el = document.getElementById('luna1');
+    if (el) el.src = m === 'happy' ? '/luna-happy.gif' : '/luna-idle.gif';
   }
 
   /* ── dom refs ───────────────────────────────────────────────── */
@@ -327,13 +286,27 @@ footer a{text-decoration:underline;color:var(--mute)}
     consentEl.style.display = 'block';
   }
 
+  var MAX_DEMO = 5;
+
+  function lockDemo() {
+    draftEl.disabled = true;
+    draftEl.placeholder = "Luna's holding five already…";
+    dumpBtn.textContent = 'Save my spot';
+    dumpBtn.onclick = function () {
+      emailEl.focus();
+      emailEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    micBtn.classList.remove('on');
+    lunaLineEl.textContent = "my paws are full — I can hold five out here. inside, I hold everything.";
+  }
+
   function addThought(text) {
     text = (text || '').trim().slice(0, 200);
-    if (!text || thoughts.length >= 20) return;
+    if (!text || thoughts.length >= MAX_DEMO) return;
     var meta = classify(text);
     var t = { text: text, tag: meta.tag, dot: meta.dot, est: meta.est };
     thoughts.push(t);
-    lunaMood = 'happy';
+    setLunaMood('happy');
     draftEl.value = '';
 
     var el = document.createElement('div');
@@ -351,6 +324,7 @@ footer a{text-decoration:underline;color:var(--mute)}
 
     afterAdd();
     persist();
+    if (thoughts.length >= MAX_DEMO) lockDemo();
   }
 
   dumpBtn.addEventListener('click', function () { addThought(draftEl.value); });
@@ -477,7 +451,7 @@ footer a{text-decoration:underline;color:var(--mute)}
     function done(wasDuplicate) {
       fetchCount().then(function (n) {
         joined = true;
-        lunaMood = 'happy';
+        setLunaMood('happy');
         spotNum.textContent = (typeof n === 'number' && n > 0) ? '#' + n : 'in line';
         joinedSub.textContent = wasDuplicate
           ? (thoughts.length
@@ -525,7 +499,7 @@ footer a{text-decoration:underline;color:var(--mute)}
   againBtn.addEventListener('click', function () {
     joinedEl.style.display = 'none';
     signupEl.style.display = 'block';
-    draftEl.focus();
+    if (thoughts.length < MAX_DEMO) draftEl.focus();
   });
 
   /* ── persistence (refresh-proof) ────────────────────────────── */
@@ -545,16 +519,17 @@ footer a{text-decoration:underline;color:var(--mute)}
       if (!raw) return;
       var s = JSON.parse(raw);
       if (Array.isArray(s.thoughts)) {
-        s.thoughts.slice(0, 20).forEach(function (t) {
+        s.thoughts.slice(0, 5).forEach(function (t) {
           if (t && typeof t.text === 'string' && t.text.trim()) {
             var meta = classify(t.text);
             thoughts.push({ text: t.text.slice(0, 200), tag: meta.tag, dot: meta.dot, est: meta.est });
           }
         });
         if (thoughts.length) {
-          lunaMood = 'happy';
+          setLunaMood('happy');
           thoughts.forEach(function (t) { thoughtsEl.appendChild(sortedRow(t)); });
           afterAdd();
+          if (thoughts.length >= MAX_DEMO) lockDemo();
         }
       }
       if (s.joined) {
@@ -570,8 +545,6 @@ footer a{text-decoration:underline;color:var(--mute)}
 
   /* ── boot ───────────────────────────────────────────────────── */
   restore();
-  startLuna($('luna1'));
-  startLuna($('luna2'));
   fetchCount().then(function (n) {
     if (typeof n === 'number' && n >= 25) {
       teaserEl.textContent = n + ' minds already in line';
