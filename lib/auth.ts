@@ -113,6 +113,41 @@ export const resendConfirmation = async (email: string): Promise<void> => {
   if (error) throw error;
 };
 
+// ── pending-confirmation credential stash ───────────────────────────
+// In-memory ONLY (never persisted): after sign-up, the verify-email
+// screen polls signIn with these so the moment the user clicks the
+// confirmation link — on any device, any browser — the app signs
+// itself in. Makes confirmation feel like "approved → you're in"
+// even when the deep link never reaches us (desktop mail clients,
+// missing redirect allow-list entries, etc.).
+let pendingCreds: { email: string; password: string } | null = null;
+export const stashPendingCredentials = (
+  email: string,
+  password: string,
+): void => {
+  pendingCreds = { email: email.trim().toLowerCase(), password };
+};
+export const clearPendingCredentials = (): void => {
+  pendingCreds = null;
+};
+/**
+ * One quiet sign-in attempt with the stashed credentials. Returns
+ * true when a session was established (email now confirmed). Silent
+ * on the expected failure (email not confirmed yet / creds missing).
+ */
+export const tryPendingSignIn = async (): Promise<boolean> => {
+  if (!pendingCreds || !isSupabaseConfigured) return false;
+  const { error } = await supabase.auth.signInWithPassword({
+    email: pendingCreds.email,
+    password: pendingCreds.password,
+  });
+  if (!error) {
+    pendingCreds = null;
+    return true;
+  }
+  return false;
+};
+
 export const signIn = async (
   email: string,
   password: string,

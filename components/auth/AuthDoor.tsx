@@ -49,6 +49,7 @@ import { LunaPixel } from './LunaPixel';
 import {
   signIn,
   signUp,
+  stashPendingCredentials,
   signInWithApple,
   signInWithGoogle,
   GOOGLE_CANCELLED,
@@ -395,6 +396,10 @@ export const AuthDoor = ({ initialMode }: Props) => {
       if (isUp) {
         setName_(name.trim());
         const { needsEmailConfirmation } = await signUp(email, pw);
+        // Stash creds (memory only) so the verify screen can sign in
+        // the moment the confirmation link is clicked — even if the
+        // deep link never reaches the app.
+        stashPendingCredentials(email, pw);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         if (needsEmailConfirmation) {
           // Supabase withheld the session — user needs to click the
