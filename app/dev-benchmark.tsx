@@ -34,6 +34,10 @@ import {
   runFullBenchmark,
   type BenchmarkReport,
 } from '../lib/anthropic-benchmark-runner';
+import {
+  isSimulatingLlmDown,
+  setSimulateLlmDown,
+} from '../lib/anthropic';
 
 const hexA = (hex: string, a: number): string => {
   const h = hex.replace('#', '');
@@ -46,6 +50,16 @@ export default function DevBenchmarkScreen() {
   const [progress, setProgress] = useState('');
   const [report, setReport] = useState<BenchmarkReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [llmDown, setLlmDown] = useState(isSimulatingLlmDown());
+
+  // The outage drill (goal §1.7): with this ON the whole app must run
+  // deterministically — no hangs, no errors, no feature walls.
+  const toggleLlmDown = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const next = !llmDown;
+    setSimulateLlmDown(next);
+    setLlmDown(next);
+  };
 
   const run = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -120,6 +134,44 @@ export default function DevBenchmarkScreen() {
         {progress ? (
           <Text style={styles.progress}>{progress}</Text>
         ) : null}
+
+        {/* ── Outage drill (goal §1.7) ─────────────────────────── */}
+        <Pressable
+          onPress={toggleLlmDown}
+          style={[
+            styles.drillRow,
+            llmDown && {
+              borderColor: hexA(TC.ember, 0.55),
+              backgroundColor: hexA(TC.ember, 0.1),
+            },
+          ]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={styles.drillTitle}>
+              Simulate “Anthropic is down”
+            </Text>
+            <Text style={styles.drillBody}>
+              {llmDown
+                ? 'ON — every AI surface is running its deterministic twin. The app should feel complete.'
+                : 'OFF — flip it, then use the whole app. Nothing should hang or error.'}
+            </Text>
+          </View>
+          <View
+            style={[
+              styles.drillPill,
+              { backgroundColor: llmDown ? TC.ember : hexA(TC.bone, 0.15) },
+            ]}
+          >
+            <Text
+              style={[
+                styles.drillPillText,
+                { color: llmDown ? TC.void : TC.bone },
+              ]}
+            >
+              {llmDown ? 'ON' : 'OFF'}
+            </Text>
+          </View>
+        </Pressable>
 
         {error && (
           <View style={styles.errorCard}>
@@ -348,6 +400,37 @@ const styles = StyleSheet.create({
     color: TC.mute,
     textAlign: 'center',
     marginBottom: 12,
+  },
+  drillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: hexA('#E8E3D8', 0.14),
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  drillTitle: {
+    fontFamily: fonts.interSemi,
+    fontSize: 14,
+    color: TC.bone,
+  },
+  drillBody: {
+    fontFamily: fonts.inter,
+    fontSize: 12,
+    color: TC.mute,
+    marginTop: 3,
+    lineHeight: 17,
+  },
+  drillPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  drillPillText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 12,
   },
   errorCard: {
     backgroundColor: hexA('#C97560', 0.08),

@@ -96,7 +96,7 @@ import {
 } from '../../store/correctionsStore';
 import {
   llmUnderstand,
-  isAnthropicConfigured,
+  isLlmAvailable,
   type UnderstandContext,
   type UnderstoodTask,
 } from '../../lib/anthropic';
@@ -1847,7 +1847,7 @@ export default function Home() {
     setCapOpen(false);
     Haptics.selectionAsync();
 
-    if (isAnthropicConfigured) {
+    if (isLlmAvailable()) {
       // Sorting flow — don't show the deterministic preview at all.
       // sortingRaw drives the "Lumi is sorting…" card up top; we
       // only set previewTasks once the LLM has returned (or the
@@ -2170,7 +2170,7 @@ export default function Home() {
     // Same sorting → LLM → preview flow as the typed path. Never
     // show the deterministic guess up front; only render once the
     // LLM has resolved (or 5s timeout falls back).
-    if (isAnthropicConfigured) {
+    if (isLlmAvailable()) {
       setSortingRaw(final);
       setAiPending(true);
       void runLlmUnderstand(final).then((llmTasks) => {
