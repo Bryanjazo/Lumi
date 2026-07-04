@@ -54,5 +54,11 @@ export const resetLocalUserData = (): void => {
     // legacy onboarding flag (per-user gate is onboardedUserIds)
     onboarded: false,
     onboardedAt: null,
+    // First-run guidance is PER USER, not per device — without these
+    // resets, a new account on a device that already saw the tour
+    // (tourSeen persisted true) onboarded fine but never got the
+    // spotlight tour or contextual hints.
+    tourSeen: false,
+    hintsSeen: [],
   });
 };
