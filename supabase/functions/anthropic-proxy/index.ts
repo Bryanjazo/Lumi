@@ -52,7 +52,13 @@ const ANTHROPIC_VERSION = "2023-06-01";
 // Hard cap so a malicious client can't run up bills by asking for
 // huge completions. Each call kind picks its own sensible default
 // below this in lib/anthropic.ts.
-const MAX_TOKENS_HARD_LIMIT = 1500;
+//
+// Raised 1500 → 3200: llmUnderstand legitimately needs ~3000 for a
+// long brain-dump (12+ tasks × ~130 tokens of JSON each). At 1500
+// the response truncated mid-object, the client's JSON parse failed
+// silently, and every big dump fell back to the deterministic
+// parser — the exact input the LLM exists for.
+const MAX_TOKENS_HARD_LIMIT = 3200;
 
 const cors = {
   "Access-Control-Allow-Origin": "*",

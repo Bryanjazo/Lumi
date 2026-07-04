@@ -769,7 +769,17 @@ export const llmUnderstand = async (
       })
       .filter((t): t is UnderstoodTask => t != null);
     return { tasks };
-  } catch {
+  } catch (e) {
+    // DEV-visible failure reason — a silent null here cost a full
+    // debugging session (truncated JSON from the proxy's token cap
+    // looked identical to "LLM not configured"). Never logs user
+    // content.
+    if (__DEV__) {
+      console.warn(
+        '[llm] understand failed:',
+        e instanceof Error ? e.message : String(e),
+      );
+    }
     return null;
   }
 };

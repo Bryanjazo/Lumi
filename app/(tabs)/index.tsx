@@ -1571,11 +1571,17 @@ export default function Home() {
       recentCorrections: summarizeCorrections(recentCorrections(6)),
       userName: userName.trim() || undefined,
     };
-    // Race the LLM against a 5s timeout so a slow / hung request
-    // doesn't leave the sorting card up forever.
+    // Race the LLM against a timeout so a hung request doesn't leave
+    // the sorting card up forever — but SCALE it with the dump size.
+    // A flat 5s killed every big dump: a 12-task comma-run generates
+    // ~1,500+ tokens of JSON, which simply takes longer than 5s, so
+    // the one input that most needs the LLM always fell back to the
+    // deterministic parser. The "Lumi is sorting…" card carries the
+    // wait. ~6s floor + 25ms/char, capped at 25s.
+    const timeoutMs = Math.min(25_000, 6_000 + rawText.length * 25);
     const llm = llmUnderstand(rawText, understandCtx).then((r) => r ?? null);
     const timeout = new Promise<null>((resolve) =>
-      setTimeout(() => resolve(null), 5000),
+      setTimeout(() => resolve(null), timeoutMs),
     );
     const result = await Promise.race([llm, timeout]);
     return result?.tasks ?? null;
