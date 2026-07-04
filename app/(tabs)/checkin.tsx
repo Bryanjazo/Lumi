@@ -69,6 +69,7 @@ import {
   summarizeCorrections,
 } from '../../store/correctionsStore';
 import { useRescueStore } from '../../store/rescueStore';
+import { inferMoodFromText } from '../../lib/luna-mood';
 import { useLearningDigest } from '../../lib/learning';
 import {
   llmUntangle,
@@ -1479,7 +1480,17 @@ export default function Untangle() {
   //  win) makes the cat feel performative and breaks the "I'm
   //  here, not reacting" presence we want. Pin to 'idle': Luna
   //  is steady while the user does the talking.
-  const chatMood: LunaMood = 'idle';
+  // Mood the assistant avatar shows = tone of the most recent user
+  // message, falling back to idle. This is the sanctioned "sad WITH
+  // the user" channel (emotional-model spec §1): "i'm so overwhelmed"
+  // → Luna's bubbles + typing dots go sad — she's sitting beside
+  // them, never reacting AT them. (Was hardcoded 'idle' — the cat
+  // never visibly empathized, which defeated the whole moment.)
+  const chatMood: LunaMood = useMemo(() => {
+    const lastUser = [...msgs].reverse().find((m) => m.from === 'user');
+    if (!lastUser) return 'idle';
+    return inferMoodFromText(lastUser.text) ?? 'idle';
+  }, [msgs]);
 
   // Keyboard-aware input clearance — see the inputWrap override below.
   const keyboardHeight = useKeyboardHeight();

@@ -7,12 +7,16 @@ import {
   ScrollView,
   Animated,
   Easing,
+  Image,
+  Share,
   Alert,
   LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 import Svg, {
   Defs,
   LinearGradient,
@@ -28,6 +32,7 @@ import { useCompanionMode, phrasingFor } from '../lib/companion-mode';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
 import { WINDOWS } from '../constants/windows';
 import { SoftGlow } from '../components/SoftGlow';
+import { lunaSource, useLunaSkin } from '../lib/luna-source';
 
 // ═════════════════════════════════════════════════════════════════════
 // Palette — taken from lumi-recap.jsx
@@ -356,6 +361,75 @@ export default function RecapScreen() {
     router.back();
   };
 
+  // ── The Lumi Story (shareable) ─────────────────────────────────────
+  // Not stats — a STORY, warm enough that people want to post it.
+  // Composed deterministically from the same digest the recap reads
+  // (zero tokens), in Lumi's voice, always ending with "I'll be here
+  // next week too."
+  const lunaSkin = useLunaSkin();
+  const storyText = useMemo(() => {
+    const parts: string[] = [];
+    if (set === 0) {
+      parts.push('A quiet week — and that was allowed.');
+    } else if (done / set >= 0.8) {
+      parts.push('This week, you quietly built something strong.');
+    } else if (done / set >= 0.5) {
+      parts.push(
+        "This week had a rhythm to it — you showed up more than you didn't.",
+      );
+    } else if (done === 0) {
+      parts.push('This week was heavy. The list waited, without judging.');
+    } else {
+      parts.push('This week wandered a little — and still moved forward.');
+    }
+    if (pattern) {
+      parts.push(
+        `${WINDOWS[pattern.strong].label}s are where you find your rhythm.`,
+      );
+    }
+    if (win) {
+      const t =
+        win.quest.title.length > 40
+          ? win.quest.title.slice(0, 38) + '…'
+          : win.quest.title;
+      parts.push(
+        win.delayDays >= 2
+          ? `And you finally got to “${t}” after ${win.delayDays} days of it following you. Small victories count.`
+          : `“${t}” got done — small victories count.`,
+      );
+    }
+    parts.push("I'll be here next week too.");
+    return parts.join(' ');
+  }, [set, done, pattern, win]);
+
+  // Capture the story card as an image → native share sheet. On a
+  // build that predates the view-shot/sharing modules, fall back to
+  // sharing the words — never a dead button.
+  const storyCardRef = useRef<View>(null);
+  const shareStory = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      const uri = await captureRef(storyCardRef, {
+        format: 'png',
+        quality: 1,
+      });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'image/png',
+          dialogTitle: 'Share your Lumi story',
+        });
+        return;
+      }
+      throw new Error('native share unavailable');
+    } catch {
+      try {
+        await Share.share({ message: `${storyText}\n\n— my week with Lumi` });
+      } catch {
+        // User cancelled or share unavailable — quiet either way.
+      }
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <Pressable onPress={close} style={styles.closeBtn} hitSlop={10}>
@@ -541,7 +615,13 @@ export default function RecapScreen() {
 
         {/* ── 8 · SHARE / CLOSE ── */}
         <Section delay={0.4} style={{ paddingHorizontal: 28, paddingTop: 56 }}>
-          <View style={styles.shareCard}>
+          {/* The capturable Lumi Story card — collapsable={false} so
+              captureRef always has a real native view to snapshot. */}
+          <View
+            ref={storyCardRef}
+            collapsable={false}
+            style={styles.shareCard}
+          >
             <SoftGlow
               color={accent.fg}
               opacity={0.2}
@@ -550,13 +630,23 @@ export default function RecapScreen() {
               cy={0.08}
               style={styles.shareGlow}
             />
-            <Text style={styles.shareEyebrow}>Lumi · Your Week</Text>
+            <View style={styles.shareHead}>
+              <Image
+                source={lunaSource('happy', lunaSkin)}
+                style={{ width: 40, height: 40 }}
+                resizeMode="contain"
+              />
+              <Text style={styles.shareEyebrow}>
+                Lumi · {weekLabel}
+              </Text>
+            </View>
+            <Text style={styles.shareStory}>{storyText}</Text>
             <View style={styles.shareStatsRow}>
               <View>
                 <Text style={styles.shareStatNum}>{done}</Text>
                 <Text style={styles.shareStatLabel}>{phrase.tasks} done</Text>
               </View>
-              {companion.showStreak && (
+              {companion.showStreak && streak > 0 && (
                 <View>
                   <Text style={[styles.shareStatNum, { color: C.honey }]}>
                     {streak}
@@ -564,25 +654,21 @@ export default function RecapScreen() {
                   <Text style={styles.shareStatLabel}>day streak</Text>
                 </View>
               )}
-              <View>
-                <Text style={[styles.shareStatNum, { color: C.dusk }]}>
-                  {peak.v}
-                </Text>
-                <Text style={styles.shareStatLabel}>peak energy</Text>
-              </View>
+              {pattern && (
+                <View>
+                  <Text style={[styles.shareStatNum, { color: C.dusk }]}>
+                    {WINDOWS[pattern.strong].label}
+                  </Text>
+                  <Text style={styles.shareStatLabel}>strong window</Text>
+                </View>
+              )}
             </View>
             <Text style={styles.shareQuote}>
-              &ldquo;Mornings are my strong window.&rdquo; — what Lumi taught me
-              this week
+              lumi — the companion that learns how your brain works
             </Text>
           </View>
-          <Pressable
-            onPress={() =>
-              Alert.alert('Share', 'Share sheet coming in a future build.')
-            }
-            style={styles.sharePrimary}
-          >
-            <Text style={styles.sharePrimaryText}>Share my week</Text>
+          <Pressable onPress={shareStory} style={styles.sharePrimary}>
+            <Text style={styles.sharePrimaryText}>Share my story</Text>
           </Pressable>
           <Pressable onPress={close} style={styles.shareSecondary}>
             <Text style={styles.shareSecondaryText}>Done</Text>
@@ -947,12 +1033,24 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     width: 240,
     height: 240,
   },
+  shareHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 14,
+  },
   shareEyebrow: {
     fontFamily: fonts.interSemi,
     fontSize: 10,
     letterSpacing: 2,
     color: accent.fg,
     textTransform: 'uppercase',
+  },
+  shareStory: {
+    fontFamily: fonts.frauncesMed,
+    fontSize: 16.5,
+    lineHeight: 25,
+    color: C.bone,
     marginBottom: 18,
   },
   shareStatsRow: {
