@@ -1,51 +1,119 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Lumi — Brain Dump to Done</title>
-<meta name="description" content="The AI companion that turns your messy thoughts into a done list. Built for ADHD brains, made for anyone whose mind is loud.">
+<meta name="description" content="Your AI companion that remembers everything so you don't have to. Brain dump your thoughts — Lumi organizes them, learns how you work, and helps you finish what matters.">
+<meta property="og:title" content="Meet Lumi — Brain Dump to Done">
+<meta property="og:description" content="Brain dump your thoughts. Lumi organizes them. Learns how you work. Helps you finish what matters.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@1,400;1,500&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-:root{--void:#120E0C;--void2:#1A1512;--bone:#ECE0CB;--bonedim:#B0A38B;--ember:#E07A4F;--glow:#F4C98A;--mute:#8a7f70;--hair:#2A2420}
+:root{--void:#120E0C;--void2:#1A1512;--bone:#ECE0CB;--bonedim:#B0A38B;--ember:#E07A4F;--glow:#F4C98A;--lichen:#A4B091;--mute:#8a7f70;--hair:#2A2420}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--void);color:var(--bone);font-family:'Inter Tight',system-ui,sans-serif;line-height:1.65;-webkit-font-smoothing:antialiased}
 .wrap{max-width:680px;margin:0 auto;padding:48px 24px 80px}
-nav{display:flex;align-items:center;gap:20px;padding-bottom:36px;border-bottom:1px solid var(--hair);margin-bottom:36px}
+nav{display:flex;align-items:center;gap:20px;padding-bottom:36px;margin-bottom:12px}
 nav .brand{font-family:'Fraunces',serif;font-style:italic;font-size:22px;color:var(--glow);text-decoration:none;margin-right:auto}
 nav a{color:var(--bonedim);text-decoration:none;font-size:14px}
 nav a:hover{color:var(--bone)}
-h1{font-family:'Fraunces',serif;font-style:italic;font-weight:500;font-size:34px;line-height:1.25;margin-bottom:14px;color:var(--bone)}
-h2{font-family:'Fraunces',serif;font-style:italic;font-weight:500;font-size:21px;margin:34px 0 10px;color:var(--glow)}
-p{margin:12px 0;color:var(--bonedim)}
-p strong,li strong{color:var(--bone)}
-ul{margin:12px 0 12px 22px;color:var(--bonedim)}
-li{margin:6px 0}
-a{color:var(--ember)}
-.date{font-size:13px;color:var(--mute)}
-footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--hair);font-size:13px;color:var(--mute)}
+.hero{text-align:center;padding:56px 0 8px}
+.eyebrow{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--ember);font-weight:600}
+h1{font-family:'Fraunces',serif;font-style:italic;font-weight:500;font-size:46px;line-height:1.18;margin:18px 0 0;color:var(--bone)}
+.tag{font-size:18px;color:var(--bonedim);margin:20px auto 0;max-width:460px}
+.beats{margin:44px auto 0;max-width:380px;text-align:left}
+.beat{display:flex;gap:14px;align-items:baseline;margin:13px 0;font-size:16.5px;color:var(--bonedim)}
+.beat b{color:var(--bone);font-weight:600}
+.beat .spark{color:var(--glow);font-size:14px}
+form{margin:46px auto 0;max-width:430px;display:flex;gap:10px}
+input[type=email]{flex:1;background:var(--void2);border:1px solid var(--hair);border-radius:999px;padding:15px 20px;color:var(--bone);font-size:15.5px;font-family:inherit;outline:none}
+input[type=email]:focus{border-color:var(--ember)}
+button{background:var(--ember);color:var(--void);font-weight:600;border:none;padding:15px 26px;border-radius:999px;font-size:15.5px;font-family:inherit;cursor:pointer;white-space:nowrap}
+button:hover{filter:brightness(1.07)}
+button:disabled{opacity:.6;cursor:default}
+.hp{position:absolute;left:-9999px;opacity:0}
+.note{margin-top:14px;font-size:12.5px;color:var(--mute);text-align:center}
+.msg{margin:18px auto 0;max-width:430px;text-align:center;font-family:'Fraunces',serif;font-style:italic;font-size:16px;min-height:26px}
+.msg.ok{color:var(--lichen)}
+.msg.err{color:var(--ember)}
+.quiet{margin-top:74px;text-align:center}
+.quiet p{font-family:'Fraunces',serif;font-style:italic;color:var(--bonedim);font-size:17px;max-width:430px;margin:8px auto}
+footer{margin-top:80px;padding-top:24px;border-top:1px solid var(--hair);font-size:13px;color:var(--mute);text-align:center}
 footer a{color:var(--mute)}
-.hero{text-align:center;padding:70px 0 30px}
-.hero h1{font-size:44px}
-.hero .tag{font-size:19px;color:var(--bonedim);margin:18px auto 8px;max-width:440px}
-.cta{display:inline-block;margin-top:28px;background:var(--ember);color:var(--void);font-weight:600;text-decoration:none;padding:14px 30px;border-radius:999px;font-size:16px}
-.soon{margin-top:14px;font-size:13px;color:var(--mute);font-style:italic}
-.feat{margin:56px 0;display:grid;gap:14px}
-.feat div{border:1px solid var(--hair);background:var(--void2);border-radius:14px;padding:18px 20px}
-.feat h3{font-family:'Fraunces',serif;font-style:italic;font-weight:500;font-size:17px;color:var(--glow);margin-bottom:6px}
-.feat p{margin:0;font-size:14.5px}
+@media(max-width:480px){h1{font-size:36px}form{flex-direction:column}button{width:100%}}
 </style></head><body><div class="wrap">
 <nav><a class="brand" href="/">Lumi</a><a href="/support">Support</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
 
 <div class="hero">
-<h1>Brain dump to done.</h1>
-<p class="tag">Your brain has 42 tabs open. Say them all out loud — Lumi turns the chaos into a plan, learns how you work, and never makes you feel bad for being human.</p>
-<a class="cta" href="mailto:support@lumitasks.app?subject=Lumi%20waitlist">Join the waitlist</a>
-<p class="soon">Coming soon to the App Store.</p>
+<div class="eyebrow">✦ Meet Lumi</div>
+<h1>Your brain won't<br>shut off. Lumi's<br>listening.</h1>
+<p class="tag">The AI companion that remembers everything so you don't have to.</p>
+
+<div class="beats">
+<div class="beat"><span class="spark">✦</span><span><b>Brain dump</b> your thoughts — messy is fine.</span></div>
+<div class="beat"><span class="spark">✦</span><span><b>Lumi organizes</b> them into a real plan.</span></div>
+<div class="beat"><span class="spark">✦</span><span><b>Learns how you work</b> — your sharp hours, your dips.</span></div>
+<div class="beat"><span class="spark">✦</span><span><b>Helps you finish</b> what actually matters.</span></div>
 </div>
-<div class="feat">
-<div><h3>Say everything</h3><p>Talk or type your messiest thoughts. Lumi splits them into real tasks with times that fit your actual day — the feelings get heard, not turned into to-dos.</p></div>
-<div><h3>It learns you</h3><p>Sharp mornings, 3pm dips, the things you put off — Lumi notices, and quietly starts planning around how your brain really works.</p></div>
-<div><h3>Never guilt</h3><p>No red overdue walls. Miss a week and Lumi greets you like a friend: “Life happened. What feels possible today?”</p></div>
-<div><h3>Meet Luna</h3><p>A small pixel cat who's happy when you're rolling, asleep when you should be, and sitting beside you when it's all too much.</p></div>
+
+<form id="wl" autocomplete="on">
+<input type="text" class="hp" name="website" tabindex="-1" aria-hidden="true">
+<input type="email" id="email" name="email" placeholder="your@email.com" required inputmode="email">
+<button id="btn" type="submit">Join the waitlist</button>
+</form>
+<div class="msg" id="msg" role="status"></div>
+<p class="note">Early access + founding-member perks. No spam — Lumi writes once, when it's time.</p>
 </div>
-<footer>Lumi — brain dump to done. · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/support">Support</a> · <a href="mailto:support@lumitasks.app">support@lumitasks.app</a></footer>
-</div></body></html>
+
+<div class="quiet">
+<p>“I have 30 things to do and I don't even know where to start.”</p>
+<p style="color:var(--glow)">That feeling is what Lumi is for.</p>
+</div>
+
+<footer>Coming soon to the App Store · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:support@lumitasks.app">support@lumitasks.app</a></footer>
+</div>
+
+<script>
+const form = document.getElementById('wl');
+const msg = document.getElementById('msg');
+const btn = document.getElementById('btn');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (form.website.value) return; // honeypot
+  const email = document.getElementById('email').value.trim();
+  if (!email) return;
+  btn.disabled = true; btn.textContent = 'Joining…';
+  msg.className = 'msg';
+  try {
+    const r = await fetch('https://xnvutyllebwijisltott.supabase.co/rest/v1/waitlist', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhudnV0eWxsZWJ3aWppc2x0b3R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMDMwNzksImV4cCI6MjA5Njg3OTA3OX0.mqM_4LTS0BHgzubABq5-v1Os2bb8kRWLqeeDNZJhb58',
+        'authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhudnV0eWxsZWJ3aWppc2x0b3R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMDMwNzksImV4cCI6MjA5Njg3OTA3OX0.mqM_4LTS0BHgzubABq5-v1Os2bb8kRWLqeeDNZJhb58',
+        'prefer': 'return=minimal'
+      },
+      body: JSON.stringify({ email: email, source: 'landing' })
+    });
+    if (r.ok) {
+      msg.textContent = "You're in. Lumi will write when it's time. ✦";
+      msg.className = 'msg ok';
+      form.style.display = 'none';
+    } else {
+      const t = await r.text();
+      if (t.includes('23505') || t.includes('duplicate')) {
+        msg.textContent = "You're already on the list — good instincts.";
+        msg.className = 'msg ok';
+        form.style.display = 'none';
+      } else {
+        msg.textContent = 'Hmm, that didn\'t go through — mind trying again?';
+        msg.className = 'msg err';
+        btn.disabled = false; btn.textContent = 'Join the waitlist';
+      }
+    }
+  } catch {
+    msg.textContent = 'Network hiccup — try again in a moment.';
+    msg.className = 'msg err';
+    btn.disabled = false; btn.textContent = 'Join the waitlist';
+  }
+});
+</script>
+</body></html>
