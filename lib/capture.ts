@@ -1317,6 +1317,53 @@ export const assessComplexity = (text: string): CaptureComplexity => {
   return 'simple';
 };
 
+// ═════════════════════════════════════════════════════════════════════
+// The routing gate (goal §2.1) — when NOT to call the LLM.
+//
+// Runs AFTER the deterministic parse (which is the prior + guaranteed
+// fallback either way, §2.2) and decides whether the LLM would
+// genuinely add understanding. "clean car" / "gym at 6" → the local
+// result ships instantly, free, no spinner. Multi-task dumps, long
+// rambles, and emotional language → the LLM earns its tokens.
+//
+// Single source of truth: reuses the §1.1/§1.2 signals (fragment
+// count, per-field confidence) so the gate automatically keeps MORE
+// local as the grammar grows.
+// ═════════════════════════════════════════════════════════════════════
+const EMOTIONAL_RE =
+  /\b(stress(?:ed|ing|es)?|overwhelm\w*|anxious|anxiety|dread(?:ed|ing)?|avoid(?:ed|ing)\w*|hate|scared|panic\w*|freaking|ugh|exhaust\w*|behind on everything|drowning|spiral\w*)\b/i;
+
+export interface CaptureRoute {
+  route: 'local' | 'llm';
+  /** Why — feeds the metrics log so tuning is real (§2.5). */
+  reason: string;
+}
+
+export const routeCapture = (
+  text: string,
+  detTasks: SmartTask[],
+): CaptureRoute => {
+  const t = text.trim();
+  // True multi-task ALWAYS goes to the LLM (spec §2.1) — splitting a
+  // dump wrong is the costliest mistake, so the specialist handles it.
+  const complexity = assessComplexity(t);
+  if (complexity !== 'simple') return { route: 'llm', reason: complexity };
+  // Long single-fragment rambles carry context a regex can't hold.
+  if (t.length > 90) return { route: 'llm', reason: 'long' };
+  // Emotional language signals task WEIGHT the LLM reads better.
+  if (EMOTIONAL_RE.test(t)) return { route: 'llm', reason: 'emotional' };
+  const parsed = detTasks[0];
+  if (!parsed) return { route: 'llm', reason: 'no-parse' };
+  // A rambly leftover title means cleaning failed — let the LLM try.
+  if ((parsed.confidence?.title ?? 0.9) < 0.7) {
+    return { route: 'llm', reason: 'messy-title' };
+  }
+  // Note: guessed timing / AM-PM ambiguity are NOT LLM reasons — the
+  // deterministic path resolves those with tappable chips (§1.6),
+  // which beats a model guess anyway.
+  return { route: 'local', reason: 'clean-single' };
+};
+
 // Strip parsed time/date tokens (and recurrence words) from the title
 // so the human-facing title reads clean.
 const stripTokens = (raw: string, tokens: string[]): string => {

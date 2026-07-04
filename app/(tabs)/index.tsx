@@ -71,12 +71,14 @@ import { useTour, useTourTarget } from '../../components/SpotlightTour';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
 import {
   parseSmartCapture,
+  routeCapture,
   difficultyFromImportance,
   pickWindowForDemand,
   type CaptureContext,
   type SmartTask,
 } from '../../lib/capture';
 import { personalizeTasks } from '../../lib/personalize';
+import { useAiMetricsStore } from '../../store/aiMetricsStore';
 import { useVoice } from '../../lib/voice';
 import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
@@ -990,6 +992,10 @@ export default function Home() {
   const setQuestComment = useQuestStore((s) => s.setComment);
   const recordCorrection = useCorrectionsStore((s) => s.record);
   const recentCorrections = useCorrectionsStore((s) => s.recent);
+  // §2.5 metrics — route decisions + edit flags for the current preview.
+  const recordAiMetric = useAiMetricsStore((s) => s.record);
+  const updateAiMetric = useAiMetricsStore((s) => s.update);
+  const lastMetricIdRef = useRef<string | null>(null);
   const todayQuests = useMemo(() => selectTodayQuests(quests), [quests]);
 
   // ── Suggestions ──────────────────────────────────────────────────
@@ -1847,29 +1853,52 @@ export default function Home() {
     setCapOpen(false);
     Haptics.selectionAsync();
 
-    if (isLlmAvailable()) {
+    // The routing gate (goal §2.1) — a clean single-task capture ships
+    // the deterministic result instantly: zero tokens, zero spinner.
+    // Multi-task / long / emotional captures earn the LLM.
+    const gate = routeCapture(text, detTasks);
+    if (isLlmAvailable() && gate.route === 'llm') {
       // Sorting flow — don't show the deterministic preview at all.
       // sortingRaw drives the "Lumi is sorting…" card up top; we
       // only set previewTasks once the LLM has returned (or the
-      // 5s timeout forces a fallback). This eliminates the wrong→
+      // timeout forces a fallback). This eliminates the wrong→
       // right re-render flash — the user sees "sorting" then the
       // correct "1 of N" list, never the deterministic 1-task guess
       // for a comma dump.
+      const metricId = recordAiMetric({
+        route: 'llm',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
+      lastMetricIdRef.current = metricId;
+      const startedAt = Date.now();
       setSortingRaw(text);
       setAiPending(true);
       void runLlmUnderstand(text).then((llmTasks) => {
         setSortingRaw(null);
         setAiPending(false);
         if (llmTasks && llmTasks.length > 0) {
+          updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
           setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
         } else {
           // LLM failed or timed out — fall back to deterministic
           // so the user still gets SOMETHING (better than nothing).
+          updateAiMetric(metricId, {
+            route: 'llm_fallback',
+            latencyMs: Date.now() - startedAt,
+          });
           setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
         }
       });
     } else {
-      // No LLM configured — deterministic is all we have.
+      // Local path — gate said simple (or the LLM is unavailable).
+      lastMetricIdRef.current = recordAiMetric({
+        route: 'local',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
       setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
   };
@@ -2116,6 +2145,11 @@ export default function Home() {
       raw: orig.raw ?? orig.title,
       delta,
     });
+    // Edit-rate is the quality dial for the routing gate (§2.5) —
+    // only meaningful edits count (empty deltas are skipped above).
+    if (Object.keys(delta).length > 0 && lastMetricIdRef.current) {
+      updateAiMetric(lastMetricIdRef.current, { edited: true });
+    }
   };
 
   const cancelEdit = () => {
@@ -2170,19 +2204,41 @@ export default function Home() {
     // Same sorting → LLM → preview flow as the typed path. Never
     // show the deterministic guess up front; only render once the
     // LLM has resolved (or 5s timeout falls back).
-    if (isLlmAvailable()) {
+    // Same routing gate as the typed path (goal §2.1) — voice
+    // transcripts of simple captures skip the LLM too.
+    const gate = routeCapture(final, detTasks);
+    if (isLlmAvailable() && gate.route === 'llm') {
+      const metricId = recordAiMetric({
+        route: 'llm',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
+      lastMetricIdRef.current = metricId;
+      const startedAt = Date.now();
       setSortingRaw(final);
       setAiPending(true);
       void runLlmUnderstand(final).then((llmTasks) => {
         setSortingRaw(null);
         setAiPending(false);
         if (llmTasks && llmTasks.length > 0) {
+          updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
           setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
         } else {
+          updateAiMetric(metricId, {
+            route: 'llm_fallback',
+            latencyMs: Date.now() - startedAt,
+          });
           setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
         }
       });
     } else {
+      lastMetricIdRef.current = recordAiMetric({
+        route: 'local',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
       setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
   };

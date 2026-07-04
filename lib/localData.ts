@@ -15,6 +15,7 @@ import { useQuestStore } from '../store/questStore';
 import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { useCorrectionsStore } from '../store/correctionsStore';
+import { useAiMetricsStore } from '../store/aiMetricsStore';
 import { useUserStore, DEFAULT_ANCHORS } from '../store/userStore';
 
 export const resetLocalUserData = (): void => {
@@ -24,6 +25,8 @@ export const resetLocalUserData = (): void => {
   // Learned LLM corrections are per-user preferences, not device
   // defaults.
   useCorrectionsStore.getState().reset();
+  // Routing/edit metrics describe the previous user's captures.
+  useAiMetricsStore.getState().reset();
   useUserStore.setState({
     // identity
     name: '',

@@ -726,11 +726,29 @@ const buildContextBlock = (ctx: UnderstandContext): string => {
  * back to null on any error — callers keep the deterministic
  * preview. Reuses the title_clean cap bucket (per-capture pace).
  */
+// Dedupe cache (goal §2.3) — a double-tap of Send, or a voice retry
+// of the same sentence, must not bill twice. Same raw text within
+// the window → last result, zero tokens. One entry is enough (the
+// pattern is always immediate re-submission, not history replay).
+let understandCache: {
+  raw: string;
+  result: UnderstoodResponse;
+  at: number;
+} | null = null;
+const UNDERSTAND_CACHE_MS = 5 * 60_000;
+
 export const llmUnderstand = async (
   raw: string,
   ctx: UnderstandContext,
 ): Promise<UnderstoodResponse | null> => {
   if (!isAnthropicConfigured) return null;
+  if (
+    understandCache &&
+    understandCache.raw === raw.trim() &&
+    Date.now() - understandCache.at < UNDERSTAND_CACHE_MS
+  ) {
+    return understandCache.result;
+  }
   try {
     const ctxBlock = buildContextBlock(ctx);
     const text = await callMessages({
@@ -848,6 +866,7 @@ export const llmUnderstand = async (
         return cleaned;
       })
       .filter((t): t is UnderstoodTask => t != null);
+    understandCache = { raw: raw.trim(), result: { tasks }, at: Date.now() };
     return { tasks };
   } catch (e) {
     // DEV-visible failure reason — a silent null here cost a full

@@ -7,7 +7,11 @@
 // scoreboards: GUARD pass-rate (must stay 100%) and TARGET pass-rate
 // (the growth curve for grammar still being built).
 
-import { parseSmartCapture, type CaptureContext } from '../lib/capture';
+import {
+  parseSmartCapture,
+  routeCapture,
+  type CaptureContext,
+} from '../lib/capture';
 import { personalizeTask } from '../lib/personalize';
 import type { Correction } from '../store/correctionsStore';
 import { CORPUS, type ExpectTask } from './parser-corpus';
@@ -254,6 +258,33 @@ const check = (name: string, cond: boolean, detail: string) => {
     'personalize: unrelated tasks untouched',
     stranger.personalized === undefined,
     `personalized ${JSON.stringify(stranger.personalized)}`,
+  );
+
+  // §2.1 routing gate — trivial captures MUST cost 0 tokens; true
+  // multi-task MUST reach the LLM.
+  const route = (input: string) =>
+    routeCapture(input, parseSmartCapture(input, ctx));
+  for (const simple of ['clean car', 'gym at 6pm', 'call mom tomorrow']) {
+    const r = route(simple);
+    check(
+      `gate: "${simple}" stays local`,
+      r.route === 'local',
+      `routed ${r.route} (${r.reason}) — trivial captures are 0 tokens`,
+    );
+  }
+  const dump = route(
+    'call the plumber, book the hotel, buy eggs and also finish the deck',
+  );
+  check(
+    'gate: multi-task goes to the LLM',
+    dump.route === 'llm',
+    `routed ${dump.route} (${dump.reason})`,
+  );
+  const emotional = route("i keep avoiding the tax thing and it's stressing me out");
+  check(
+    'gate: emotional language goes to the LLM',
+    emotional.route === 'llm',
+    `routed ${emotional.route} (${emotional.reason})`,
   );
 }
 

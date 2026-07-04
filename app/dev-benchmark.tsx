@@ -38,6 +38,10 @@ import {
   isSimulatingLlmDown,
   setSimulateLlmDown,
 } from '../lib/anthropic';
+import {
+  useAiMetricsStore,
+  summarizeAiMetrics,
+} from '../store/aiMetricsStore';
 
 const hexA = (hex: string, a: number): string => {
   const h = hex.replace('#', '');
@@ -51,6 +55,9 @@ export default function DevBenchmarkScreen() {
   const [report, setReport] = useState<BenchmarkReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [llmDown, setLlmDown] = useState(isSimulatingLlmDown());
+  const aiMetrics = useAiMetricsStore((s) => s.metrics);
+  const m = summarizeAiMetrics(aiMetrics);
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
 
   // The outage drill (goal §1.7): with this ON the whole app must run
   // deterministically — no hangs, no errors, no feature walls.
@@ -172,6 +179,26 @@ export default function DevBenchmarkScreen() {
             </Text>
           </View>
         </Pressable>
+
+        {/* ── Capture routing metrics (goal §2.5) ───────────────── */}
+        <View style={styles.metricsCard}>
+          <Text style={styles.drillTitle}>Capture routing</Text>
+          {m.captures === 0 ? (
+            <Text style={styles.drillBody}>
+              No captures logged yet — use Home capture and come back.
+            </Text>
+          ) : (
+            <Text style={styles.drillBody}>
+              {m.captures} captures · {pct(m.llmSkipRate)} skipped the LLM
+              (0 tokens){'\n'}
+              edit-rate — local {pct(m.editRateLocal)} · llm{' '}
+              {pct(m.editRateLlm)}
+              {'\n'}
+              fallback rate {pct(m.fallbackRate)} · avg LLM latency{' '}
+              {m.avgLlmLatencyMs} ms
+            </Text>
+          )}
+        </View>
 
         {error && (
           <View style={styles.errorCard}>
@@ -400,6 +427,13 @@ const styles = StyleSheet.create({
     color: TC.mute,
     textAlign: 'center',
     marginBottom: 12,
+  },
+  metricsCard: {
+    borderWidth: 1,
+    borderColor: hexA('#E8E3D8', 0.14),
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
   },
   drillRow: {
     flexDirection: 'row',
