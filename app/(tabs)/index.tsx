@@ -2780,6 +2780,12 @@ export default function Home() {
         {!sortingRaw && previewTasks && previewTasks[0] && (
           <View style={{ marginBottom: 16 }}>
             <LumiSuggestCard
+              // Remount per task — the card seeds duration / window /
+              // pin / repeat from the input ONCE on mount, so without
+              // a key the first task's choices leaked onto every
+              // later task in the queue (all "30m · Afternoon", and
+              // the walk's detected daily-morning repeat showed OFF).
+              key={`preview-${previewTasks.length}-${previewTasks[0].title}`}
               input={{
                 id: 'preview_0',
                 title: previewTasks[0].title,
@@ -2845,6 +2851,9 @@ export default function Home() {
         {heroSuggestion && !allDone && (
           <View style={{ marginBottom: 16 }}>
             <LumiSuggestCard
+              // Same remount-per-suggestion reasoning as the preview
+              // card above.
+              key={heroSuggestion.id}
               input={{
                 id: heroSuggestion.id,
                 title: heroSuggestion.title,

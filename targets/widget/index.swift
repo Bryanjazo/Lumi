@@ -233,6 +233,14 @@ struct LumiTaskLiveActivity: Widget {
                 // Native iOS timer interval — auto-refreshes every
                 // second, no ContentState ping needed. Smooth
                 // countdown instead of 5-second jumps.
+                //
+                // The frame constraint is LOAD-BEARING: an
+                // unconstrained Text(timerInterval:) greedily claims
+                // maximum width in the compact slot, which stretched
+                // the whole island into a full-width black bar with
+                // an empty middle (known ActivityKit gotcha). 44pt
+                // fits "59:59"; minimumScaleFactor absorbs the rare
+                // "1:59:59" for sessions over an hour.
                 Text(
                     timerInterval: sessionRange(
                         elapsed: context.state.elapsedSeconds,
@@ -243,6 +251,9 @@ struct LumiTaskLiveActivity: Widget {
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundColor(Color(red: 0.88, green: 0.48, blue: 0.31))
                 .monospacedDigit()
+                .minimumScaleFactor(0.7)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 44)
             } minimal: {
                 // ── MINIMAL (multiple activities competing) ──
                 // Minimal slot is smaller than compact leading —

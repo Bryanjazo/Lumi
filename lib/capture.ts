@@ -169,6 +169,14 @@ const FILLER_WORDS = [
 
 const INTENT_PREFIXES = [
   // Stacked prefixes — order matters; strip longest first.
+  "don'?t let me forget to",
+  'do not let me forget to',
+  "don'?t let me forget",
+  'i keep meaning to',
+  'keep meaning to',
+  'i keep forgetting to',
+  'make sure i',
+  'make sure to',
   "i don'?t forget to",
   'i do not forget to',
   "don'?t forget to",
@@ -221,6 +229,30 @@ const TRAILING_HEDGES = [
   'kinda',
   'sorta',
   'right',
+  // State-of-things phrasings — "laundry is piling up" is the task
+  // "Laundry", not a task titled with the complaint.
+  'is piling up',
+  'are piling up',
+  'keeps piling up',
+  'is overdue',
+  'is late',
+];
+
+// ── Vent stripping ───────────────────────────────────────────────────
+// Brain dumps carry feelings alongside tasks ("…by thursday it's
+// stressing me out"). The feeling is real but it isn't a task title.
+// VENT_TAILS strips a trailing stress clause off a fragment;
+// VENT_ONLY drops fragments that are PURE vent — no action inside.
+const VENT_TAILS =
+  /[,\s]*\b(?:(?:it'?s|this is|which is|that'?s)\s+)?(?:really\s+)?(?:stress(?:ing|es)?\s+me(?:\s+out)?|freaking\s+me\s+out|driving\s+me\s+(?:crazy|nuts|insane)|killing\s+me|i'?m\s+(?:so\s+)?(?:stressed|overwhelmed|anxious)(?:\s+about\s+(?:it|this))?)\s*$/i;
+
+const VENT_ONLY = [
+  /\bbrain(?:'?s| is)? (?:all )?over the place\b/i,
+  /^(?:ok(?:ay)?|ugh|whew|man|god|jeez|honestly|anyway|so yeah|yeah)$/i,
+  /^never do$/i,
+  /^(?:i'?m|im) (?:so )?(?:stressed|overwhelmed|tired|anxious|behind)(?: out)?$/i,
+  /^it'?s stressing me(?: out)?$/i,
+  /^wish me luck$/i,
 ];
 
 const cleanTitle = (s: string): string => {
@@ -237,6 +269,20 @@ const cleanTitle = (s: string): string => {
     );
     t = t.replace(re, '');
   }
+  // Collapse the double spaces filler removal leaves behind BEFORE
+  // prefix matching — "i really need to" → "i  need to" otherwise
+  // fails the single-space "i need to" prefix and survives into the
+  // title.
+  t = t.replace(/\s{2,}/g, ' ').trim();
+
+  // Location hints read as errand context, not title material —
+  // "pick up dog food on the way home" is "Pick up dog food". The
+  // "on" is optional because stripTokens aggressively removes "on "
+  // before this runs.
+  t = t.replace(
+    /\b(?:on )?(?:the|my) way (?:home|back|there|in|out|over)\b/gi,
+    '',
+  );
 
   // ── Strip leading intent prefixes, iteratively so stacked ones
   // ("I need to remember to") collapse fully.
@@ -266,6 +312,13 @@ const cleanTitle = (s: string): string => {
     const re = new RegExp(`[,\\s]+${hedge}\\s*[.!?]*\\s*$`, 'i');
     t = t.replace(re, '');
   }
+
+  // ── Strip dangling trailing prepositions left by token removal
+  // ("finish the report by <thursday>" → "…report by" → "…report").
+  t = t.replace(
+    /\s+(?:by|on|at|in|for|to|before|after|until|till)\s*$/i,
+    '',
+  );
 
   // ── Collapse whitespace and trim leading/trailing punctuation noise.
   t = t
@@ -838,7 +891,15 @@ const splitFragments = (text: string): string[] =>
   text
     .replace(/\n+/g, '. ')
     .split(
-      /(?:,?\s+(?:and then|and also|and|then|also|plus|oh|but|so)\b|[.;])/i,
+      // Plain commas and em-dashes split too — real brain dumps are
+      // one giant comma-run ("call the dentist, pick up coffee
+      // beans, dog food…"). Without the comma split, whole clusters
+      // of tasks landed as one mangled title (the "Call the dentist
+      // to reschedule my cleaning, pick up coffee beans" bug).
+      // Mid-string intent markers START a new task too — "mom's
+      // birthday is next weekend don't let me forget to order her
+      // gift" is a date fact + a task, not one title.
+      /(?:,?\s+(?:and then|and also|oh and|and|then|also|plus|oh|but|so)\b|,?\s*\b(?=don'?t let me forget|remember to |i keep meaning to )|[.;,]|\s*[—–]\s*|\s+-\s+)/i,
     )
     .map((s) => s.trim())
     .filter((s) => s.length > 1);
@@ -873,15 +934,21 @@ export const parseSmartCapture = (
   const tasks: SmartTask[] = [];
 
   for (const frag of fragments) {
-    const raw = frag.trim();
+    // Vent stripping: cut a trailing stress clause ("…it's stressing
+    // me out"), then drop fragments that are PURE vent — the feeling
+    // is real, it just isn't a task.
+    const raw = frag.trim().replace(VENT_TAILS, '').trim();
     if (raw.length < 2) continue;
+    if (VENT_ONLY.some((re) => re.test(raw))) continue;
     const lc = ' ' + raw.toLowerCase() + ' ';
 
     const importance = inferImportance(lc);
     const recur = parseRecur(lc);
     const time = parseTimeAndDate(lc, ctx);
     const title = cleanTitle(stripTokens(raw, time.matched));
-    if (!title) continue;
+    // Anything under 3 chars after cleaning is split debris, not a
+    // task ("ok", "so", a stray word).
+    if (!title || title.length < 3) continue;
 
     // Decide placement.
     let timeMode: SmartTask['timeMode'];
