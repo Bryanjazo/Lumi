@@ -121,7 +121,14 @@ export default function VerifyEmailScreen() {
 
   const handleChangeEmail = () => {
     Haptics.selectionAsync();
-    router.back();
+    // After sign-up this screen IS the stack root — back() had nothing
+    // behind it ("GO_BACK was not handled by any navigator") and the
+    // link silently failed. Replace to the sign-up screen instead.
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/auth/sign-up');
+    }
   };
 
   const resendLabel =
