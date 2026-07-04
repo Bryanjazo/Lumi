@@ -154,7 +154,7 @@ footer a{text-decoration:underline;color:var(--mute)}
       </div>
       <div class="demo-q">What's rattling around in there?</div>
       <div class="dump-row">
-        <input id="draft" placeholder="type one thing — messy is fine" maxlength="200" autocomplete="off" enterkeyhint="done">
+        <input id="draft" placeholder="type one thing — messy is fine" maxlength="600" autocomplete="off" enterkeyhint="done">
         <button class="mic" id="mic" type="button" aria-label="Speak a thought" title="Speak it instead">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
         </button>
@@ -286,6 +286,39 @@ footer a{text-decoration:underline;color:var(--mute)}
     consentEl.style.display = 'block';
   }
 
+  /* ── mini-parser: a lite port of the app's real splitter, so a
+     pasted brain-dump becomes SEVERAL sorted thoughts (the wow) ── */
+  var VERB_RE = /\b(?:call|text|email|reply|buy|get|grab|pick|order|book|schedule|cancel|pay|send|submit|finish|start|write|read|review|study|clean|wash|fold|fix|water|feed|walk|take|return|renew|sign|check|update|plan|make|cook|do|go|visit|meet|pack|clear|mail|drop|look|figure|sort|organize|vacuum)\b/i;
+  var VENT_RE = /\b(?:i'?m so (?:stressed|overwhelmed|tired|anxious|behind)|it'?s stressing me( out)?|stressing me out|my brain(?:'?s| is) (?:all )?over the place|everything(?:'s| is) too much|i can'?t keep up|ugh+)\b/i;
+  var PREFIX_RE = /^(?:ok(?:ay)?,?\s+|so\s+|um+\s+|i (?:really |also )?(?:need|have|want|got) to\s+|i'?ve got(?:ta)? to\s+|gotta\s+|i gotta\s+|don'?t (?:let me )?forget to\s+|remember to\s+|i keep meaning to\s+|i should(?: probably)?\s+|need to\s+|also\s+|and\s+|then\s+)+/i;
+
+  function cleanPiece(p) {
+    p = p.trim().replace(PREFIX_RE, '').trim();
+    p = p.replace(/[.!?]+$/, '').trim();
+    if (p) p = p.charAt(0).toUpperCase() + p.slice(1);
+    return p;
+  }
+
+  function splitDump(text) {
+    var parts = String(text).replace(/\n+/g, '. ')
+      .split(/[.;]|,|\s+(?:and then|and also|oh and)\s+|\s+(?:and|then|also|plus)\s+(?=\w)/i);
+    // merge "and X" pieces that have no verb back into the previous
+    var out = [], vented = false;
+    for (var i = 0; i < parts.length; i++) {
+      var raw = (parts[i] || '').trim();
+      if (!raw) continue;
+      if (VENT_RE.test(raw)) { vented = true; continue; }
+      var hasVerb = VERB_RE.test(raw);
+      if (!hasVerb && out.length && raw.split(/\s+/).length <= 5) {
+        out[out.length - 1] += ' and ' + raw; // "…coffee beans" + "dog food"
+        continue;
+      }
+      var clean = cleanPiece(raw);
+      if (clean.length > 2) out.push(clean);
+    }
+    return { pieces: out, vented: vented };
+  }
+
   var MAX_DEMO = 5;
 
   function lockDemo() {
@@ -327,8 +360,25 @@ footer a{text-decoration:underline;color:var(--mute)}
     if (thoughts.length >= MAX_DEMO) lockDemo();
   }
 
-  dumpBtn.addEventListener('click', function () { addThought(draftEl.value); });
-  draftEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addThought(draftEl.value); } });
+  function dump(text) {
+    var res = splitDump(text);
+    if (!res.pieces.length && !res.vented) { addThought(text); return; }
+    draftEl.value = '';
+    var room = Math.max(0, MAX_DEMO - thoughts.length);
+    var toAdd = res.pieces.slice(0, room);
+    toAdd.forEach(function (p, i) {
+      setTimeout(function () { addThought(p); }, i * 220);
+    });
+    if (res.vented) {
+      setTimeout(function () {
+        lunaLineEl.style.display = 'block';
+        lunaLineEl.textContent = "and the stress? i heard it. feelings aren't tasks — i set that part down for you.";
+      }, toAdd.length * 220 + 1100);
+    }
+  }
+
+  dumpBtn.addEventListener('click', function () { dump(draftEl.value); });
+  draftEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); dump(draftEl.value); } });
   startersEl.addEventListener('click', function (e) {
     if (e.target && e.target.tagName === 'BUTTON') addThought(e.target.textContent);
   });
@@ -360,7 +410,7 @@ footer a{text-decoration:underline;color:var(--mute)}
           if (interim) draftEl.value = interim.trim().slice(0, 200);
           if (finalText.trim()) {
             stopRec();
-            addThought(finalText);
+            dump(finalText);
           }
         };
         rec.onerror = function (ev) {
