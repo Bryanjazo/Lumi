@@ -409,10 +409,12 @@ const cleanTitle = (s: string): string => {
     t = t.replace(re, '');
   }
 
-  // ── Strip dangling trailing prepositions left by token removal
-  // ("finish the report by <thursday>" → "…report by" → "…report").
+  // ── Strip dangling trailing prepositions/qualifiers left by token
+  // removal ("finish the report by <thursday>" → "…report by" →
+  // "…report"; "groceries this <weekend>" → "…this" → "groceries").
+  // The + quantifier collapses stacked leftovers ("…by the" → "").
   t = t.replace(
-    /\s+(?:by|on|at|in|for|to|before|after|until|till)\s*$/i,
+    /(?:\s+(?:by|on|at|in|for|to|before|after|until|till|this|next|the|a|an))+\s*$/i,
     '',
   );
 
@@ -734,6 +736,22 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
     else if (/^week/.test(unit)) date.setDate(date.getDate() + n * 7);
     else date.setMonth(date.getMonth() + n);
     matched.push(inRel[0]);
+  }
+
+  // ── "this week" / "next week" — "this week" reads as a soft
+  // deadline (by Sunday); "next week" starts Monday of next week.
+  // \bweek\b can't match inside "weekend", so no collision below.
+  const weekRel = lc.match(/\b(this|next)\s+week\b/);
+  if (weekRel && !date) {
+    if (weekRel[1] === 'next') {
+      const sunday = nextDayOfWeek(ctx.now, 0); // start of next week
+      date = new Date(sunday);
+      date.setDate(date.getDate() + 1); // its Monday
+    } else {
+      date = nextDayOfWeek(ctx.now, 0); // upcoming Sunday
+      deadline = true;
+    }
+    matched.push(weekRel[0]);
   }
 
   // ── "this weekend" / "next weekend" — the upcoming Saturday (today
@@ -1379,7 +1397,11 @@ const stripTokens = (raw: string, tokens: string[]): string => {
       /\bevery\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat|day|morning|evening|night|afternoon|week|weekday|weekend|month)s?\b/gi,
       '',
     )
-    .replace(/\b(?:weekdays?|weekends?|weekly|daily|monthly)\b/gi, '');
+    // NOTE: "weekends" (plural only) — the singular "weekend" is a
+    // DATE word ("this weekend"), and stripping it here ran before
+    // the token loop, orphaning the qualifier ("groceries this
+    // weekend" → "Groceries this").
+    .replace(/\b(?:weekdays?|weekends|weekly|daily|monthly)\b/gi, '');
   for (const tok of tokens) {
     const escaped = escapeRe(tok.trim());
     if (!escaped) continue;

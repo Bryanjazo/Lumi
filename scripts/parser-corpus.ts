@@ -158,6 +158,29 @@ export const CORPUS: CorpusCase[] = [
     target: true,
   },
   {
+    // Device-caught bug (Jul 4): stripTokens' recurrence cleanup ate
+    // the bare word "weekend" before the token loop, leaving the
+    // qualifier — hero card literally said "Groceries this".
+    name: 'this weekend keeps title clean',
+    input: 'groceries this weekend',
+    expect: [{ title: 'Groceries', dateOffset: 1 }],
+  },
+  {
+    name: 'window qualifier does not dangle',
+    input: 'call mom this evening',
+    expect: [{ title: 'Call mom', window: 'evening' }],
+  },
+  {
+    name: 'next week',
+    input: 'dentist next week',
+    expect: [{ title: 'Dentist', dateOffset: 3 }],
+  },
+  {
+    name: 'this week is a soft deadline',
+    input: 'finish the report this week',
+    expect: [{ title: 'Finish the report', dateOffset: 2, deadline: true }],
+  },
+  {
     name: 'this weekend',
     input: 'clean the garage this weekend',
     expect: [{ dateOffset: 1 }],
