@@ -47,8 +47,10 @@ import { fonts } from '../../constants/fonts';
 import { lunaSource, useLunaSkin, type LunaMood } from '../../lib/luna-source';
 import { IMPORTANCE, type Importance } from '../../constants/importance';
 import {
+  useEffectiveWindows,
   type WindowKey,
 } from '../../constants/windows';
+import { findWindowSlot } from '../../lib/slotting';
 import {
   useQuestStore,
   type Quest,
@@ -807,6 +809,8 @@ export default function Untangle() {
   const sharpWindow = useUserStore((s) => s.sharpWindow);
   const foggyWindow = useUserStore((s) => s.foggyWindow);
   const anchors = useUserStore((s) => s.anchors);
+  // Window bounds for the auto-slot cascade in applyProposal.
+  const effectiveWindows = useEffectiveWindows();
   const struggles = useUserStore((s) => s.struggles);
   const userName = useUserStore((s) => s.name);
   const digest = useLearningDigest();
@@ -1078,6 +1082,28 @@ export default function Untangle() {
   // existing pile id; they mint a NEW task via addQuest instead.
   // Returns the count actually applied.
   const applyProposal = (items: UntangleProposalItem[]): number => {
+    // Auto-slot cascade (same rule as Home's capture): a windowed
+    // task without an explicit time gets the NEXT OPEN :15 slot in
+    // its window — five evening tasks land 5:00 → 5:30 → 6:00…
+    // instead of all piling up at "5p". Fresh store read per call so
+    // consecutive placements in this same loop see each other.
+    const slotFor = (
+      win: WindowKey,
+      dateISO: string,
+      durationMin: number,
+    ): number | null =>
+      findWindowSlot({
+        window: win,
+        dateISO,
+        durationMin,
+        quests: useQuestStore.getState().quests,
+        anchors,
+        effectiveWindows,
+        nowMin:
+          dateISO === todayKey()
+            ? new Date().getHours() * 60 + new Date().getMinutes()
+            : null,
+      });
     let applied = 0;
     for (const p of items) {
       // 'create' is the only action that doesn't need a pile lookup —
@@ -1137,13 +1163,19 @@ export default function Untangle() {
               : imp === 'low'
                 ? 'evening'
                 : 'midday';
+        const createISO = p.date ?? selectedDate;
+        const createSlot = slotFor(win, createISO, safeDur);
         useQuestStore.getState().addQuest({
           title: p.title.trim(),
           difficulty,
           importance: imp,
           window: win,
           durationMinutes: safeDur,
-          ...(p.date ? { date: p.date } : { date: selectedDate }),
+          ...(createSlot != null && {
+            scheduledHour: Math.floor(createSlot / 60),
+            scheduledMinute: createSlot % 60,
+          }),
+          date: createISO,
         });
         applied += 1;
         continue;
@@ -1155,6 +1187,16 @@ export default function Untangle() {
         // Schedule onto the selected day if it's not already there.
         if (q.date !== selectedDate) setDate(p.taskId, selectedDate);
         moveWindow(p.taskId, p.window as WindowKey);
+        // Cascade: give it a real seat in the window instead of
+        // stacking at the window's start with everything else.
+        const schedSlot = slotFor(
+          p.window as WindowKey,
+          selectedDate,
+          q.durationMinutes ?? 30,
+        );
+        if (schedSlot != null) {
+          anchor(p.taskId, Math.floor(schedSlot / 60), schedSlot % 60);
+        }
         applied += 1;
       } else if (p.action === 'reschedule') {
         if (!p.date) continue;

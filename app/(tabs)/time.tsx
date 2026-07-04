@@ -434,12 +434,19 @@ const DragChip = ({
   task,
   ctl,
   children,
+  enabled = true,
 }: {
   task: DragTask;
   ctl: DragCtl;
   children: ReactElement;
+  /** Keep the wrapper MOUNTED but inert (e.g. completed rows). The
+   *  day thread renders every task row inside a DragChip so the row
+   *  component survives the done-flip — swapping wrappers remounted
+   *  the row and killed the radio's clip-to-thread spring. */
+  enabled?: boolean;
 }) => {
   const pan = Gesture.Pan()
+    .enabled(enabled)
     .activateAfterLongPress(220)
     .onStart((e) => {
       'worklet';
@@ -1007,22 +1014,18 @@ const DayView = ({
           // still drag forward into open gaps.)
           const draggable =
             !it.done && !!it.questId && !it.recurring && !isPast;
-          const row = (
-            <DayTaskRow
-              it={it}
-              isToday={isToday}
-              isPast={isPast}
-              nowMin={nowMin}
-              inPeak={inPeak}
-              styles={styles}
-            />
-          );
-          return draggable ? (
+          // ALWAYS the same wrapper tree — DragChip stays mounted and
+          // merely disables its gesture when the row can't drag.
+          // Swapping wrappers on the done-flip remounted DayTaskRow,
+          // which reset the radio's slide state and skipped the
+          // clip-to-thread spring entirely (the dot just "popped").
+          return (
             <DragChip
               key={it.questId ?? `q${i}`}
               ctl={ctl}
+              enabled={draggable}
               task={{
-                questId: it.questId as string,
+                questId: it.questId ?? '',
                 title: it.title,
                 tier: it.tier ?? 'medium',
                 min: it.min,
@@ -1035,11 +1038,16 @@ const DayView = ({
                   ctl.draggingId === it.questId ? { opacity: 0.3 } : undefined
                 }
               >
-                {row}
+                <DayTaskRow
+                  it={it}
+                  isToday={isToday}
+                  isPast={isPast}
+                  nowMin={nowMin}
+                  inPeak={inPeak}
+                  styles={styles}
+                />
               </View>
             </DragChip>
-          ) : (
-            <View key={it.questId ?? `q${i}`}>{row}</View>
           );
         })}
       </View>
@@ -1267,10 +1275,14 @@ const MonthView = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctl.draggingId]);
 
-  // Per-day load + count in one pass — drives the heat cells, the
-  // stats row, and the busiest-day nudge.
+  // Per-day load + count + missed in one pass — drives the heat
+  // cells, the stats row, the busiest-day nudge, and the missed
+  // markers (unfinished tasks on days that already passed).
   const dayStats = useMemo(() => {
-    const map = new Map<string, { load: number; count: number }>();
+    const map = new Map<
+      string,
+      { load: number; count: number; missed: number }
+    >();
     for (const d of cells) {
       if (!d) continue;
       const qs = buildItemsForDate(
@@ -1281,7 +1293,12 @@ const MonthView = ({
         today,
         nowMin,
       ).filter((i) => i.kind === 'quest');
-      map.set(ymd(d), { load: loadOf(qs), count: qs.length });
+      const past = dayOffset(d, today) < 0;
+      map.set(ymd(d), {
+        load: loadOf(qs),
+        count: qs.length,
+        missed: past ? qs.filter((q) => !q.done).length : 0,
+      });
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1324,7 +1341,10 @@ const MonthView = ({
         planDays += 1;
         monthQuests += st.count;
       }
-      if (st.load > busiestLoad) {
+      // Busiest only considers today + ahead — "Wednesday the 1st is
+      // your heaviest, spread it out" is useless advice about a day
+      // that already happened.
+      if (dayOffset(d, today) >= 0 && st.load > busiestLoad) {
         busiestLoad = st.load;
         busiest = d;
       }
@@ -1404,6 +1424,7 @@ const MonthView = ({
               const isToday = sameDay(d, today);
               const isSelected = sameDay(d, sel);
               const load = dayStats.get(dI)?.load ?? 0;
+              const missed = dayStats.get(dI)?.missed ?? 0;
               const heavy = load >= HEAVY_LOAD;
               const over = ctl.overKey === `day:${dI}`;
               // Heat — the warmer a day, the fuller it is. Alpha
@@ -1452,6 +1473,10 @@ const MonthView = ({
                     {d.getDate()}
                   </Text>
                   {heavy && <View style={styles.monthHeavyDot} />}
+                  {/* Missed marker — a past day still holding
+                      unfinished tasks gets a rust ring so you can
+                      SPOT what slipped and tap back to it. */}
+                  {missed > 0 && <View style={styles.monthMissedDot} />}
                   {isToday && (
                     <Text style={styles.monthCellTodayTag}>today</Text>
                   )}
@@ -1464,7 +1489,8 @@ const MonthView = ({
 
       <Text style={styles.monthCaption}>
         the warmer a day, the fuller it is — tap to peek, hold + drag a
-        task onto a day to move it
+        task onto a day to move it · a rust ring marks something that
+        slipped
       </Text>
 
       {/* Busiest-day nudge — only when it's genuinely heavy. */}
@@ -2790,6 +2816,20 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: 1,
       textTransform: 'uppercase',
       color: C.glow,
+    },
+    // Missed marker — hollow rust ring, bottom-left corner (heavy's
+    // glow dot owns top-right). Same rust language as the day
+    // thread's MISSED tag.
+    monthMissedDot: {
+      position: 'absolute',
+      bottom: 4,
+      left: 5,
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      borderColor: hexA(C.ember, 0.75),
     },
     // ── Busiest-day nudge ──────────────────────────────────────────
     monthNudge: {

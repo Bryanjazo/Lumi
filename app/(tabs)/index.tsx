@@ -2269,15 +2269,29 @@ export default function Home() {
         recur: opts.recur,
       });
     } else {
+      // One-time accept → same auto-slot cascade as capture: no
+      // pinned time means "next open :15 in the window", not "pile
+      // up at the window start".
+      const sugSlot =
+        opts.exactMinute ??
+        findWindowSlot({
+          window: opts.window,
+          dateISO: todayKey(),
+          durationMin: opts.durationMin,
+          quests: useQuestStore.getState().quests,
+          anchors,
+          effectiveWindows,
+          nowMin: now.getHours() * 60 + now.getMinutes(),
+        });
       addQuest({
         title: s.title,
         difficulty: 'medium',
         importance: s.importance,
         window: opts.window,
         durationMinutes: opts.durationMin,
-        ...(opts.exactMinute != null && {
-          scheduledHour: Math.floor(opts.exactMinute / 60),
-          scheduledMinute: opts.exactMinute % 60,
+        ...(sugSlot != null && {
+          scheduledHour: Math.floor(sugSlot / 60),
+          scheduledMinute: sugSlot % 60,
         }),
       });
     }
@@ -2784,7 +2798,7 @@ export default function Home() {
             sortingRaw is set so we never render the (possibly
             deterministic) preview before the LLM has spoken. */}
         {!sortingRaw && previewTasks && previewTasks[0] && (
-          <View style={{ marginBottom: 16 }}>
+          <View style={{ marginTop: 14 }}>
             <LumiSuggestCard
               // Remount per task — the card seeds duration / window /
               // pin / repeat from the input ONCE on mount, so without
@@ -2855,7 +2869,7 @@ export default function Home() {
             suggestions are pending, the "1 of N" badge shows up
             and each accept/dismiss reveals the next. */}
         {heroSuggestion && !allDone && (
-          <View style={{ marginBottom: 16 }}>
+          <View style={{ marginTop: 14 }}>
             <LumiSuggestCard
               // Same remount-per-suggestion reasoning as the preview
               // card above.
@@ -2920,6 +2934,14 @@ export default function Home() {
                 {rest.map((q) => (
                   <Pressable
                     key={q.id}
+                    // TAP opens the edit sheet — long-press-only was
+                    // undiscoverable for new users. The checkbox and
+                    // "now" pill are their own targets, so a plain
+                    // row tap has no competing meaning.
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      setEditingQuest(q);
+                    }}
                     onLongPress={() => {
                       Haptics.selectionAsync();
                       setEditingQuest(q);
@@ -2984,7 +3006,8 @@ export default function Home() {
                   </Pressable>
                 ))}
                 <Text style={styles.waitingFooter}>
-                  they&apos;ll surface one at a time — no pile, promise
+                  tap a task to edit it — they&apos;ll surface one at a
+                  time, no pile
                 </Text>
               </>
             )}
@@ -3274,6 +3297,14 @@ export default function Home() {
         visible={editingQuest != null}
         onClose={() => setEditingQuest(null)}
         quest={editingQuest}
+        // Delete lives in the edit sheet (two-tap confirm inside) —
+        // the waiting rows themselves stay clean.
+        onDelete={() => {
+          if (!editingQuest) return;
+          useQuestStore.getState().remove(editingQuest.id);
+          setEditingQuest(null);
+          showToast('Deleted — gone for good.');
+        }}
         onSave={({ title, note, comment }) => {
           if (!editingQuest) return;
           if (title !== editingQuest.title) {
@@ -3365,7 +3396,7 @@ const makeStyles = (accent: Accent) =>
       backgroundColor: hexA(C.void2, 0.6),
       paddingHorizontal: 20,
       paddingVertical: 22,
-      marginBottom: 16,
+      marginTop: 14,
       alignItems: 'flex-start',
     },
     sortingHeaderRow: {
@@ -3743,7 +3774,10 @@ const makeStyles = (accent: Accent) =>
     },
 
     // ── Hero card ──
-    heroWrap: { marginBottom: 26 },
+    // Uniform card rhythm: every top-level Home card ends ~flush and
+    // the FOLLOWER brings the 14px gap. (Mixed owner margins kept
+    // producing 2px-vs-30px gaps as cards conditionally appeared.)
+    heroWrap: { marginBottom: 2 },
     heroCard: {
       borderRadius: 24,
       paddingHorizontal: 20,
@@ -4442,7 +4476,7 @@ const makeStyles = (accent: Accent) =>
       borderWidth: 1,
       borderColor: C.hair,
       backgroundColor: hexA(C.void2, 0.7),
-      marginTop: 2,
+      marginTop: 14,
       overflow: 'hidden',
     },
     waitingHead: {
