@@ -260,6 +260,28 @@ const check = (name: string, cond: boolean, detail: string) => {
     `personalized ${JSON.stringify(stranger.personalized)}`,
   );
 
+  // Task kinds (the waitlist-demo tags, in-engine) — kind + its
+  // typical duration pre-sizing.
+  const kindOf = (input: string) => {
+    const t = parse1(input) as { kind?: string; durationMinutes?: number };
+    return { kind: t.kind, dur: t.durationMinutes };
+  };
+  const kindCases: Array<[string, string, number | undefined]> = [
+    ['call the dentist back', 'reach_out', 10],
+    ['buy paper towels', 'errand', 15],
+    ['finish the quarterly report', 'work', 45],
+    ['do the laundry', 'home', 20],
+    ['learn guitar someday', 'someday', undefined],
+  ];
+  for (const [input, expectKind, expectDur] of kindCases) {
+    const got = kindOf(input);
+    check(
+      `kind: "${input}" → ${expectKind}`,
+      got.kind === expectKind && got.dur === expectDur,
+      `got kind=${got.kind} dur=${got.dur}, want ${expectKind}/${expectDur}`,
+    );
+  }
+
   // §2.1 routing gate — trivial captures MUST cost 0 tokens; true
   // multi-task MUST reach the LLM.
   const route = (input: string) =>

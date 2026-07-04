@@ -20,6 +20,7 @@
 
 import { type Importance } from '../constants/importance';
 import { type WindowKey, type WindowMeta } from '../constants/windows';
+import { classifyKind, type TaskKindKey } from '../constants/taskKinds';
 import { type RecurRule } from '../constants/recur';
 
 // ═════════════════════════════════════════════════════════════════════
@@ -78,6 +79,15 @@ export interface SmartTask {
    * default keyed off importance (high: 60 / med: 30 / low: 15).
    */
   durationMinutes?: number;
+  /**
+   * Semantic task kind (reach_out / errand / work / home / someday /
+   * task) — the waitlist demo's beloved tags, now assigned by the
+   * deterministic engine. Pure function of the text (see
+   * constants/taskKinds), carried here so preview surfaces don't
+   * re-derive it. Also seeds durationMinutes with the kind's
+   * typical length when the user didn't give one.
+   */
+  kind?: TaskKindKey;
   /**
    * Short freeform context the LLM extracted from the raw input
    * ("bring the charger", "the blue folder"). Persisted to Quest
@@ -1629,6 +1639,11 @@ export const parseSmartCapture = (
       (DEADLINE_TYPE_PATTERN.test(lc) && !hasExplicitWhen) ||
       (importance === 'high' && timeConfidence < 0.5);
 
+    // Semantic kind (waitlist-demo tags, now in the engine) — read
+    // from the RAW fragment so verbs eaten by title cleaning still
+    // count. Kind also pre-sizes the task with its typical length.
+    const kind = classifyKind(raw);
+
     tasks.push({
       title,
       importance,
@@ -1643,6 +1658,10 @@ export const parseSmartCapture = (
       recur,
       raw,
       needsFollowup,
+      kind: kind.key,
+      ...(kind.defaultMinutes != null
+        ? { durationMinutes: kind.defaultMinutes }
+        : {}),
       confidence: {
         title: titleConfidence,
         time: timeConfidence,
@@ -1678,6 +1697,7 @@ export const parseSmartCapture = (
       recur: null,
       raw,
       needsFollowup,
+      kind: classifyKind(raw).key,
     });
   }
 

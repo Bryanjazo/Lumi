@@ -80,6 +80,7 @@ import {
 import { personalizeTasks } from '../../lib/personalize';
 import { useAiMetricsStore } from '../../store/aiMetricsStore';
 import { awayStateFor, lastSeenDate, type AwayState } from '../../lib/away';
+import { classifyKind } from '../../constants/taskKinds';
 import {
   findStale,
   dominantStaleCluster,
@@ -2994,6 +2995,15 @@ export default function Home() {
                     {effectiveWindows[hero.window].label}
                   </Text>
                   <View style={styles.metaDot} />
+                  <Text
+                    style={[
+                      styles.heroKind,
+                      { color: classifyKind(hero.title).color },
+                    ]}
+                  >
+                    {classifyKind(hero.title).label}
+                  </Text>
+                  <View style={styles.metaDot} />
                   <Text style={styles.heroXp}>
                     <Text style={styles.heroXpNum}>+{hero.xpReward}</Text> xp
                   </Text>
@@ -3269,9 +3279,20 @@ export default function Home() {
                       ]}
                     />
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text numberOfLines={1} style={styles.waitingRowTitle}>
-                        {q.title}
-                      </Text>
+                      <View style={styles.waitingTitleRow}>
+                        {/* Kind dot — the waitlist-demo tags, in-app:
+                           dusk call, honey errand, ember work… so the
+                           held pile scans by WHAT things are. */}
+                        <View
+                          style={[
+                            styles.waitingKindDot,
+                            { backgroundColor: classifyKind(q.title).color },
+                          ]}
+                        />
+                        <Text numberOfLines={1} style={styles.waitingRowTitle}>
+                          {q.title}
+                        </Text>
+                      </View>
                       {q.note && (
                         <Text numberOfLines={1} style={styles.waitingNote}>
                           {q.note}
@@ -4186,6 +4207,12 @@ const makeStyles = (accent: Accent) =>
     },
     // Window label in the meta row — matches the rest of the row's
     // 11.5pt weight + spacing so it reads as one continuous line.
+    heroKind: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11,
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+    },
     heroWindowMeta: {
       fontFamily: fonts.interSemi,
       fontSize: 11.5,
@@ -4892,7 +4919,23 @@ const makeStyles = (accent: Accent) =>
       backgroundColor: hexA(C.void, 0.4),
       flexShrink: 0,
     },
+    waitingTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      minWidth: 0,
+    },
+    waitingKindDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 2.5,
+      flexShrink: 0,
+      opacity: 0.9,
+    },
     waitingRowTitle: {
+      // flex so the title truncates INSIDE the kind-dot row instead
+      // of pushing the dot / overflowing the card.
+      flex: 1,
       fontFamily: fonts.interMed,
       fontSize: 14.5,
       color: C.bone,

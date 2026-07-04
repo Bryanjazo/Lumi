@@ -21,6 +21,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import { fonts } from '../constants/fonts';
 import type { WindowKey } from '../constants/windows';
+import { classifyKind } from '../constants/taskKinds';
 import {
   RDAYS,
   type CadenceKey,
@@ -198,6 +199,11 @@ export const LumiSuggestCard = ({
 
   // When the user toggles exact on, the window follows the chosen
   // hour. So "window" displayed in the summary should be derived.
+  // Semantic kind tag (reach out / errand / work / home) — Lumi's
+  // read of WHAT this is, colored from the ambient palette. Pure
+  // function of the title, no state.
+  const kind = classifyKind(input.title);
+
   const effWin: WindowKey = exact ? windowOf(time) : win;
   const effWinObj = WINDOWS.find((w) => w.key === effWin) ?? WINDOWS[3];
 
@@ -299,7 +305,17 @@ export const LumiSuggestCard = ({
       </View>
 
       {/* Title + optional LLM-extracted note + live summary */}
-      <Text style={styles.title}>{input.title}</Text>
+      <View style={styles.titleRow}>
+        <Text style={[styles.title, { flex: 1 }]}>{input.title}</Text>
+        <View
+          style={[styles.kindPill, { backgroundColor: `${kind.color}1F` }]}
+        >
+          <View style={[styles.kindDot, { backgroundColor: kind.color }]} />
+          <Text style={[styles.kindText, { color: kind.color }]}>
+            {kind.label}
+          </Text>
+        </View>
+      </View>
       {input.note && (
         <Text style={styles.noteText} numberOfLines={3}>
           {input.note}
@@ -729,6 +745,27 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
     lineHeight: 34,
     marginBottom: 6,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  kindPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    marginTop: 8,
+  },
+  kindDot: { width: 6, height: 6, borderRadius: 3 },
+  kindText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 10,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
   },
   // Note — the "context" sub-line under the title. Dusk-tinted
   // because it's Lumi's extracted interpretation, not the user's
