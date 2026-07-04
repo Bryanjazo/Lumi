@@ -8,7 +8,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "app.lumi.ios",
       "appleTeamId": "LX2URYLQQ7",
       "usesAppleSignIn": true,
