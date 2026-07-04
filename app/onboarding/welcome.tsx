@@ -727,6 +727,7 @@ export default function Onboarding() {
         nowMin: now.getHours() * 60 + now.getMinutes(),
         wakeMin: anchors.wake,
         sleepMin: anchors.sleep,
+        anchors,
       };
       const tasks = parseSmartCapture(trimmed, ctx);
       for (const t of tasks) {

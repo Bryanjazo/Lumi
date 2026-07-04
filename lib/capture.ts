@@ -84,6 +84,13 @@ export interface SmartTask {
    * and rendered as a subtitle so the detail isn't dropped.
    */
   note?: string;
+  /**
+   * Deadline vs start (goal §1.1): "by thursday / due friday /
+   * before the 5th / by eod" = a DEADLINE (true); "on thursday /
+   * at 3" = a start (false). Downstream can treat deadlines as
+   * "no later than" instead of "do it then".
+   */
+  deadline?: boolean;
 }
 
 /**
@@ -125,6 +132,20 @@ export interface CaptureContext {
    * 11:45 PM bedtime — "pray before bed" must land tonight.)
    */
   sleepMin?: number;
+  /**
+   * The user's daily anchors (minutes since midnight) — powers the
+   * anchor-relative time grammar (goal §1.1): "after lunch" resolves
+   * against THEIR lunch, not a hardcoded noon. Optional so old call
+   * sites keep working; the grammar degrades to window hints without
+   * it.
+   */
+  anchors?: {
+    wake: number;
+    breakfast: number;
+    lunch: number;
+    dinner: number;
+    sleep: number;
+  };
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -247,13 +268,72 @@ const VENT_TAILS =
   /[,\s]*\b(?:(?:it'?s|this is|which is|that'?s)\s+)?(?:really\s+)?(?:stress(?:ing|es)?\s+me(?:\s+out)?|freaking\s+me\s+out|driving\s+me\s+(?:crazy|nuts|insane)|killing\s+me|i'?m\s+(?:so\s+)?(?:stressed|overwhelmed|anxious)(?:\s+about\s+(?:it|this))?)\s*$/i;
 
 const VENT_ONLY = [
-  /\bbrain(?:'?s| is)? (?:all )?over the place\b/i,
+  // NOTE the \s+ between "brain" and "is" — the alternation `(?:'?s| is)`
+  // already eats the space, so a literal space after the group demanded
+  // TWO spaces and silently never matched "brain is all over the place".
+  /\bbrain(?:'?s|\s+is)?\s+(?:all\s+)?over the place\b/i,
   /^(?:ok(?:ay)?|ugh|whew|man|god|jeez|honestly|anyway|so yeah|yeah)$/i,
   /^never do$/i,
   /^(?:i'?m|im) (?:so )?(?:stressed|overwhelmed|tired|anxious|behind)(?: out)?$/i,
   /^it'?s stressing me(?: out)?$/i,
-  /^wish me luck$/i,
+  /^(?:so\s+)?(?:yeah\s+)?wish me luck$/i,
 ];
+
+// ── Status → task templates (goal §1.4) ─────────────────────────────
+// "laundry is piling up" isn't a task titled with the complaint — the
+// TASK is "Do laundry". Pattern templates turn state-of-the-world
+// statements into clean imperatives, zero tokens. Applied to the raw
+// fragment BEFORE title cleaning; also used by the splitter to know a
+// clause stands on its own ("…, laundry is piling up," has no verb
+// but is definitely its own task).
+const STATUS_RULES: Array<{ re: RegExp; make: (s: string) => string }> = [
+  {
+    re: /^(?:the\s+|my\s+)?(.+?)\s+(?:is|are|keeps?)\s+piling\s+up\b.*$/i,
+    make: (s) => `Do ${s}`,
+  },
+  {
+    re: /^(?:the\s+|my\s+)?(.+?)\s+(?:is|are)\s+(?:such\s+)?(?:a\s+)?(?:total\s+|complete\s+)?mess(?:y)?\b.*$/i,
+    make: (s) => `Clean the ${s}`,
+  },
+  {
+    // Overdue things: bills get "Pay", everything else "Sort out".
+    re: /^(?:the\s+|my\s+)?(.+?)\s+(?:is|are)\s+(?:over\s?due|past\s+due)\b.*$/i,
+    make: (s) =>
+      /\b(rent|bill|invoice|payment|fee|tax(?:es)?|loan|card|subscription|dues)\b/i.test(
+        s,
+      )
+        ? `Pay ${s}`
+        : `Sort out ${s}`,
+  },
+  {
+    re: /^(?:the\s+|my\s+)?(.+?)\s+needs?\s+(?:doing|to\s+be\s+done)\b.*$/i,
+    make: (s) => `Do the ${s}`,
+  },
+  {
+    re: /^(?:the\s+|my\s+)?(.+?)\s+needs?\s+(?:cleaning|a\s+(?:good\s+)?clean)\b.*$/i,
+    make: (s) => `Clean the ${s}`,
+  },
+  {
+    re: /^(?:the\s+|my\s+)?(.+?)\s+needs?\s+washing\b.*$/i,
+    make: (s) => `Wash the ${s}`,
+  },
+  {
+    re: /^(?:the\s+|my\s+)?(.+?)\s+(?:is|are)\s+(?:getting\s+)?(?:really\s+|so\s+)?(?:dirty|filthy|gross)\b.*$/i,
+    make: (s) => `Clean the ${s}`,
+  },
+  {
+    re: /^(?:i'?m|i am|we'?re|we are)\s+(?:almost\s+|nearly\s+)?out\s+of\s+(.+)$/i,
+    make: (s) => `Buy ${s}`,
+  },
+];
+
+const applyStatusTemplate = (raw: string): string => {
+  for (const { re, make } of STATUS_RULES) {
+    const m = raw.match(re);
+    if (m) return make(m[1].trim());
+  }
+  return raw;
+};
 
 const cleanTitle = (s: string): string => {
   let t = s.trim();
@@ -389,33 +469,86 @@ const DEADLINE_TYPE_PATTERN =
 export const isDeadlineType = (text: string): boolean =>
   DEADLINE_TYPE_PATTERN.test(text.toLowerCase());
 
-const inferImportance = (lc: string): Importance => {
-  // High signals — explicit urgency, deadlines, "real work" verbs.
-  // Date words like "today" / "tonight" are intentionally excluded —
-  // they're timing hints, not difficulty hints ("call mom today" is
-  // a medium task, not a Trial).
-  if (
-    /\b(asap|urgent|due|deadline|important|overdue|critical|report|finish|prep|submit|present|interview|deliverable)\b/.test(
-      lc,
-    )
-  ) {
-    return 'high';
-  }
-  // Low signals — open-ended / consumption / "someday".
-  if (
-    /\b(someday|maybe|eventually|sometime|could|might|read|watch|browse|article|video|movie|podcast|skim|look at)\b/.test(
-      lc,
-    )
-  ) {
-    return 'low';
-  }
-  return 'medium';
+// Weighted signals (goal §1.3) — a SCORE, not first-keyword-wins.
+// "study for the biology exam" is high because stakes (+2) AND an
+// effort verb (+1) stack; "grab paper towels" is low because a quick
+// verb (−1) pulls it down. Date words ("today"/"tonight") stay out —
+// they're timing hints, not difficulty hints.
+const STAKES_RE =
+  /\b(asap|urgent|due|deadline|important|overdue|critical|report|submit|present|presentation|interview|exam|midterm|final|quiz|tax(?:es)?|rent|mortgage|bill|invoice|payment|insurance|visa|passport|application|apply|essay|thesis|deliverable|license|registration|lease|contract|court|flight|prescription)\b/;
+const EFFORT_RE =
+  /\b(finish|write|prepare|prep|study|draft|build|deep clean|pack for|research|plan out|rehearse|practice for)\b/;
+const QUICK_RE =
+  /\b(call|text|email|message|reply|grab|buy|pick up|order|swing by|drop off|send|water|feed)\b/;
+const LOW_RE =
+  /\b(someday|maybe|eventually|sometime|could|might|read|watch|browse|article|video|movie|podcast|skim|look at)\b/;
+
+const inferImportance = (lc: string, bonus = 0): Importance => {
+  let score = bonus;
+  if (STAKES_RE.test(lc)) score += 2;
+  if (EFFORT_RE.test(lc)) score += 1;
+  if (QUICK_RE.test(lc)) score -= 1;
+  if (LOW_RE.test(lc)) score -= 2;
+  // Duration hints nudge the scale ("all day" vs "real quick").
+  if (/\b(all day|all[- ]?nighter|big|huge|massive)\b/.test(lc)) score += 1;
+  if (/\b(quick(?:ly)?|real quick|tiny|small|little)\b/.test(lc)) score -= 1;
+  return score >= 2 ? 'high' : score <= -1 ? 'low' : 'medium';
 };
 
 // ═════════════════════════════════════════════════════════════════════
 // Recurrence parser — "every monday", "weekly", "daily".
 // ═════════════════════════════════════════════════════════════════════
 const parseRecur = (lc: string): RecurRule | null => {
+  // ── Richer cadences FIRST (goal §1.1) — these all contain simpler
+  // patterns as substrings ("every other tuesday" contains a weekday;
+  // "every 3 days" must not fall through to a plain match).
+  const otherDay = lc.match(
+    /\bevery\s+other\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)\b/,
+  );
+  if (otherDay) {
+    const dow = DAY_FULL[otherDay[1]];
+    if (dow != null) {
+      return { every: '2week', day: DAY_RECUR_KEY[dow], part: 'midday' };
+    }
+  }
+  if (/\bevery\s+other\s+week\b/.test(lc)) {
+    return { every: '2week', part: 'midday' };
+  }
+  if (/\bevery\s+other\s+day\b/.test(lc)) {
+    return { every: 'day', interval: 2, part: 'midday' };
+  }
+  const everyN = lc.match(/\bevery\s+(\d+)\s+(days?|weeks?|months?)\b/);
+  if (everyN) {
+    const n = Math.max(1, parseInt(everyN[1], 10));
+    const unit = everyN[2];
+    if (/^day/.test(unit)) {
+      return n === 1
+        ? { every: 'day', part: 'midday' }
+        : { every: 'day', interval: n, part: 'midday' };
+    }
+    if (/^week/.test(unit)) {
+      if (n === 1) return { every: 'week', part: 'midday' };
+      if (n === 2) return { every: '2week', part: 'midday' };
+      return { every: 'week', interval: n, part: 'midday' };
+    }
+    return n === 1
+      ? { every: 'month', part: 'midday' }
+      : { every: 'month', interval: n, part: 'midday' };
+  }
+  // "first monday of the month" → monthly on that day.
+  const firstDow = lc.match(
+    /\b(?:every\s+)?first\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+of\s+(?:the\s+|every\s+)?month\b/,
+  );
+  if (firstDow) {
+    const dow = DAY_FULL[firstDow[1]];
+    if (dow != null) {
+      return { every: 'month', day: DAY_RECUR_KEY[dow], part: 'midday' };
+    }
+  }
+  // "every weekend" / "on weekends" — weekly, anchored to Saturday.
+  if (/\bevery\s+weekend\b|\bweekends\b/.test(lc)) {
+    return { every: 'week', day: 'Sat', part: 'midday' };
+  }
   const dayMatch = lc.match(
     /\bevery\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)\b/,
   );
@@ -469,13 +602,45 @@ interface ParsedTime {
   bareNoAmPm?: boolean;
   /** Minutes part of the explicit clock time (0–59). */
   bareMinute?: number;
+  /**
+   * True when the when-phrase reads as a DEADLINE ("by thursday",
+   * "due friday", "by eod") rather than a start ("on thursday").
+   */
+  deadline?: boolean;
 }
+
+// Shorthand → canonical phrase (goal §1.1). Detection runs on the
+// canonical form; the shorthand itself is pushed into `matched` so it
+// still gets stripped from the visible title.
+const TIME_SYNONYMS: Array<[RegExp, string]> = [
+  [/\btmrw\b|\btmr\b/g, 'tomorrow'],
+  [/\btonite\b/g, 'tonight'],
+  [/\bwknds?\b/g, 'weekend'],
+  [/\beod\b/g, 'end of day'],
+  [/\beow\b/g, 'end of week'],
+  [/\beom\b/g, 'end of month'],
+];
+
+const escapeRe = (s: string): string =>
+  s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
   const matched: string[] = [];
   let date: Date | null = null;
   let at: number | null = null;
   let windowHint: WindowKey | null = null;
+  let deadline = false;
+
+  // ── Normalize shorthand ("tmrw", "eod") to canonical phrases. The
+  // shorthand found in the raw text goes into `matched` so stripTokens
+  // can remove it from the title.
+  for (const [re, canon] of TIME_SYNONYMS) {
+    const found = lc.match(re);
+    if (found) {
+      for (const f of found) matched.push(f);
+      lc = lc.replace(re, canon);
+    }
+  }
 
   // ── Date words ──
   if (/\btoday\b/.test(lc)) {
@@ -522,17 +687,114 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
     );
   }
 
+  // ── Relative dates: "in 3 days / in 2 weeks / in a month" ──
+  const inRel = lc.match(
+    /\bin\s+(a|an|one|two|three|four|five|six|seven|\d+)\s+(days?|weeks?|months?)\b/,
+  );
+  if (inRel && !date) {
+    const NUM_WORDS: Record<string, number> = {
+      a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+    };
+    const n = NUM_WORDS[inRel[1]] ?? parseInt(inRel[1], 10);
+    const unit = inRel[2];
+    date = new Date(ctx.now);
+    date.setHours(0, 0, 0, 0);
+    if (/^day/.test(unit)) date.setDate(date.getDate() + n);
+    else if (/^week/.test(unit)) date.setDate(date.getDate() + n * 7);
+    else date.setMonth(date.getMonth() + n);
+    matched.push(inRel[0]);
+  }
+
+  // ── "this weekend" / "next weekend" — the upcoming Saturday (today
+  // if it IS the weekend), one more week out for "next". Skip when
+  // it's a recurrence ("every weekend").
+  if (!/\bevery\s+weekend\b|\bweekends\b/.test(lc)) {
+    const wk = lc.match(/\b(?:(this|next)\s+)?weekend\b/);
+    if (wk && !date) {
+      const isWeekendNow = ctx.now.getDay() === 6 || ctx.now.getDay() === 0;
+      date =
+        isWeekendNow && wk[1] !== 'next'
+          ? new Date(ctx.now)
+          : nextDayOfWeek(ctx.now, 6);
+      date.setHours(0, 0, 0, 0);
+      if (wk[1] === 'next') date.setDate(date.getDate() + 7);
+      matched.push(wk[0].trim());
+    }
+  }
+
+  // ── "end of day / week / month", "first of the month", "mid-month".
+  // The end-of family reads as a DEADLINE ("by end of week").
+  if (/\bend of (?:the )?day\b/.test(lc)) {
+    if (!date) date = new Date(ctx.now);
+    if (!windowHint) windowHint = 'evening';
+    deadline = true;
+    matched.push('end of day', 'end of the day');
+  } else if (/\bend of (?:the )?week\b/.test(lc)) {
+    if (!date) date = nextDayOfWeek(ctx.now, 0); // upcoming Sunday
+    deadline = true;
+    matched.push('end of week', 'end of the week');
+  } else if (/\bend of (?:the )?month\b/.test(lc)) {
+    if (!date) {
+      date = new Date(ctx.now.getFullYear(), ctx.now.getMonth() + 1, 0);
+    }
+    deadline = true;
+    matched.push('end of month', 'end of the month');
+  } else if (/\b(?:the\s+)?first of the month\b/.test(lc) && !date) {
+    date = new Date(ctx.now.getFullYear(), ctx.now.getMonth() + 1, 1);
+    matched.push('the first of the month', 'first of the month');
+  } else if (/\bmid[- ]?month\b/.test(lc) && !date) {
+    const mm =
+      ctx.now.getDate() < 15
+        ? new Date(ctx.now.getFullYear(), ctx.now.getMonth(), 15)
+        : new Date(ctx.now.getFullYear(), ctx.now.getMonth() + 1, 15);
+    date = mm;
+    matched.push('mid-month', 'mid month', 'midmonth');
+  }
+
+  // ── Ordinal day-of-month: "by the 5th", "on the 23rd" ──
+  const ord = lc.match(
+    /\b(?:on|by|before|until|till|due)\s+the\s+(\d{1,2})(?:st|nd|rd|th)\b/,
+  );
+  if (ord && !date) {
+    const dayNum = parseInt(ord[1], 10);
+    if (dayNum >= 1 && dayNum <= 31) {
+      const thisMonth = new Date(
+        ctx.now.getFullYear(),
+        ctx.now.getMonth(),
+        dayNum,
+      );
+      date =
+        dayNum > ctx.now.getDate()
+          ? thisMonth
+          : new Date(ctx.now.getFullYear(), ctx.now.getMonth() + 1, dayNum);
+      if (/^(?:by|before|until|till|due)/.test(ord[0])) deadline = true;
+      matched.push(ord[0]);
+    }
+  }
+
   // Day of week — only the FIRST match (avoid grabbing the recurrence
   // "every monday" twice). Skip if "every <day>" already parsed.
+  // "this friday" = the coming one; "next friday" = the one after,
+  // when the plain next occurrence still falls in THIS calendar week.
   if (!/\bevery\s+\w+/.test(lc)) {
     const dowMatch = lc.match(
-      /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)\b/,
+      /\b(?:(this|next)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)\b/,
     );
     if (dowMatch && !date) {
-      const dow = DAY_FULL[dowMatch[1]];
+      const dow = DAY_FULL[dowMatch[2]];
       if (dow != null) {
         date = nextDayOfWeek(ctx.now, dow);
-        matched.push(dowMatch[1]);
+        if (dowMatch[1] === 'next') {
+          // If the plain occurrence lands within this calendar week
+          // (Sunday-start), "next X" means a week further out.
+          const endOfWeek = new Date(ctx.now);
+          endOfWeek.setHours(0, 0, 0, 0);
+          endOfWeek.setDate(endOfWeek.getDate() + (6 - ctx.now.getDay()));
+          if (date.getTime() <= endOfWeek.getTime()) {
+            date.setDate(date.getDate() + 7);
+          }
+        }
+        matched.push(dowMatch[0]);
       }
     }
   }
@@ -618,6 +880,45 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
     }
   }
 
+  // ── Anchor-relative times (goal §1.1) — "after lunch" resolves
+  // against the USER's lunch anchor, not a hardcoded noon. This is a
+  // deterministic superpower: zero tokens, personally correct.
+  const anch = lc.match(/\b(after|before)\s+(breakfast|lunch|dinner|work)\b/);
+  if (anch && at == null) {
+    const rel = anch[1];
+    const which = anch[2];
+    if (which === 'work') {
+      // No work anchor exists — "after work" = the evening window,
+      // "before work" = the morning window.
+      windowHint = rel === 'after' ? 'evening' : 'morning';
+    } else if (ctx.anchors) {
+      const anchorMin =
+        ctx.anchors[which as 'breakfast' | 'lunch' | 'dinner'];
+      // After a meal: +15 min buffer. Before: −30 so it FINISHES by then.
+      const rawAt = rel === 'after' ? anchorMin + 15 : anchorMin - 30;
+      at = Math.max(0, Math.min(24 * 60 - 1, rawAt));
+    } else {
+      // No anchors known — degrade to the meal's part of day.
+      windowHint =
+        which === 'breakfast'
+          ? 'morning'
+          : which === 'lunch'
+            ? 'midday'
+            : 'evening';
+    }
+    matched.push(anch[0]);
+  }
+
+  // ── noon / midnight ──
+  if (at == null && /\bnoon\b/.test(lc)) {
+    at = 12 * 60;
+    matched.push('noon');
+  } else if (at == null && /\bmidnight\b/.test(lc)) {
+    at = 23 * 60 + 59;
+    if (!windowHint) windowHint = 'evening';
+    matched.push('midnight');
+  }
+
   // ── Window hint words (set last so explicit time wins for `at`). ──
   if (/\bmorning\b/.test(lc) && !matched.includes('morning')) {
     windowHint = 'morning';
@@ -641,7 +942,28 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
     matched.push('midday');
   }
 
-  return { date, at, windowHint, matched, bareHour, bareNoAmPm, bareMinute };
+  // ── Deadline vs start (goal §1.1) — "by/due <token>" marks the
+  // matched date as a deadline, not a start time. Adjacency check so
+  // "stop by the store tomorrow" (by ≠ by-tomorrow) stays a start.
+  if (!deadline && (date != null || at != null)) {
+    deadline = matched.some((tok) =>
+      new RegExp(
+        `\\b(?:by|due(?:\\s+on|\\s+by)?|no later than)\\s+(?:the\\s+)?${escapeRe(tok)}`,
+        'i',
+      ).test(lc),
+    );
+  }
+
+  return {
+    date,
+    at,
+    windowHint,
+    matched,
+    bareHour,
+    bareNoAmPm,
+    bareMinute,
+    deadline,
+  };
 };
 
 // ═════════════════════════════════════════════════════════════════════
@@ -887,37 +1209,120 @@ export const pickWindowForDemand = (
 // Split a multi-task input into fragments. Reuses the same split
 // patterns as the Capture-tab makeSense so the two engines stay aligned.
 // ═════════════════════════════════════════════════════════════════════
-const splitFragments = (text: string): string[] =>
-  text
-    .replace(/\n+/g, '. ')
-    .split(
-      // Plain commas and em-dashes split too — real brain dumps are
-      // one giant comma-run ("call the dentist, pick up coffee
-      // beans, dog food…"). Without the comma split, whole clusters
-      // of tasks landed as one mangled title (the "Call the dentist
-      // to reschedule my cleaning, pick up coffee beans" bug).
-      // Mid-string intent markers START a new task too — "mom's
-      // birthday is next weekend don't let me forget to order her
-      // gift" is a date fact + a task, not one title.
-      /(?:,?\s+(?:and then|and also|oh and|and|then|also|plus|oh|but|so)\b|,?\s*\b(?=don'?t let me forget|remember to |i keep meaning to )|[.;,]|\s*[—–]\s*|\s+-\s+)/i,
-    )
-    .map((s) => s.trim())
-    .filter((s) => s.length > 1);
+// ── Verb lexicon (goal §1.2) — a comma/"and" clause only stands on
+// its own when it carries its own verb. "pick up coffee beans and dog
+// food" (one verb) stays ONE task; "call the dentist and pay the
+// bill" (two verbs) splits into TWO.
+const VERB_RE =
+  /\b(?:call|text|email|message|reply|respond|buy|get|grab|pick|order|book|schedule|reschedule|cancel|pay|send|submit|finish|start|begin|write|draft|read|review|study|clean|tidy|organize|wash|fold|vacuum|mop|dust|cook|bake|prep|make|plan|fix|repair|water|feed|walk|run|take|bring|drop|return|renew|sign|fill|apply|research|check|update|upload|download|install|backup|charge|print|scan|practice|exercise|stretch|meditate|journal|work|go|visit|attend|meet|prepare|pack|unpack|empty|shop|register|do|hang|move|clear|wrap|mail|ship|deposit|transfer|budget|file|shower|sort|figure|set up|put away|swing by|follow up|look into|deal with|drop off|pick up|back up)\b/i;
+
+// Signals that a verbless clause is still its OWN thought — a date
+// fact ("mom's birthday is next weekend") or a recurrence.
+const CLAUSE_DATEISH =
+  /\b(?:today|tomorrow|tmrw|tonight|tonite|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|wknd|next week|this week|next month|noon|midnight|eod|eow|eom|every|daily|weekly|monthly|at \d|due\b|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i;
+
+// A clause introduced by a soft separator (comma / "and") stands
+// alone if it's vent (so it can be dropped), a status statement, has
+// its own verb, carries a date, or is long enough to be its own
+// thought. Otherwise it's a noun continuation of the previous clause.
+const standsAlone = (clause: string): boolean => {
+  if (VENT_ONLY.some((re) => re.test(clause))) return true;
+  if (STATUS_RULES.some((r) => r.re.test(clause))) return true;
+  if (VERB_RE.test(clause)) return true;
+  if (CLAUSE_DATEISH.test(clause)) return true;
+  return clause.split(/\s+/).length > 6;
+};
+
+const INTENT_START =
+  /^(?:don'?t let me forget|remember to\b|i keep meaning to)/i;
+
+// One capture group so split() hands back the separators — merging a
+// noun continuation needs the original joiner (", and " vs " and ").
+const SPLIT_SEP =
+  /(,?\s+(?:and then|and also|oh and|and|then|also|plus|but)\s+|,?\s*(?=don'?t let me forget|remember to |i keep meaning to )|\s*[.;]\s*|\s*[—–]\s*|\s+-\s+|\s*,\s*)/i;
+
+const splitFragments = (text: string): string[] => {
+  const parts = text.replace(/\n+/g, '. ').split(SPLIT_SEP);
+  const frags: string[] = [];
+  let current = (parts[0] ?? '').trim();
+  for (let i = 1; i < parts.length; i += 2) {
+    const sep = parts[i] ?? '';
+    const clause = (parts[i + 1] ?? '').trim();
+    if (!clause) continue;
+    // Sentence boundaries, dashes, and mid-string intent markers
+    // ALWAYS split; soft separators split only when the clause
+    // stands on its own (the verb heuristic).
+    const hard =
+      /[.;—–]/.test(sep) || /\s-\s/.test(sep) || INTENT_START.test(clause);
+    if (hard || standsAlone(clause)) {
+      if (current) frags.push(current);
+      current = clause;
+    } else {
+      // Noun continuation ("…and dog food", "…, milk") — same task.
+      const t = sep.replace(/\s+/g, ' ').trim(); // ',' | ', and' | 'and'
+      const joiner = t.startsWith(',')
+        ? t.length > 1
+          ? `${t} `
+          : ', '
+        : ` ${t} `;
+      current = current ? `${current}${joiner}${clause}` : clause;
+    }
+  }
+  if (current) frags.push(current);
+  return frags.map((s) => s.trim()).filter((s) => s.length > 1);
+};
+
+/**
+ * Complexity signal (goal §1.2 cap + §2.1 routing gate). A 1–2
+ * fragment capture is deterministic territory; a 12-clause monster
+ * with feelings woven through is LLM territory. One source of truth
+ * so the splitter and the routing gate can never disagree.
+ */
+export type CaptureComplexity = 'simple' | 'multi' | 'complex';
+export const assessComplexity = (text: string): CaptureComplexity => {
+  const frags = splitFragments(text);
+  if (frags.length >= 6 || text.length > 240) return 'complex';
+  if (frags.length > 1) return 'multi';
+  return 'simple';
+};
 
 // Strip parsed time/date tokens (and recurrence words) from the title
 // so the human-facing title reads clean.
 const stripTokens = (raw: string, tokens: string[]): string => {
   let out = raw;
+  // Recurrence phrasings FIRST — before single-token strips can punch
+  // holes in them ("every morning" with "morning" already removed
+  // becomes "every  do…", and a greedy `every \w+` strip would then
+  // eat the verb).
+  out = out
+    .replace(/\bevery\s+other\s+\w+\b/gi, '')
+    .replace(/\bevery\s+\d+\s+(?:days?|weeks?|months?)\b/gi, '')
+    .replace(
+      /\bevery\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat|day|morning|evening|night|afternoon|week|weekday|weekend|month)s?\b/gi,
+      '',
+    )
+    .replace(/\b(?:weekdays?|weekends?|weekly|daily|monthly)\b/gi, '');
   for (const tok of tokens) {
-    const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    out = out.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), '');
+    const escaped = escapeRe(tok.trim());
+    if (!escaped) continue;
+    // Take the preposition/article that introduced the token with it
+    // ("finish it BY thursday", "run IN THE morning") — a global
+    // "strip every at/on" mangled titles like "work ON the side
+    // project", so the strip is now anchored to the token.
+    out = out
+      .replace(
+        new RegExp(
+          `\\b(?:at|on|by|in|until|till|due|for)\\s+(?:the\\s+)?${escaped}\\b`,
+          'gi',
+        ),
+        '',
+      )
+      .replace(new RegExp(`\\b${escaped}\\b`, 'gi'), '');
   }
   out = out
-    .replace(/\bat\s+/gi, '')
-    .replace(/\bon\s+/gi, '')
-    .replace(/\bevery\s+\w+/gi, '')
-    .replace(/\b(weekdays|weekly|daily|monthly)\b/gi, '')
     .replace(/\s{2,}/g, ' ')
+    .replace(/\s+,/g, ',')
+    .replace(/,\s*(?=,)/g, '')
     .replace(/^[,\s]+|[,\s]+$/g, '')
     .trim();
   return out;
@@ -932,6 +1337,7 @@ export const parseSmartCapture = (
 ): SmartTask[] => {
   const fragments = splitFragments(text);
   const tasks: SmartTask[] = [];
+  let droppedVent = false;
 
   for (const frag of fragments) {
     // Vent stripping: cut a trailing stress clause ("…it's stressing
@@ -939,13 +1345,20 @@ export const parseSmartCapture = (
     // is real, it just isn't a task.
     const raw = frag.trim().replace(VENT_TAILS, '').trim();
     if (raw.length < 2) continue;
-    if (VENT_ONLY.some((re) => re.test(raw))) continue;
+    if (VENT_ONLY.some((re) => re.test(raw))) {
+      droppedVent = true;
+      continue;
+    }
     const lc = ' ' + raw.toLowerCase() + ' ';
 
-    const importance = inferImportance(lc);
     const recur = parseRecur(lc);
     const time = parseTimeAndDate(lc, ctx);
-    const title = cleanTitle(stripTokens(raw, time.matched));
+    // Deadline presence is an importance signal (goal §1.3) — things
+    // with a "by when" carry stakes.
+    const importance = inferImportance(lc, time.deadline ? 1 : 0);
+    // Status statements become imperatives BEFORE title cleaning
+    // ("laundry is piling up" → "Do laundry", goal §1.4).
+    const title = cleanTitle(stripTokens(applyStatusTemplate(raw), time.matched));
     // Anything under 3 chars after cleaning is split debris, not a
     // task ("ok", "so", a stray word).
     if (!title || title.length < 3) continue;
@@ -1110,14 +1523,16 @@ export const parseSmartCapture = (
       recur,
       raw,
       needsFollowup,
+      ...(time.deadline ? { deadline: true } : {}),
       ...(timeOptions ? { timeOptions } : {}),
     });
   }
 
   // Single-fragment safety net — if splitFragments produced nothing
   // (the whole input was too short / all punctuation), treat the raw
-  // input as one task. We never drop a capture (spec §1.5).
-  if (tasks.length === 0 && text.trim().length > 0) {
+  // input as one task. We never drop a capture (spec §1.5) — UNLESS
+  // it was dropped on purpose because it was pure vent.
+  if (tasks.length === 0 && !droppedVent && text.trim().length > 0) {
     const raw = text.trim();
     const lc = ' ' + raw.toLowerCase() + ' ';
     const importance = inferImportance(lc);

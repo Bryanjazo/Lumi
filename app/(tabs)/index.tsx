@@ -1742,6 +1742,7 @@ export default function Home() {
         nowMin: now.getHours() * 60 + now.getMinutes(),
         wakeMin: anchors.wake,
         sleepMin: anchors.sleep,
+        anchors,
       };
       const pick = pickWindowForDemand(
         u.importance,
@@ -1834,6 +1835,7 @@ export default function Home() {
       nowMin: now.getHours() * 60 + now.getMinutes(),
       wakeMin: anchors.wake,
       sleepMin: anchors.sleep,
+      anchors,
     };
 
     const detTasks = parseSmartCapture(text, ctx);
@@ -2150,6 +2152,7 @@ export default function Home() {
       nowMin: now.getHours() * 60 + now.getMinutes(),
       wakeMin: anchors.wake,
       sleepMin: anchors.sleep,
+      anchors,
     };
     const detTasks = parseSmartCapture(final, ctx);
     if (detTasks.length === 0) {
@@ -2210,6 +2213,7 @@ export default function Home() {
             nowMin: now.getHours() * 60 + now.getMinutes(),
             wakeMin: anchors.wake,
             sleepMin: anchors.sleep,
+            anchors,
           };
           const tasks = parseSmartCapture(final, ctx);
           if (tasks.length === 0) return;

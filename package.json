@@ -47,13 +47,15 @@
   "devDependencies": {
     "@types/aes-js": "^3.1.4",
     "@types/react": "~19.2.2",
+    "esbuild": "^0.28.1",
     "typescript": "~6.0.3"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test:parser": "esbuild scripts/run-parser-corpus.ts --bundle --platform=node --outfile=/tmp/lumi-parser-corpus.js --log-level=error && node /tmp/lumi-parser-corpus.js"
   },
   "private": true,
   "overrides": {
