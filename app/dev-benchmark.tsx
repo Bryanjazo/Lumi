@@ -69,6 +69,16 @@ export default function DevBenchmarkScreen() {
   };
 
   const run = async () => {
+    // The drill routes EVERY call to the simulated outage — a run
+    // with it on scores 0 across the board and tells you nothing
+    // about the model. Refuse instead of wasting the tap.
+    if (isSimulatingLlmDown()) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      setError(
+        'The "Anthropic is down" drill is ON — every call is being refused by the kill-switch. Turn it off to benchmark the real model.',
+      );
+      return;
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setRunning(true);
     setReport(null);
