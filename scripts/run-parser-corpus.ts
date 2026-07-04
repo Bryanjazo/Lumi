@@ -8,6 +8,8 @@
 // (the growth curve for grammar still being built).
 
 import { parseSmartCapture, type CaptureContext } from '../lib/capture';
+import { personalizeTask } from '../lib/personalize';
+import type { Correction } from '../store/correctionsStore';
 import { CORPUS, type ExpectTask } from './parser-corpus';
 
 const NOW = new Date(2026, 6, 3, 10, 0, 0); // Friday
@@ -168,6 +170,91 @@ for (const c of CORPUS) {
       }\n     ${errs.join('\n     ')}`,
     );
   }
+}
+
+// ═══ §1.5 personalization + §1.6 confidence (guards) ═══════════════
+// Pure-function checks on the zero-token layers that sit on top of
+// the parse. All guards — regressions here break the free tier.
+const check = (name: string, cond: boolean, detail: string) => {
+  guardTotal++;
+  if (cond) {
+    guardPass++;
+  } else {
+    failures.push(`✗ GUARD  ${name}\n     ${detail}`);
+  }
+};
+
+{
+  const parse1 = (input: string) => parseSmartCapture(input, ctx)[0];
+
+  // §1.6 confidence ordering: explicit clock > window word > guess.
+  const cExplicit = parse1('gym at 6pm').confidence!;
+  const cHint = parse1('gym tonight').confidence!;
+  const cGuess = parse1('gym').confidence!;
+  check(
+    'confidence: explicit > hint > guess',
+    cExplicit.time > cHint.time && cHint.time > cGuess.time,
+    `time conf ${cExplicit.time} / ${cHint.time} / ${cGuess.time}`,
+  );
+  check(
+    'confidence: default importance is low-confidence',
+    parse1('organize the bookshelf').confidence!.importance <
+      parse1('finish the tax report').confidence!.importance,
+    'no-signal default should score below multi-signal',
+  );
+  check(
+    'followup: high stakes + guessed time asks',
+    parse1('do the taxes').needsFollowup === true,
+    'high-importance task with no when should ask',
+  );
+  check(
+    'followup: explicit when does not ask',
+    parse1('do the taxes tomorrow').needsFollowup === false,
+    'explicit date should not trigger the chip',
+  );
+
+  // §1.5 correction memory — the user always moves gym to morning.
+  const corrections: Correction[] = [
+    {
+      date: '2026-06-20',
+      raw: 'hit the gym after errands',
+      // "evening" so it always DIFFERS from the parse's own guess
+      // (at the fixed 10:00 clock the parser guesses morning).
+      delta: { window: { from: 'afternoon', to: 'evening' } },
+    },
+    {
+      date: '2026-06-18',
+      raw: 'work on the deck',
+      delta: { importance: { from: 'medium', to: 'high' } },
+    },
+  ];
+  const gym = personalizeTask(parse1('go to the gym'), corrections);
+  check(
+    'personalize: guessed window follows memory',
+    gym.window === 'evening' && gym.personalized?.includes('window') === true,
+    `window ${gym.window}, personalized ${JSON.stringify(gym.personalized)}`,
+  );
+  const gymMorning = personalizeTask(
+    parse1('gym in the morning'),
+    corrections,
+  );
+  check(
+    'personalize: explicit when beats memory',
+    gymMorning.window === 'morning',
+    `window ${gymMorning.window} — "in the morning" must win over memory`,
+  );
+  const deck = personalizeTask(parse1('deck edits'), corrections);
+  check(
+    'personalize: personal lexicon carries importance',
+    deck.importance === 'high',
+    `importance ${deck.importance} — "deck" should be remembered as high`,
+  );
+  const stranger = personalizeTask(parse1('water the plants'), corrections);
+  check(
+    'personalize: unrelated tasks untouched',
+    stranger.personalized === undefined,
+    `personalized ${JSON.stringify(stranger.personalized)}`,
+  );
 }
 
 console.log('── Lumi parser corpus ──');

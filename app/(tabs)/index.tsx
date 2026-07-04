@@ -76,6 +76,7 @@ import {
   type CaptureContext,
   type SmartTask,
 } from '../../lib/capture';
+import { personalizeTasks } from '../../lib/personalize';
 import { useVoice } from '../../lib/voice';
 import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
@@ -1864,12 +1865,12 @@ export default function Home() {
         } else {
           // LLM failed or timed out — fall back to deterministic
           // so the user still gets SOMETHING (better than nothing).
-          setPreviewTasks(detTasks);
+          setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
         }
       });
     } else {
       // No LLM configured — deterministic is all we have.
-      setPreviewTasks(detTasks);
+      setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
   };
 
@@ -2178,11 +2179,11 @@ export default function Home() {
         if (llmTasks && llmTasks.length > 0) {
           setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
         } else {
-          setPreviewTasks(detTasks);
+          setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
         }
       });
     } else {
-      setPreviewTasks(detTasks);
+      setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
   };
 
@@ -2219,7 +2220,7 @@ export default function Home() {
           if (tasks.length === 0) return;
           // Voice → preview (same as text path). User taps Looks
           // good to commit, or Tweak to edit before saving.
-          setPreviewTasks(tasks);
+          setPreviewTasks(personalizeTasks(tasks, recentCorrections(20)));
           setEditingIdx(null);
           setCapText('');
           setCapOpen(false);

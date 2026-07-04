@@ -91,6 +91,22 @@ export interface SmartTask {
    * "no later than" instead of "do it then".
    */
   deadline?: boolean;
+  /**
+   * Per-field confidence, 0–1 (goal §1.6). Low confidence means the
+   * parser GUESSED — surface follow-up chips / allow correction-memory
+   * overrides instead of silently trusting the guess.
+   *   time: 1.0 explicit clock · 0.8 window word or date · 0.6 recur
+   *         cadence part · 0.35 smart-window guess
+   *   importance: scales with how many scoring signals actually fired
+   *   title: dinged when the cleaned title still reads long/rambly
+   */
+  confidence?: { title: number; time: number; importance: number };
+  /**
+   * Fields overridden by correction memory (lib/personalize.ts) —
+   * zero-token personalization. Lets the UI whisper "placed in
+   * morning, like last time" instead of looking arbitrary.
+   */
+  personalized?: Array<'window' | 'importance' | 'duration'>;
 }
 
 /**
@@ -483,17 +499,32 @@ const QUICK_RE =
 const LOW_RE =
   /\b(someday|maybe|eventually|sometime|could|might|read|watch|browse|article|video|movie|podcast|skim|look at)\b/;
 
-const inferImportance = (lc: string, bonus = 0): Importance => {
+const scoreImportance = (
+  lc: string,
+  bonus = 0,
+): { tier: Importance; score: number; signals: number } => {
   let score = bonus;
-  if (STAKES_RE.test(lc)) score += 2;
-  if (EFFORT_RE.test(lc)) score += 1;
-  if (QUICK_RE.test(lc)) score -= 1;
-  if (LOW_RE.test(lc)) score -= 2;
+  let signals = bonus !== 0 ? 1 : 0;
+  const hit = (re: RegExp, delta: number) => {
+    if (re.test(lc)) {
+      score += delta;
+      signals++;
+    }
+  };
+  hit(STAKES_RE, 2);
+  hit(EFFORT_RE, 1);
+  hit(QUICK_RE, -1);
+  hit(LOW_RE, -2);
   // Duration hints nudge the scale ("all day" vs "real quick").
-  if (/\b(all day|all[- ]?nighter|big|huge|massive)\b/.test(lc)) score += 1;
-  if (/\b(quick(?:ly)?|real quick|tiny|small|little)\b/.test(lc)) score -= 1;
-  return score >= 2 ? 'high' : score <= -1 ? 'low' : 'medium';
+  hit(/\b(all day|all[- ]?nighter|big|huge|massive)\b/, 1);
+  hit(/\b(quick(?:ly)?|real quick|tiny|small|little)\b/, -1);
+  const tier: Importance =
+    score >= 2 ? 'high' : score <= -1 ? 'low' : 'medium';
+  return { tier, score, signals };
 };
+
+const inferImportance = (lc: string, bonus = 0): Importance =>
+  scoreImportance(lc, bonus).tier;
 
 // ═════════════════════════════════════════════════════════════════════
 // Recurrence parser — "every monday", "weekly", "daily".
@@ -1355,7 +1386,8 @@ export const parseSmartCapture = (
     const time = parseTimeAndDate(lc, ctx);
     // Deadline presence is an importance signal (goal §1.3) — things
     // with a "by when" carry stakes.
-    const importance = inferImportance(lc, time.deadline ? 1 : 0);
+    const impScore = scoreImportance(lc, time.deadline ? 1 : 0);
+    const importance = impScore.tier;
     // Status statements become imperatives BEFORE title cleaning
     // ("laundry is piling up" → "Do laundry", goal §1.4).
     const title = cleanTitle(stripTokens(applyStatusTemplate(raw), time.matched));
@@ -1499,15 +1531,34 @@ export const parseSmartCapture = (
       }
     }
 
+    // ── Per-field confidence (goal §1.6) ─────────────────────────────
+    const timeConfidence =
+      time.at != null
+        ? 1
+        : time.windowHint != null || time.date != null
+          ? 0.8
+          : recur != null
+            ? 0.6
+            : 0.35; // pure smart-window guess
+    const importanceConfidence =
+      impScore.signals === 0
+        ? 0.4 // nothing fired — it's the default, not a judgment
+        : Math.min(0.95, 0.55 + 0.15 * impScore.signals);
+    const titleWords = title.split(/\s+/).length;
+    const titleConfidence =
+      titleWords > 8 || title.length > 60 ? 0.6 : 0.9;
+
     // Guided-follow-up flag — deadline-type tasks without an explicit
-    // when. (Home pulls the user forward with quick chips instead of
-    // silently inferring.)
+    // when, plus (goal §1.6) high-stakes tasks whose timing was a pure
+    // guess. A tappable "When?" chip beats a silent wrong guess.
     const hasExplicitWhen =
       time.at != null ||
       time.date != null ||
       time.windowHint != null ||
       recur != null;
-    const needsFollowup = DEADLINE_TYPE_PATTERN.test(lc) && !hasExplicitWhen;
+    const needsFollowup =
+      (DEADLINE_TYPE_PATTERN.test(lc) && !hasExplicitWhen) ||
+      (importance === 'high' && timeConfidence < 0.5);
 
     tasks.push({
       title,
@@ -1523,6 +1574,11 @@ export const parseSmartCapture = (
       recur,
       raw,
       needsFollowup,
+      confidence: {
+        title: titleConfidence,
+        time: timeConfidence,
+        importance: importanceConfidence,
+      },
       ...(time.deadline ? { deadline: true } : {}),
       ...(timeOptions ? { timeOptions } : {}),
     });
