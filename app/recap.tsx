@@ -468,10 +468,14 @@ export default function RecapScreen() {
           )}
           {/* Mini week bars — letters align to actual days ending TODAY,
               not the old "MTWTFSS" hardcode that was only right on
-              Sundays. */}
+              Sundays. Bars scale RELATIVE to the week's best day —
+              the old fixed 8px-per-task overflowed the 60px row on
+              big days (an 11-task Wednesday drew straight through
+              the trend pill above). */}
           <View style={styles.barsRow}>
             {doneByDay.map((q, i) => {
-              const h = Math.max(5, q * 8);
+              const maxDone = Math.max(1, ...doneByDay);
+              const h = Math.max(5, (q / maxDone) * 42);
               return (
                 <View key={i} style={{ flex: 1, alignItems: 'center', gap: 5 }}>
                   <View
