@@ -3279,20 +3279,9 @@ export default function Home() {
                       ]}
                     />
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <View style={styles.waitingTitleRow}>
-                        {/* Kind dot — the waitlist-demo tags, in-app:
-                           dusk call, honey errand, ember work… so the
-                           held pile scans by WHAT things are. */}
-                        <View
-                          style={[
-                            styles.waitingKindDot,
-                            { backgroundColor: classifyKind(q.title).color },
-                          ]}
-                        />
-                        <Text style={styles.waitingRowTitle}>
-                          {q.title}
-                        </Text>
-                      </View>
+                      <Text style={styles.waitingRowTitle}>
+                        {q.title}
+                      </Text>
                       {q.note && (
                         <Text style={styles.waitingNote}>
                           {q.note}
@@ -3329,15 +3318,26 @@ export default function Home() {
                       hitSlop={6}
                       accessibilityRole="button"
                       accessibilityLabel={`Surface now: ${q.title}`}
-                      style={styles.nowPill}
+                      style={[
+                        styles.kindPillRow,
+                        {
+                          backgroundColor: `${classifyKind(q.title).color}1F`,
+                        },
+                      ]}
                     >
-                      <Text style={styles.nowPillText}>now</Text>
+                      <Text
+                        style={[
+                          styles.kindPillRowText,
+                          { color: classifyKind(q.title).color },
+                        ]}
+                      >
+                        {classifyKind(q.title).label}
+                      </Text>
                     </Pressable>
                   </Pressable>
                 ))}
                 <Text style={styles.waitingFooter}>
-                  tap a task to edit it — they&apos;ll surface one at a
-                  time, no pile
+                  tap a task to edit it — tap its tag to bring it up now
                 </Text>
               </>
             )}
@@ -4918,6 +4918,17 @@ const makeStyles = (accent: Accent) =>
       borderWidth: 1.5,
       backgroundColor: hexA(C.void, 0.4),
       flexShrink: 0,
+    },
+    kindPillRow: {
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    kindPillRowText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
     },
     waitingTitleRow: {
       flexDirection: 'row',
