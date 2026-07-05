@@ -246,7 +246,25 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         model: body.model,
         max_tokens: body.max_tokens,
-        ...(body.system ? { system: body.system } : {}),
+        // PROMPT CACHING: the system prompt is server-pinned and
+        // byte-identical for every call of a kind, so it's a perfect
+        // cache prefix — reads bill at 10% of input price (writes
+        // +25%, 5-min TTL refreshed on every hit, shared across all
+        // users since the prefix is org-scoped). understand's ~5.4k-
+        // token prompt is the whole cost line; this halves it at any
+        // real traffic. Prompts under the 1024-token cache minimum
+        // (clarify) are silently not cached — no error, no downside.
+        ...(body.system
+          ? {
+              system: [
+                {
+                  type: "text",
+                  text: body.system,
+                  cache_control: { type: "ephemeral" },
+                },
+              ],
+            }
+          : {}),
         messages: body.messages,
       }),
     });
@@ -277,9 +295,23 @@ Deno.serve(async (req: Request) => {
 
   const out = (await upstream.json()) as {
     content?: { type: string; text?: string }[];
-    usage?: { input_tokens?: number; output_tokens?: number };
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
     error?: { type: string; message: string };
   };
+  // Cost telemetry — cache_read > 0 means the prompt cache is doing
+  // its job (visible via `supabase functions logs anthropic-proxy`).
+  console.log(
+    `[proxy] ${body.kind} in=${out.usage?.input_tokens ?? 0} out=${
+      out.usage?.output_tokens ?? 0
+    } cache_write=${out.usage?.cache_creation_input_tokens ?? 0} cache_read=${
+      out.usage?.cache_read_input_tokens ?? 0
+    }`,
+  );
   if (out.error) {
     return json(
       { error: { code: "upstream", message: out.error.message } },
