@@ -19,6 +19,7 @@
 // extraction, but the floor is "works with zero AI."
 
 import { type Importance } from '../constants/importance';
+import { COMMON_WORDS } from '../constants/commonWords';
 import { type WindowKey, type WindowMeta } from '../constants/windows';
 import { classifyKind, type TaskKindKey } from '../constants/taskKinds';
 import { type RecurRule } from '../constants/recur';
@@ -1723,6 +1724,52 @@ export const tidyTranscript = (raw: string): TidiedTranscript => {
   }
 
   return { tidied: t, changed: changed || misheard || fuzzed, suspicious };
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// Spell-pass trigger (goal: LLM formats, the deterministic side
+// builds). Counts tokens that look MISSPELLED against a ~10k common-
+// word list. The caller (Home, Pro only) runs the tiny Haiku clarify
+// pass over the whole string when this is > 0, then parses the
+// cleaned text locally — "gym cook dinner at 6 and tomorow call
+// danny" costs one ~0.03¢ format call instead of a 1¢ understand.
+//
+// Deliberately loose in BOTH directions:
+//   - lowercase names ("danny") count as unknown ON PURPOSE — the
+//     format pass capitalizes them, which we want anyway.
+//   - a rare-but-real word costs one no-op clarify. Cheap.
+// Skips: short tokens (<4), Capitalized words (names — except the
+// first word, where the capital is just the sentence), ALL-CAPS
+// acronyms, anything with digits, and the date shorthand the parser
+// already owns.
+// ═════════════════════════════════════════════════════════════════════
+const KNOWN_SHORTHAND_RE =
+  /^(?:t[omrw]{2,8}|2m\w+|tonite|wknds?|eod|eow|eom|nxt|asap)$/i;
+
+export const countUnknownWords = (text: string): number => {
+  const tokens = text.match(/[A-Za-z''][A-Za-z'']*/g) ?? [];
+  let unknown = 0;
+  tokens.forEach((rawTok, i) => {
+    const tok = rawTok.replace(/[''‛`]/g, '');
+    if (tok.length < 4) return;
+    if (/\d/.test(rawTok)) return;
+    const isCapitalized = /^[A-Z]/.test(tok);
+    const isAllCaps = /^[A-Z]+$/.test(tok) && tok.length > 1;
+    if (isAllCaps) return; // acronym / emphasis
+    if (isCapitalized && i > 0) return; // mid-sentence name
+    const lc = tok.toLowerCase();
+    if (KNOWN_SHORTHAND_RE.test(lc)) return;
+    if (COMMON_WORDS.has(lc)) return;
+    // simple plural/verb endings — "groceries"→groceri? handle the
+    // common suffixes before declaring unknown.
+    if (lc.endsWith('s') && COMMON_WORDS.has(lc.slice(0, -1))) return;
+    if (lc.endsWith('es') && COMMON_WORDS.has(lc.slice(0, -2))) return;
+    if (lc.endsWith('ed') && COMMON_WORDS.has(lc.slice(0, -2))) return;
+    if (lc.endsWith('ing') && COMMON_WORDS.has(lc.slice(0, -3))) return;
+    if (lc.endsWith('ly') && COMMON_WORDS.has(lc.slice(0, -2))) return;
+    unknown++;
+  });
+  return unknown;
 };
 
 // ═════════════════════════════════════════════════════════════════════

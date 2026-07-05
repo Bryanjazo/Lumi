@@ -12,6 +12,7 @@ import {
   routeCapture,
   tidyTranscript,
   type CaptureContext,
+  countUnknownWords,
 } from '../lib/capture';
 import { personalizeTask } from '../lib/personalize';
 import type { Correction } from '../store/correctionsStore';
@@ -280,6 +281,27 @@ const check = (name: string, cond: boolean, detail: string) => {
       `kind: "${input}" → ${expectKind}`,
       got.kind === expectKind && got.dur === expectDur,
       `got kind=${got.kind} dur=${got.dur}, want ${expectKind}/${expectDur}`,
+    );
+  }
+
+  // countUnknownWords — the Pro spell-pass trigger. 0 = parses
+  // directly; >0 = one tiny Haiku format call, then local parse.
+  const spellCases: Array<{ name: string; input: string; min: number; max: number }> = [
+    { name: 'spell: clean text never triggers', input: 'call mom tomorrow at 5', min: 0, max: 0 },
+    { name: 'spell: lanch/mam trigger', input: 'call mam for lanch', min: 1, max: 3 },
+    { name: 'spell: parser-owned Tomorow is NOT a spell trigger', input: 'Tomorow call mom', min: 0, max: 0 },
+    { name: 'spell: first-word typo counts despite capital', input: 'Grocries then the gym', min: 1, max: 1 },
+    { name: 'spell: names + acronyms are not typos', input: 'email David about the RSVP', min: 0, max: 0 },
+    { name: 'spell: shorthand the parser owns is not a typo', input: 'gym tmrw and eod report', min: 0, max: 0 },
+    { name: 'spell: plurals/suffixes of known words pass', input: 'water the plants and fold blankets', min: 0, max: 0 },
+  ];
+  for (const c of spellCases) {
+    const n = countUnknownWords(c.input);
+    check(
+      c.name,
+      n >= c.min && n <= c.max,
+      `got ${n}, want ${c.min}..${c.max} for "${c.input}"`,
+      true,
     );
   }
 

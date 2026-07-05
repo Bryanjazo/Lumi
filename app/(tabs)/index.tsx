@@ -73,6 +73,7 @@ import {
   parseSmartCapture,
   routeCapture,
   tidyTranscript,
+  countUnknownWords,
   difficultyFromImportance,
   pickWindowForDemand,
   type CaptureContext,
@@ -2076,38 +2077,17 @@ export default function Home() {
     return `“${titlePreview}” — tucked into your ${winLabel}.`;
   };
 
-  const sendCapture = () => {
-    const text = capText.trim();
-    if (!text) return;
-    // Typed mistakes get the same net as voice (goal: any mistake →
-    // Lumi suggests): a suspicious text is held ONCE with the
-    // did-you-mean card + background clarify. Sending the same text
-    // again means "I meant it" — it goes through.
-    const typedTidy = tidyTranscript(text);
-    if (typedTidy.suspicious && dymHeldRef.current !== text) {
-      const parked = typedTidy.changed ? typedTidy.tidied : text;
-      dymHeldRef.current = parked;
-      // Deterministic fixes (date-word near-misses) apply directly —
-      // they're surgical and safe. The LLM's whole-sentence repair
-      // shows in the card instead, so the user SEES the suggestion
-      // and chooses it ("use this") rather than discovering their
-      // text quietly rewritten.
-      if (typedTidy.changed) setCapText(parked);
-      setDymHint(true);
-      setDymSuggestion(null);
-      if (isLlmAvailable() && access.hasPremium) {
-        void llmClarify(parked).then((fixed) => {
-          if (!fixed || fixed === parked) return;
-          dymHeldRef.current = fixed; // either way, next send passes
-          setDymSuggestion(fixed);
-        });
-      }
-      return;
-    }
-    setDymHint(false);
-    setDymSuggestion(null);
-    setPillInputH(0);
-
+  /**
+   * Parse + preview — shared by the direct send and the spell-format
+   * pass. `spellFixed` means the text already went through the tiny
+   * Haiku format pass (spelling/caps fixed), so a plain multi-
+   * fragment gate result parses LOCALLY — the deterministic splitter
+   * is corpus-proven on clean lists, and that swap is the token win
+   * (one ~0.03¢ format call instead of a ~1¢ understand).
+   * Returns false when nothing task-shaped came out (caller keeps
+   * the pill text).
+   */
+  const parseAndPreview = (text: string, spellFixed = false): boolean => {
     const ctx: CaptureContext = {
       sharpWindow,
       foggyWindow,
@@ -2124,7 +2104,7 @@ export default function Home() {
     };
 
     const detTasks = parseSmartCapture(text, ctx);
-    if (detTasks.length === 0) return;
+    if (detTasks.length === 0) return false;
 
     // The user just said they're overwhelmed — Luna sits with them
     // (the ONE sanctioned sad pose, emotional-model spec §1).
@@ -2133,16 +2113,13 @@ export default function Home() {
       showToast("That sounds like a lot. Let's carry it together.");
     }
 
-    setEditingIdx(null);
-    setCapText('');
-    setCapOpen(false);
-    Haptics.selectionAsync();
-
     // The routing gate (goal §2.1) — a clean single-task capture ships
     // the deterministic result instantly: zero tokens, zero spinner.
-    // Multi-task / long / emotional captures earn the LLM.
+    // Multi-task / long / emotional captures earn the LLM — EXCEPT a
+    // spell-fixed multi (see doc above).
     const gate = routeCapture(text, detTasks);
-    if (isLlmAvailable() && gate.route === 'llm') {
+    const skipLlm = spellFixed && gate.reason === 'multi';
+    if (isLlmAvailable() && gate.route === 'llm' && !skipLlm) {
       // Sorting flow — don't show the deterministic preview at all.
       // sortingRaw drives the "Lumi is sorting…" card up top; we
       // only set previewTasks once the LLM has returned (or the
@@ -2177,15 +2154,88 @@ export default function Home() {
         }
       });
     } else {
-      // Local path — gate said simple (or the LLM is unavailable).
+      // Local path — gate said simple, LLM unavailable, or the text
+      // is spell-fixed and just needs the splitter.
       lastMetricIdRef.current = recordAiMetric({
         route: 'local',
-        reason: gate.reason,
+        reason: skipLlm ? 'multi-spellfixed' : gate.reason,
         latencyMs: 0,
         edited: false,
       });
       setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
+    return true;
+  };
+
+  const sendCapture = () => {
+    const text = capText.trim();
+    if (!text) return;
+    // Typed mistakes get the same net as voice (goal: any mistake →
+    // Lumi suggests): a suspicious text is held ONCE with the
+    // did-you-mean card + background clarify. Sending the same text
+    // again means "I meant it" — it goes through.
+    const typedTidy = tidyTranscript(text);
+    if (typedTidy.suspicious && dymHeldRef.current !== text) {
+      const parked = typedTidy.changed ? typedTidy.tidied : text;
+      dymHeldRef.current = parked;
+      // Deterministic fixes (date-word near-misses) apply directly —
+      // they're surgical and safe. The LLM's whole-sentence repair
+      // shows in the card instead, so the user SEES the suggestion
+      // and chooses it ("use this") rather than discovering their
+      // text quietly rewritten.
+      if (typedTidy.changed) setCapText(parked);
+      setDymHint(true);
+      setDymSuggestion(null);
+      if (isLlmAvailable() && access.hasPremium) {
+        void llmClarify(parked).then((fixed) => {
+          if (!fixed || fixed === parked) return;
+          dymHeldRef.current = fixed; // either way, next send passes
+          setDymSuggestion(fixed);
+        });
+      }
+      return;
+    }
+    setDymHint(false);
+    setDymSuggestion(null);
+    setPillInputH(0);
+
+    // ── Spell-format pass (Pro, goal: "LLM formats it, our smart
+    // parser picks it up"). Text isn't suspicious, but it contains
+    // words the ~10k common-word list doesn't know ("lanch",
+    // "tomorow", lowercase "danny") → one tiny Haiku call fixes
+    // spelling + capitalization, then the DETERMINISTIC engine
+    // builds the tasks from the clean string. Free tier skips this
+    // (their captures parse exactly as before).
+    if (
+      isLlmAvailable() &&
+      access.hasPremium &&
+      text.length <= 300 &&
+      countUnknownWords(text) > 0
+    ) {
+      setEditingIdx(null);
+      setCapText('');
+      setCapOpen(false);
+      Haptics.selectionAsync();
+      setSortingRaw(text);
+      setAiPending(true);
+      void llmClarify(text).then((fixed) => {
+        setSortingRaw(null);
+        setAiPending(false);
+        const finalText = fixed && fixed.trim() ? fixed.trim() : text;
+        if (!parseAndPreview(finalText, true)) {
+          // Nothing task-shaped — put their words back, lose nothing.
+          setCapText(text);
+        }
+      });
+      return;
+    }
+
+    if (!parseAndPreview(text)) return; // vent-only etc — keep the pill text
+
+    setEditingIdx(null);
+    setCapText('');
+    setCapOpen(false);
+    Haptics.selectionAsync();
   };
 
   // ── Preview confirmation handlers ────────────────────────────────
