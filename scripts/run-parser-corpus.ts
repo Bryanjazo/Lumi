@@ -340,6 +340,24 @@ const check = (name: string, cond: boolean, detail: string) => {
       input: 'buy milk and',
       suspicious: true,
     },
+    {
+      name: 'tidy: tomato mishear fixed + flagged',
+      input: 'call emori tomato',
+      tidied: 'call emori tomorrow',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: real groceries keep their tomato',
+      input: 'buy tomato',
+      tidied: 'buy tomato',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: split "to night" fixed + flagged',
+      input: 'text sam to night',
+      tidied: 'text sam tonight',
+      suspicious: true,
+    },
   ];
   for (const c of tidyCases) {
     const r = tidyTranscript(c.input);
