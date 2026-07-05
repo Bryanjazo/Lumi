@@ -1057,6 +1057,11 @@ export default function Home() {
   // suspicious voice transcript until the user edits or sends
   // (a vanishing toast was too easy to miss).
   const [dymHint, setDymHint] = useState(false);
+  // Measured content height of the pill input — iOS multiline
+  // TextInputs don't auto-grow from min/maxHeight alone; we track
+  // contentSize and set an explicit height (clamped to ~5 lines,
+  // scrolls internally beyond).
+  const [pillInputH, setPillInputH] = useState(0);
   // The waiting card ("N more waiting — Lumi's holding them") —
   // collapsed by default, same calm-first default as Done today.
   const [waitingOpen, setWaitingOpen] = useState(false);
@@ -3467,8 +3472,17 @@ export default function Home() {
               placeholderTextColor={C.mute}
               style={[
                 styles.capturePillInput,
+                {
+                  height: Math.min(
+                    130,
+                    Math.max(36, pillInputH + 16),
+                  ),
+                },
                 voice.state === 'recording' && { color: C.dusk },
               ]}
+              onContentSizeChange={(e) =>
+                setPillInputH(e.nativeEvent.contentSize.height)
+              }
               multiline
               scrollEnabled
               returnKeyType="send"
@@ -4391,14 +4405,10 @@ const makeStyles = (accent: Accent) =>
       color: C.bone,
       letterSpacing: -0.1,
       padding: 0,
-      // Reverted to the previous simple pattern per user — min +
-      // maxHeight caps growth to ~5 lines. iOS won't do true
-      // internal scrolling with maxHeight alone (that needed the
-      // tracked-height pattern we removed), but the visual cap
-      // + long-dump-expand path via the fullscreen brain-dump
-      // modal is what the user asked for.
-      minHeight: 36,
-      maxHeight: 130,
+      // Height is set inline from measured contentSize (see the
+      // render) — grows with the text to ~5 lines, then scrolls
+      // internally. The fullscreen brain-dump modal stays the path
+      // for truly long spills.
       paddingTop: 8,
       paddingBottom: 8,
       lineHeight: 20,
