@@ -1446,14 +1446,21 @@ export default function AccountScreen() {
   const rhythm = rhythmFromSharpWindow(sharpWindow);
 
   // Avatar option list for the inline picker — only unlocked.
+  // Paywall promise: free = Starter skins, Pro = All. Starter is the
+  // default cat + Cream; everything else shows with a ✦ lock that
+  // opens the paywall. (Replaces the old XP-unlock gating — skins are
+  // now a Pro perk, and Pro gets ALL of them instantly.)
   const skinChoices = useMemo(() => {
-    const xp = useUserStore.getState().xp;
-    const cream = { id: 'default', label: 'Cream' };
-    const unlocked = skins
-      .filter((s) => xp >= s.xpToUnlock)
-      .map((s) => ({ id: s.id, label: s.name }));
-    return [cream, ...unlocked];
-  }, [avatar]); // re-derive when avatar changes (proxy for store activity)
+    const starter = new Set(['default', 'cream']);
+    const all = [
+      { id: 'default', label: 'Cream' },
+      ...skins.filter((s) => s.id !== 'cream').map((s) => ({ id: s.id, label: s.name })),
+    ];
+    return all.map((s) => ({
+      ...s,
+      locked: !access.hasPremium && !starter.has(s.id),
+    }));
+  }, [access.hasPremium]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -2837,6 +2844,13 @@ export default function AccountScreen() {
                     <Pressable
                       key={s.id}
                       onPress={() => {
+                        if (s.locked) {
+                          Haptics.impactAsync(
+                            Haptics.ImpactFeedbackStyle.Light,
+                          );
+                          router.push('/paywall');
+                          return;
+                        }
                         Haptics.selectionAsync();
                         useUserStore.getState().setAvatar(s.id);
                       }}
@@ -2850,9 +2864,19 @@ export default function AccountScreen() {
                         },
                       ]}
                     >
-                      <View style={styles.skinSprite}>
+                      <View
+                        style={[
+                          styles.skinSprite,
+                          s.locked && { opacity: 0.45 },
+                        ]}
+                      >
                         <SkinLuna size={42} skinId={s.id} />
                       </View>
+                      {s.locked && (
+                        <View style={styles.skinLockBadge}>
+                          <Text style={styles.skinLockText}>✦ Pro</Text>
+                        </View>
+                      )}
                       <Text
                         style={[
                           styles.skinLabel,
@@ -4179,7 +4203,22 @@ const makeStyles = (accent: Accent) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    skinLabel: {
+    skinLockBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(224,122,79,0.16)',
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  skinLockText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 8.5,
+    color: '#E07A4F',
+    letterSpacing: 0.5,
+  },
+  skinLabel: {
       fontSize: 10.5,
       marginTop: 2,
     },

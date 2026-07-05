@@ -30,6 +30,7 @@ import { useUserStore } from '../store/userStore';
 import { useLearningDigest, formatStaleDays } from '../lib/learning';
 import { useCompanionMode, phrasingFor } from '../lib/companion-mode';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
+import { useAccessStatus } from '../lib/subscription';
 import { WINDOWS } from '../constants/windows';
 import { SoftGlow } from '../components/SoftGlow';
 import { lunaSource, useLunaSkin } from '../lib/luna-source';
@@ -262,6 +263,13 @@ const last7Days = (
 // ═════════════════════════════════════════════════════════════════════
 export default function RecapScreen() {
   const router = useRouter();
+  // Snippet vs Full story (paywall promise): free gets the cover +
+  // follow-through + next step; the deeper reads (energy story,
+  // patterns, the win, avoidance clusters) and the shareable Lumi
+  // Story are Pro. The deterministic math runs for everyone — only
+  // the TELLING is gated.
+  const access = useAccessStatus(null);
+  const pro = access.hasPremium;
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
   const streak = useUserStore((s) => s.streak);
@@ -494,6 +502,28 @@ export default function RecapScreen() {
           </View>
         </Section>
 
+        {/* Free tier: one locked teaser instead of the deep sections. */}
+        {!pro && (
+          <Section delay={0.15} style={{ paddingHorizontal: 28, paddingTop: 56 }}>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                router.push('/paywall' as never);
+              }}
+              style={styles.proTeaser}
+            >
+              <Text style={styles.proTeaserEyebrow}>✦ The full story</Text>
+              <Text style={styles.proTeaserTitle}>
+                Your energy curve, the pattern Lumi spotted, your win of
+                the week — and a story worth sharing.
+              </Text>
+              <Text style={styles.proTeaserCta}>Unlock with Pro →</Text>
+            </Pressable>
+          </Section>
+        )}
+
+        {pro && (
+        <>
         {/* ── 3 · ENERGY STORY ── */}
         <Section delay={0.15} style={{ paddingHorizontal: 28, paddingTop: 56 }}>
           <Text style={styles.sectionLabel}>Your energy</Text>
@@ -608,6 +638,9 @@ export default function RecapScreen() {
           </Section>
         )}
 
+        </>
+        )}
+
         {/* ── 7 · NEXT WEEK ── */}
         <Section delay={0.35} style={{ paddingHorizontal: 28, paddingTop: 56 }}>
           <Text style={styles.sectionLabel}>Into next week</Text>
@@ -617,8 +650,10 @@ export default function RecapScreen() {
           <View style={styles.nextCard}>{next}</View>
         </Section>
 
-        {/* ── 8 · SHARE / CLOSE ── */}
+        {/* ── 8 · SHARE / CLOSE (story share = Pro) ── */}
         <Section delay={0.4} style={{ paddingHorizontal: 28, paddingTop: 56 }}>
+          {pro && (
+          <>
           {/* The capturable Lumi Story card — collapsable={false} so
               captureRef always has a real native view to snapshot. */}
           <View
@@ -674,6 +709,8 @@ export default function RecapScreen() {
           <Pressable onPress={shareStory} style={styles.sharePrimary}>
             <Text style={styles.sharePrimaryText}>Share my story</Text>
           </Pressable>
+          </>
+          )}
           <Pressable onPress={close} style={styles.shareSecondary}>
             <Text style={styles.shareSecondaryText}>Done</Text>
           </Pressable>
@@ -1036,6 +1073,33 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     right: -70,
     width: 240,
     height: 240,
+  },
+  proTeaser: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: hexA(C.ember, 0.3),
+    backgroundColor: hexA(C.ember, 0.05),
+    padding: 20,
+  },
+  proTeaserEyebrow: {
+    fontFamily: fonts.interSemi,
+    fontSize: 10,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: C.ember,
+    marginBottom: 10,
+  },
+  proTeaserTitle: {
+    fontFamily: fonts.fraunces,
+    fontSize: 17,
+    lineHeight: 24,
+    color: C.bone,
+  },
+  proTeaserCta: {
+    fontFamily: fonts.interSemi,
+    fontSize: 13.5,
+    color: C.ember,
+    marginTop: 14,
   },
   shareHead: {
     flexDirection: 'row',
