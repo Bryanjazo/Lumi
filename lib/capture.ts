@@ -1551,6 +1551,20 @@ export interface TidiedTranscript {
 }
 
 const GIBBERISH_TOKEN_RE = /^[^aeiouy\s]{4,}$/i; // no-vowel consonant runs
+
+// Known ASR mishears of DATE words in trailing position ("call emori
+// tomato" = "…tomorrow"). Trailing-only + guarded so real groceries
+// survive ("buy tomato" stays a tomato). A hit applies the fix AND
+// raises the did-you-mean card — the user confirms the swap.
+const GROCERY_VERB_RE = /\b(buy|get|grab|order|shop|pick up|add)\b/i;
+const TRAILING_MISHEARS: Array<[RegExp, string]> = [
+  [/\btomato\s*$/i, 'tomorrow'],
+  [/\bto morrow\s*$/i, 'tomorrow'],
+  [/\btwo morrow\s*$/i, 'tomorrow'],
+  [/\bto day\s*$/i, 'today'],
+  [/\bto night\s*$/i, 'tonight'],
+  [/\bsum day\s*$/i, 'someday'],
+];
 const DANGLING_END_RE =
   /\b(?:the|a|an|to|and|or|by|at|for|with|my|your|of)$/i;
 
@@ -1583,9 +1597,23 @@ export const tidyTranscript = (raw: string): TidiedTranscript => {
     words.length === 1 &&
     (t.length <= 2 ||
       /^(?:um+|uh+|erm|hmm?|like|so|yeah|ok(?:ay)?|oh)$/i.test(t));
-  const suspicious = gibberish || cutShort || tooThin;
+  let suspicious = gibberish || cutShort || tooThin;
 
-  return { tidied: t, changed, suspicious };
+  // Date-word mishears: fix + flag for confirmation. Skipped inside
+  // grocery-verb fragments where "tomato" is probably a tomato.
+  let misheard = false;
+  if (!GROCERY_VERB_RE.test(t)) {
+    for (const [re, fix] of TRAILING_MISHEARS) {
+      if (re.test(t)) {
+        t = t.replace(re, fix);
+        misheard = true;
+        break;
+      }
+    }
+  }
+  if (misheard) suspicious = true;
+
+  return { tidied: t, changed: changed || misheard, suspicious };
 };
 
 // ═════════════════════════════════════════════════════════════════════
