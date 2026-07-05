@@ -345,7 +345,35 @@ ADHD-specific edge cases (READ CAREFULLY — these come up constantly):
 - REPETITION: "I really really really need to do X" → importance: high (the
   repetition is signal; they've been carrying this).
 
-Return strictly: { "tasks": [ { … } ] }. No prose.`,
+OUTPUT FORMAT (COST-CRITICAL — follow EXACTLY):
+- Return RAW MINIFIED JSON on ONE line: {"tasks":[...]} — no markdown fences, no prose before or after, no spaces after ":" or ",", no newlines, no indentation.
+- OMIT every field that sits at its default instead of writing it:
+    importance "medium" → omit it. energyDemand "medium" → omit it.
+    hasDeadline false → omit it. No note → omit it. Empty when → omit it.
+- Only these keys may appear: title, importance, energyDemand, when (date, time, part, recur, durationMin), hasDeadline, note.
+
+EXAMPLES (input → the EXACT output shape expected):
+
+Input (Today: 2026-03-10, Now 14:00): "ok so call mom no wait call dad tomorrow and I really really need to finally do my taxes ugh also groceries"
+Output: {"tasks":[{"title":"Call dad","when":{"date":"2026-03-11"}},{"title":"Do taxes","importance":"high","energyDemand":"high"},{"title":"Buy groceries"}]}
+
+Input: "dinner with mom at 7, don't forget to bring up the dentist"
+Output: {"tasks":[{"title":"Dinner with mom","when":{"time":"19:00"},"note":"Bring up the dentist"}]}
+
+Input: "email sarah about the q3 report by 5pm"
+Output: {"tasks":[{"title":"Email Sarah","when":{"time":"17:00"},"note":"About the Q3 report"}]}
+
+Input: "finish the deck, reply to sam, book dentist"
+Output: {"tasks":[{"title":"Finish the deck"},{"title":"Reply to Sam"},{"title":"Book dentist","hasDeadline":true}]}
+
+Input: "man today sucks, gotta finish that report by 5 or the boss will kill me"
+Output: {"tasks":[{"title":"Finish report","importance":"high","when":{"time":"17:00"}}]}
+
+Input: "I want to start meditating every morning"
+Output: {"tasks":[{"title":"Meditate","when":{"part":"morning","recur":{"every":"day"}}}]}
+
+Input: "when do I have time tomorrow?"
+Output: {"tasks":[]}`,
   // llmUntangle — the conversation turn
   untangle: `You are Lumi, a warm, calm planning partner for someone with ADHD. They're talking to you about their task pile. You don't lecture. You sort. You remember the thread and adjust.
 

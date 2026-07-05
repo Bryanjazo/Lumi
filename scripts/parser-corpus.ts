@@ -176,6 +176,12 @@ export const CORPUS: CorpusCase[] = [
     expect: [{ title: 'Dentist', dateOffset: 3 }],
   },
   {
+    name: 'nxt week shorthand',
+    input: 'dentist nxt week',
+    expect: [{ title: 'Dentist', dateOffset: 3 }],
+    guard: true,
+  },
+  {
     name: 'this week is a soft deadline',
     input: 'finish the report this week',
     expect: [{ title: 'Finish the report', dateOffset: 2, deadline: true }],

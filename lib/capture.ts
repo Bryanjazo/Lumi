@@ -671,6 +671,10 @@ const TIME_SYNONYMS: Array<[RegExp, string]> = [
     /\bt[mrw]{2,6}\b|\btomm?orr?ow?\b|\btommorrow\b|\b2m(?:o?rr?ow?|oro|rw)\b/g,
     'tomorrow',
   ],
+  [
+    /\bnxt\s+(week|month|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/g,
+    'next $1',
+  ],
   [/\btonite\b/g, 'tonight'],
   [/\bwknds?\b/g, 'weekend'],
   [/\beod\b/g, 'end of day'],
@@ -1292,7 +1296,7 @@ const VERB_RE =
 // Signals that a verbless clause is still its OWN thought — a date
 // fact ("mom's birthday is next weekend") or a recurrence.
 const CLAUSE_DATEISH =
-  /\b(?:today|tomorrow|tmrw|tonight|tonite|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|wknd|next week|this week|next month|noon|midnight|eod|eow|eom|every|daily|weekly|monthly|at \d|due\b|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i;
+  /\b(?:today|tomorrow|tmrw|tonight|tonite|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|wknd|next week|nxt week|this week|next month|noon|midnight|eod|eow|eom|every|daily|weekly|monthly|at \d|due\b|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i;
 
 // A clause introduced by a soft separator (comma / "and") stands
 // alone if it's vent (so it can be dropped), a status statement, has

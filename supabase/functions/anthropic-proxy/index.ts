@@ -43,6 +43,13 @@ const ALLOWED_KINDS: AiKind[] = [
 ];
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
+// Per-kind model pick — server-side so a modified client can't
+// route a heavy kind to itself. clarify is a ~40-token spelling
+// repair: Haiku is ~4× cheaper and, more importantly, noticeably
+// faster (the "did you mean" suggestion appears sooner).
+const KIND_MODEL: Partial<Record<AiKind, string>> = {
+  clarify: "claude-haiku-4-5-20251001",
+};
 // Model allowlist (security audit §3) — the client may only pick from
 // models we've priced for. Anything else silently falls back to the
 // default instead of being passed through to Anthropic.
@@ -119,9 +126,10 @@ const validateBody = (raw: unknown): CallBody | { error: string } => {
     messages: b.messages as CallBody["messages"],
     max_tokens: max,
     model:
-      typeof b.model === "string" && ALLOWED_MODELS.has(b.model)
+      KIND_MODEL[kind] ??
+      (typeof b.model === "string" && ALLOWED_MODELS.has(b.model)
         ? b.model
-        : DEFAULT_MODEL,
+        : DEFAULT_MODEL),
   };
 };
 
