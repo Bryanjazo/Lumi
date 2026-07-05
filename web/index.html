@@ -212,7 +212,10 @@ footer a{text-decoration:underline;color:var(--mute)}
 (function () {
   'use strict';
 
-  /* ── config ─────────────────────────────────────────────────── */
+  /* ── config ──────────────────────────────────────────────────
+     ANON is Supabase's PUBLIC (publishable) key — safe to embed by
+     design. Row Level Security limits it to inserting waitlist rows;
+     it can never read data back. Real secrets live server-side. */
   var SUPA = 'https://xnvutyllebwijisltott.supabase.co';
   var ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhudnV0eWxsZWJ3aWppc2x0b3R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMDMwNzksImV4cCI6MjA5Njg3OTA3OX0.mqM_4LTS0BHgzubABq5-v1Os2bb8kRWLqeeDNZJhb58';
   var LS_KEY = 'lumi.waitlist.v1';
