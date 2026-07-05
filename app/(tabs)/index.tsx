@@ -1943,6 +1943,7 @@ export default function Home() {
     const newAt = atFromLLM ?? t.at;
     let newDate = dateFromLLM ?? t.date;
     let newWindow = t.window;
+    let rolledByPlacement = false;
     if (partFromLLM) {
       newWindow = partFromLLM;
     } else if (
@@ -1977,6 +1978,7 @@ export default function Home() {
         const rolled = new Date(now);
         rolled.setDate(rolled.getDate() + 1);
         newDate = `${rolled.getFullYear()}-${String(rolled.getMonth() + 1).padStart(2, '0')}-${String(rolled.getDate()).padStart(2, '0')}`;
+        rolledByPlacement = true;
       }
     }
 
@@ -2012,6 +2014,7 @@ export default function Home() {
       // the regex parser can't). User can still override via the
       // length chips in the preview.
       durationMinutes: u.when?.durationMin ?? t.durationMinutes,
+      ...(rolledByPlacement ? { rolledToTomorrow: true } : {}),
       // Persist the LLM's freeform note ("bring the charger") so
       // the detail surfaces under the title on Home / Time / lists.
       ...(u.note ? { note: u.note } : {}),
@@ -3128,7 +3131,12 @@ export default function Home() {
               input={{
                 id: 'preview_0',
                 title: previewTasks[0].title,
-                subtitle: undefined,
+                // Never move a task to tomorrow silently (emotional-
+                // model rule): when placement rolled it, the card
+                // says so and points at the fix.
+                subtitle: previewTasks[0].rolledToTomorrow
+                  ? 'moved to tomorrow — your best hours for it are done today. Tweak it to keep it today.'
+                  : undefined,
                 note: previewTasks[0].note ?? undefined,
                 defaultWindow:
                   previewTasks[0].window === 'someday'

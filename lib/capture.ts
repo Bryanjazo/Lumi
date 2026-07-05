@@ -89,6 +89,14 @@ export interface SmartTask {
    */
   kind?: TaskKindKey;
   /**
+   * True when smart placement moved this task to TOMORROW (peak
+   * protection / closed windows) even though the user gave no date.
+   * Surfaces on the preview card so the move is never silent — the
+   * user can Tweak it back to today (emotional-model: no silent
+   * guessing).
+   */
+  rolledToTomorrow?: boolean;
+  /**
    * Short freeform context the LLM extracted from the raw input
    * ("bring the charger", "the blue folder"). Persisted to Quest
    * and rendered as a subtitle so the detail isn't dropped.
@@ -1480,6 +1488,7 @@ export const parseSmartCapture = (
     let date: string | null = null;
     let window: WindowKey;
     let timeOptions: number[] | undefined;
+    let rolledFlag = false;
 
     if (time.at != null) {
       // Layer 1 — explicit time given.
@@ -1563,6 +1572,7 @@ export const parseSmartCapture = (
         const rolled = new Date(ctx.now);
         rolled.setDate(rolled.getDate() + 1);
         date = ymd(rolled);
+        rolledFlag = true;
       } else if (stillBeforeBed) {
         // Late-night "tonight"-style hint — anchor near now so the
         // task doesn't render at the window's start hours in the past.
@@ -1592,6 +1602,7 @@ export const parseSmartCapture = (
         const rolled = new Date(ctx.now);
         rolled.setDate(rolled.getDate() + 1);
         date = ymd(rolled);
+        rolledFlag = true;
       } else {
         // Late-night "still today" pick — we're past the window's
         // nominal end (e.g. 10:30 PM, evening ends at 10 PM) but
@@ -1659,6 +1670,7 @@ export const parseSmartCapture = (
       raw,
       needsFollowup,
       kind: kind.key,
+      ...(rolledFlag ? { rolledToTomorrow: true } : {}),
       ...(kind.defaultMinutes != null
         ? { durationMinutes: kind.defaultMinutes }
         : {}),
