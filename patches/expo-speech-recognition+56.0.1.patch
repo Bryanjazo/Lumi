@@ -1,0 +1,16 @@
+diff --git a/node_modules/expo-speech-recognition/ios/ExpoSpeechRecognizer.swift b/node_modules/expo-speech-recognition/ios/ExpoSpeechRecognizer.swift
+index c474f80..422f7a6 100644
+--- a/node_modules/expo-speech-recognition/ios/ExpoSpeechRecognizer.swift
++++ b/node_modules/expo-speech-recognition/ios/ExpoSpeechRecognizer.swift
+@@ -620,6 +620,11 @@ actor ExpoSpeechRecognizer: ObservableObject {
+       )
+     }
+ 
++    // Lumi patch: iOS suppresses ALL haptics while an audio session is
++    // recording unless this is explicitly allowed — it silenced the
++    // "Hey Lumi" wake double-tap. Safe no-throw opt-in (iOS 13+).
++    try? audioSession.setAllowHapticsAndSystemSoundsDuringRecording(true)
++
+     try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+   }
+ 

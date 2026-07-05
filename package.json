@@ -50,6 +50,7 @@
     "@types/aes-js": "^3.1.4",
     "@types/react": "~19.2.2",
     "esbuild": "^0.28.1",
+    "patch-package": "^8.0.1",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -58,7 +59,8 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "test:parser": "esbuild scripts/run-parser-corpus.ts --bundle --platform=node --outfile=/tmp/lumi-parser-corpus.js --log-level=error && node /tmp/lumi-parser-corpus.js",
-    "test:wake": "esbuild scripts/test-heylumi-wake.ts --bundle --platform=node --outfile=/tmp/lumi-wake-guards.js --log-level=error && node /tmp/lumi-wake-guards.js"
+    "test:wake": "esbuild scripts/test-heylumi-wake.ts --bundle --platform=node --outfile=/tmp/lumi-wake-guards.js --log-level=error && node /tmp/lumi-wake-guards.js",
+    "postinstall": "patch-package"
   },
   "private": true,
   "overrides": {

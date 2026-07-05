@@ -21,6 +21,7 @@
  */
 import { Platform, Linking } from 'react-native';
 import { useUserStore, type SubscriptionTier } from '../store/userStore';
+import { supabase } from './supabase';
 
 // ─────────────────────────────────────────────────────────────────────
 // Minimal local types for the SDK surface we use.
@@ -330,7 +331,33 @@ export const syncFromCustomerInfo = (
     // free downgrade on EXPIRATION events.
     const s = useUserStore.getState();
     if (s.subscriptionStatus === 'active') {
-      set({ status: 'free', tier: null, currentPeriodEnd: null });
+      // RC reports no entitlement, but RC's cold-start cache can be
+      // stale while the SERVER row (webhook-authoritative) still
+      // says active — instant downgrade here made Pro features blink
+      // off at launch for a paying user, then flip back when the
+      // server sync ran. Downgrade only when the server AGREES;
+      // otherwise keep access and let the EXPIRATION webhook +
+      // server sync settle it.
+      void (async () => {
+        try {
+          const uid = (await supabase.auth.getUser()).data.user?.id;
+          if (!uid) return;
+          const { data } = await supabase
+            .from('users')
+            .select('subscription_status')
+            .eq('id', uid)
+            .maybeSingle();
+          if (
+            data &&
+            data.subscription_status !== 'active' &&
+            useUserStore.getState().subscriptionStatus === 'active'
+          ) {
+            set({ status: 'free', tier: null, currentPeriodEnd: null });
+          }
+        } catch {
+          // Offline — keep current access; next server sync settles it.
+        }
+      })();
     }
     return null;
   }
