@@ -23,6 +23,11 @@ const ROTATIONS = {
     "Tomorrow's first quest — pick it now while it's easy.",
     "Lights low. You don't owe anyone a full day.",
   ],
+  recap: [
+    "Your week, told warmly — the recap's ready when you are.",
+    "Sunday read: what worked, what wandered, and one win worth keeping.",
+    "Lumi wrote your week up. No numbers-shaming, promise.",
+  ],
   // Recovery lines OFFER something (emotional-model spec §6) — never
   // report a deficit or imply Luna was hurt by the absence ("Luna
   // missed you" reads as gentle guilt; gone). Each line is an action
@@ -86,67 +91,189 @@ const schedule = async (
   });
 };
 
-export const scheduleDailyReminders = async () => {
-  if (Platform.OS === 'web') return;
-  await Notifications.cancelAllScheduledNotificationsAsync();
-  // Anchor the daily nudges to the USER's day, not a hardcoded
-  // 8:30 / 9:00 / 12:00 / 21:00 template (which assumed a
-  // working-hours 9-5er and woke night-shifters in the middle of
-  // their sleep). Each nudge lands at a sensible offset from the
-  // anchor it relates to.
-  //   morning  → 30 min after wake
-  //   meds     → at breakfast (or wake + 1h if breakfast unset)
-  //   midday   → at lunch
-  //   windDown → 90 min before sleep
+export interface NotifSyncResult {
+  /** False only when the user just tried to enable and iOS said no. */
+  granted: boolean;
+}
+
+// Quiet-hours guard: with prefs.quiet on, nothing lands between the
+// sleep anchor and wake. Returns true when the minute is speakable.
+const withinWakingHours = (
+  min: number,
+  wake: number,
+  sleep: number,
+  quiet: boolean,
+): boolean => {
+  if (!quiet) return true;
+  return min >= wake && min < sleep;
+};
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  // expo-notifications calendar weekday: 1 = Sunday … 7 = Saturday.
+  Sun: 1, Mon: 2, Tue: 3, Wed: 4, Thu: 5, Fri: 6, Sat: 7,
+};
+
+/**
+ * THE notification sync — reads the stores and makes the scheduled
+ * set match the prefs exactly. Called from the profile toggles
+ * (interactive: may prompt for permission) and from app start /
+ * anchor changes (passive: never prompts).
+ *
+ *   nudges    → 4 anchored daily lines + the 48h come-back nudge
+ *   recap     → Sunday at the dinner anchor
+ *   recurring → one reminder per recurring quest (daily/weekly), cap 20
+ *   quiet     → nothing scheduled inside the sleep window
+ */
+export const syncNotifications = async (opts?: {
+  interactive?: boolean;
+}): Promise<NotifSyncResult> => {
+  if (Platform.OS === 'web') return { granted: true };
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { useUserStore } = require('../store/userStore') as typeof import('../store/userStore');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { useQuestStore } = require('../store/questStore') as typeof import('../store/questStore');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getEffectiveWindows } = require('../constants/windows') as typeof import('../constants/windows');
+
   const u = useUserStore.getState();
+  const prefs = u.notifPrefs;
+  const anyOn = prefs.nudges || prefs.recap || prefs.recurring;
+
+  if (!anyOn) {
+    await Notifications.cancelAllScheduledNotificationsAsync();
+    return { granted: true };
+  }
+
+  // Permission: prompt only on an interactive enable — a passive
+  // sync (app start) must never surprise the user with a dialog.
+  const existing = await Notifications.getPermissionsAsync();
+  let granted = existing.status === 'granted';
+  if (!granted && opts?.interactive) {
+    const res = await Notifications.requestPermissionsAsync();
+    granted = res.status === 'granted';
+  }
+  if (!granted) {
+    await Notifications.cancelAllScheduledNotificationsAsync();
+    return { granted: false };
+  }
+
+  await Notifications.cancelAllScheduledNotificationsAsync();
   const a = u.anchors;
-  const morningMin = Math.max(0, a.wake + 30);
-  const medsMin = a.breakfast > 0 ? a.breakfast : a.wake + 60;
-  const middayMin = a.lunch;
-  const windDownMin = Math.max(0, a.sleep - 90);
-  await schedule(
-    'morning',
-    Math.floor(morningMin / 60),
-    morningMin % 60,
-    'lumi-morning',
-  );
-  await schedule(
-    'meds',
-    Math.floor(medsMin / 60),
-    medsMin % 60,
-    'lumi-meds',
-  );
-  await schedule(
-    'midday',
-    Math.floor(middayMin / 60),
-    middayMin % 60,
-    'lumi-midday',
-  );
-  await schedule(
-    'windDown',
-    Math.floor(windDownMin / 60),
-    windDownMin % 60,
-    'lumi-winddown',
-  );
+  const speakable = (min: number) =>
+    withinWakingHours(min, a.wake, a.sleep, prefs.quiet);
+
+  // ── Daily nudges, anchored to the user's real day ──
+  if (prefs.nudges) {
+    const slots: Array<[Bucket, number, string]> = [
+      ['morning', Math.max(0, a.wake + 30), 'lumi-morning'],
+      ['meds', a.breakfast > 0 ? a.breakfast : a.wake + 60, 'lumi-meds'],
+      ['midday', a.lunch, 'lumi-midday'],
+      ['windDown', Math.max(0, a.sleep - 90), 'lumi-winddown'],
+    ];
+    for (const [bucket, min, id] of slots) {
+      if (!speakable(min)) continue;
+      await schedule(bucket, Math.floor(min / 60), min % 60, id);
+    }
+    // Come-back nudge: 48h out, re-pushed every sync (each app open
+    // runs a passive sync, so it only ever fires after real absence).
+    const recoverySeconds = 60 * 60 * 48;
+    const body = await nextLine('recovery');
+    await Notifications.scheduleNotificationAsync({
+      identifier: 'lumi-recovery',
+      content: { title: 'Lumi', body },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: recoverySeconds,
+        repeats: false,
+      } as Notifications.TimeIntervalTriggerInput,
+    });
+  }
+
+  // ── Sunday recap, at the dinner anchor ──
+  if (prefs.recap) {
+    const min = a.dinner;
+    if (speakable(min)) {
+      const body = await nextLine('recap');
+      await Notifications.scheduleNotificationAsync({
+        identifier: 'lumi-recap',
+        content: { title: 'Lumi', body },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+          weekday: 1, // Sunday
+          hour: Math.floor(min / 60),
+          minute: min % 60,
+          repeats: true,
+        } as Notifications.CalendarTriggerInput,
+      });
+    }
+  }
+
+  // ── Recurring-quest reminders ──
+  if (prefs.recurring) {
+    const effective = getEffectiveWindows();
+    const quests = useQuestStore
+      .getState()
+      .quests.filter((q) => q.recur && !q.completed)
+      .slice(0, 20); // sane ceiling on scheduled ids
+    for (const q of quests) {
+      const r = q.recur!;
+      const winStart = effective[q.window]?.start;
+      const min =
+        r.at ?? (winStart != null ? winStart * 60 + 15 : 9 * 60);
+      if (!speakable(min)) continue;
+      const content = { title: 'Lumi', body: q.title };
+      const base = {
+        hour: Math.floor(min / 60),
+        minute: min % 60,
+        repeats: true,
+      };
+      if (r.every === 'day') {
+        await Notifications.scheduleNotificationAsync({
+          identifier: `lumi-recur-${q.id}`,
+          content,
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+            ...base,
+          } as Notifications.CalendarTriggerInput,
+        });
+      } else if (
+        (r.every === 'week' || r.every === '2week') &&
+        r.day &&
+        WEEKDAY_INDEX[r.day]
+      ) {
+        // 2week approximated weekly — expo calendar triggers can't
+        // express biweekly; a gentle extra reminder beats a missing
+        // one for a habit surface.
+        await Notifications.scheduleNotificationAsync({
+          identifier: `lumi-recur-${q.id}`,
+          content,
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+            weekday: WEEKDAY_INDEX[r.day],
+            ...base,
+          } as Notifications.CalendarTriggerInput,
+        });
+      } else if (r.every === 'weekday') {
+        for (let wd = 2; wd <= 6; wd++) {
+          await Notifications.scheduleNotificationAsync({
+            identifier: `lumi-recur-${q.id}-${wd}`,
+            content,
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+              weekday: wd,
+              ...base,
+            } as Notifications.CalendarTriggerInput,
+          });
+        }
+      }
+      // monthly cadence: skipped v1 (rare + iOS day-of-month quirks)
+    }
+  }
+
+  return { granted: true };
 };
 
 export const cancelAllReminders = async () => {
   if (Platform.OS === 'web') return;
   await Notifications.cancelAllScheduledNotificationsAsync();
-};
-
-export const scheduleRecoveryNudge = async () => {
-  if (Platform.OS === 'web') return;
-  const body = await nextLine('recovery');
-  await Notifications.scheduleNotificationAsync({
-    identifier: 'lumi-recovery',
-    content: { title: 'Lumi', body },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-      seconds: 60 * 60 * 24,
-      repeats: false,
-    } as Notifications.TimeIntervalTriggerInput,
-  });
 };

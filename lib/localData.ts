@@ -16,9 +16,13 @@ import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { useCorrectionsStore } from '../store/correctionsStore';
 import { useAiMetricsStore } from '../store/aiMetricsStore';
+import { cancelAllReminders } from './notifications';
 import { useUserStore, DEFAULT_ANCHORS } from '../store/userStore';
 
 export const resetLocalUserData = (): void => {
+  // Scheduled notifications belong to the signed-out user's day —
+  // a new account shouldn't inherit their reminder times.
+  void cancelAllReminders().catch(() => {});
   useQuestStore.getState().reset();
   useCheckinStore.getState().reset();
   useSuggestionsStore.getState().reset();
@@ -41,6 +45,7 @@ export const resetLocalUserData = (): void => {
     lastOpenedDate: null,
     rescueDismissedDate: null,
     backlogNudgeDismissedDate: null,
+    heyLumiEnabled: false,
     shieldAvailable: true,
     shieldUsedThisWeek: false,
     shards: 0,

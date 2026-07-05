@@ -14,6 +14,7 @@
 // When in doubt, default to 'idle' + 'default' (original tan cat).
 
 import { useUserStore } from '../store/userStore';
+import { isPaidThrough } from './subscription';
 
 export type LunaMood = 'idle' | 'happy' | 'sad' | 'sleep' | 'walk' | 'lick';
 
@@ -132,11 +133,12 @@ export const useLunaSkin = (): string => {
   const avatar = useUserStore((s) => s.avatar) || 'default';
   const status = useUserStore((s) => s.subscriptionStatus);
   const trialStartedAt = useUserStore((s) => s.trialStartedAt);
+  const periodEnd = useUserStore((s) => s.subscriptionCurrentPeriodEnd);
   // Enforce the Starter/Pro skin split at READ time too — a lapsed
   // trial shouldn't keep a Pro skin equipped. Mirrors the paywall's
   // "Starter vs All" promise without importing the whole access hook.
   const hasPremium =
-    status === 'active' ||
+    isPaidThrough(status, periodEnd) ||
     (status === 'trial' &&
       trialStartedAt != null &&
       Date.now() - new Date(trialStartedAt).getTime() < 7 * 86_400_000);

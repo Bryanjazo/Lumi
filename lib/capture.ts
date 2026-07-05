@@ -19,6 +19,7 @@
 // extraction, but the floor is "works with zero AI."
 
 import { type Importance } from '../constants/importance';
+import { COMMON_WORDS } from '../constants/commonWords';
 import { type WindowKey, type WindowMeta } from '../constants/windows';
 import { classifyKind, type TaskKindKey } from '../constants/taskKinds';
 import { type RecurRule } from '../constants/recur';
@@ -664,7 +665,23 @@ interface ParsedTime {
 // canonical form; the shorthand itself is pushed into `matched` so it
 // still gets stripped from the visible title.
 const TIME_SYNONYMS: Array<[RegExp, string]> = [
-  [/\btmrw\b|\btmr\b/g, 'tomorrow'],
+  // t + any jumble of m/r/w ("tmrw", "tmmrw", "tmw", "tmrrw" — no
+  // real English word is t followed by only those letters), classic
+  // typo spellings, and the "2moro" texting family.
+  // t + any jumble of o/m/r/w, 5-9 letters total — covers tomrrw,
+  // tomorow, tommorrow, tmmrw AND plain tomorrow (harmless self-
+  // replace). No common English word fits t[omrw]{4,} ("toro"/"trow"
+  // are 4 letters and stay under the minimum); plurals stay
+  // untouched because 's' breaks the match. Short texting forms are
+  // explicit.
+  [
+    /\bt[omrw]{4,8}\b|\btmrw\b|\btmr\b|\btmw\b|\b2m(?:o?rr?ow?|oro|rw)\b/g,
+    'tomorrow',
+  ],
+  [
+    /\bnxt\s+(week|month|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/g,
+    'next $1',
+  ],
   [/\btonite\b/g, 'tonight'],
   [/\bwknds?\b/g, 'weekend'],
   [/\beod\b/g, 'end of day'],
@@ -1286,7 +1303,7 @@ const VERB_RE =
 // Signals that a verbless clause is still its OWN thought — a date
 // fact ("mom's birthday is next weekend") or a recurrence.
 const CLAUSE_DATEISH =
-  /\b(?:today|tomorrow|tmrw|tonight|tonite|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|wknd|next week|this week|next month|noon|midnight|eod|eow|eom|every|daily|weekly|monthly|at \d|due\b|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i;
+  /\b(?:today|tomorrow|tmrw|tonight|tonite|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|wknd|next week|nxt week|this week|next month|noon|midnight|eod|eow|eom|every|daily|weekly|monthly|at \d|due\b|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i;
 
 // A clause introduced by a soft separator (comma / "and") stands
 // alone if it's vent (so it can be dropped), a status statement, has
@@ -1344,6 +1361,46 @@ const SPLIT_SEP =
 const CORRECTION_GLUE =
   /[,;]?\s*\b(no,? wait|wait,? no|scratch that|actually,? make (?:that|it)|no,? actually|i mean)\b[,.;]?\s*/gi;
 
+// ── Run-on subdivision (unpunctuated typing) ───────────────────────
+// "call mom buy milk finish the report" has no separators, so the
+// splitter sees ONE fragment. Subdivide at verb boundaries: a new
+// lexicon verb starts a new task — UNLESS the previous word marks it
+// as part of the same clause ("to call", "a quick walk", "go get").
+// Conservative on purpose: each piece must keep >=2 words and its
+// own verb; anything ambiguous stays whole (the LLM path handles it
+// when available — this is the deterministic floor).
+const RUNON_GUARD_PREV =
+  /^(?:to|and|or|then|also|just|go|gonna|please|a|an|the|this|that|my|your|our|his|her|their|i|you|we|they|will|would|wanna|can|can'?t|should|don'?t|must|lets|let'?s|me|quick|long|short|big|small|little|deep|fast|slow|daily|nice|good|morning|evening|really|finally)$/i;
+
+const splitRunOn = (frag: string): string[] => {
+  const words = frag.split(/\s+/).filter(Boolean);
+  if (words.length < 4) return [frag];
+  const pieces: string[] = [];
+  let start = 0;
+  let verbsInPiece = 0;
+  for (let i = 0; i < words.length; i++) {
+    const token = words[i].replace(/[^\w'']/g, '');
+    const isVerb = token.length > 1 && VERB_RE.test(token);
+    if (
+      isVerb &&
+      i > start &&
+      verbsInPiece >= 1 &&
+      i - start >= 2 &&
+      words.length - i >= 2 &&
+      !RUNON_GUARD_PREV.test(words[i - 1].replace(/[^\w'']/g, '')) &&
+      !/[''']s$/i.test(words[i - 1]) // possessive → "sarah's email" is a noun
+    ) {
+      pieces.push(words.slice(start, i).join(' '));
+      start = i;
+      verbsInPiece = 1;
+      continue;
+    }
+    if (isVerb) verbsInPiece++;
+  }
+  pieces.push(words.slice(start).join(' '));
+  return pieces;
+};
+
 const splitFragments = (text: string): string[] => {
   // Fuse correction markers to their neighbors BEFORE splitting so
   // "buy milk, no wait, oat milk" stays one fragment (one task, one
@@ -1376,7 +1433,16 @@ const splitFragments = (text: string): string[] => {
     }
   }
   if (current) frags.push(current);
-  return frags.map((s) => s.trim()).filter((s) => s.length > 1);
+  return (
+    frags
+      // Corrections resolve BEFORE run-on subdivision — otherwise
+      // "call mom no wait call dad" splits at the second verb into
+      // two tasks instead of collapsing to the corrected one.
+      .map(applySelfCorrection)
+      .flatMap(splitRunOn)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 1)
+  );
 };
 
 /**
@@ -1502,8 +1568,106 @@ export interface TidiedTranscript {
 }
 
 const GIBBERISH_TOKEN_RE = /^[^aeiouy\s]{4,}$/i; // no-vowel consonant runs
+
+// Known ASR mishears of DATE words in trailing position ("call emori
+// tomato" = "…tomorrow"). Trailing-only + guarded so real groceries
+// survive ("buy tomato" stays a tomato). A hit applies the fix AND
+// raises the did-you-mean card — the user confirms the swap.
+const GROCERY_VERB_RE = /\b(buy|get|grab|order|shop|pick up|add)\b/i;
+const TRAILING_MISHEARS: Array<[RegExp, string]> = [
+  [/\btomato\s*$/i, 'tomorrow'],
+  [/\bto morrow\s*$/i, 'tomorrow'],
+  [/\btwo morrow\s*$/i, 'tomorrow'],
+  [/\bto day\s*$/i, 'today'],
+  [/\bto night\s*$/i, 'tonight'],
+  [/\bsum day\s*$/i, 'someday'],
+];
 const DANGLING_END_RE =
-  /\b(?:the|a|an|to|and|or|by|at|on|in|for|with|my|your|of)$/i;
+  /\b(?:the|a|an|to|and|or|by|at|for|with|my|your|of)$/i;
+
+// ── Near-miss DATE/TIME words ("tomorrws", "tonigt", "wendsday") ──
+// The synonym table catches KNOWN shorthand; this catches novel
+// typos of the words that change parsing the most. Strict on
+// purpose: distance 1 for 5–7 letters, 2 only at 8+ — so "money"
+// (2 from "monday") and "fridge" (2 from "friday", but 6 long)
+// never fuzz. A hit auto-fixes AND raises did-you-mean; on Pro the
+// clarify pass then repairs the REST of the string ("mam" → "mom"),
+// and the confirmed send routes through the deterministic engine.
+const DATE_VOCAB = [
+  'today',
+  'tomorrow',
+  'tonight',
+  'morning',
+  'afternoon',
+  'evening',
+  'weekend',
+  'someday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+];
+// Real words that sit within the fuzz thresholds of a date word —
+// never rewrite these ("check the warning light" ≠ morning).
+const FUZZ_STOP = new Set([
+  'warning',
+  'moaning',
+  'mourning',
+  'sundae',
+  'sundry',
+]);
+
+/** Optimal-string-alignment distance (Levenshtein + adjacent
+ *  transposition, so "toady"→"today" counts as 1), capped early. */
+const osaDistance = (a: string, b: string, cap: number): number => {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  const m = a.length;
+  const n = b.length;
+  const d: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array<number>(n + 1).fill(0),
+  );
+  for (let i = 0; i <= m; i++) d[i][0] = i;
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+      }
+    }
+  }
+  return d[m][n];
+};
+
+/** Rewrite near-miss date words in place; returns null when nothing
+ *  fuzzed. Skips exact vocab words, their plurals ("weekends" drives
+ *  recurrence — must survive), and the FUZZ_STOP real words. */
+const fuzzDateWords = (text: string): string | null => {
+  let hit = false;
+  const out = text
+    .split(/(\s+)/)
+    .map((tok) => {
+      if (!/^[a-z]{5,}$/i.test(tok)) return tok;
+      const lc = tok.toLowerCase();
+      if (FUZZ_STOP.has(lc)) return tok;
+      if (DATE_VOCAB.includes(lc)) return tok;
+      if (DATE_VOCAB.includes(lc.replace(/s$/, ''))) return tok;
+      const cap = lc.length >= 8 ? 2 : 1;
+      for (const v of DATE_VOCAB) {
+        if (osaDistance(lc, v, cap) <= cap) {
+          hit = true;
+          return v;
+        }
+      }
+      return tok;
+    })
+    .join('');
+  return hit ? out : null;
+};
 
 export const tidyTranscript = (raw: string): TidiedTranscript => {
   const original = raw.trim();
@@ -1529,10 +1693,83 @@ export const tidyTranscript = (raw: string): TidiedTranscript => {
     words.filter((w) => GIBBERISH_TOKEN_RE.test(w)).length / words.length >
       0.34;
   const cutShort = words.length >= 1 && DANGLING_END_RE.test(t);
-  const tooThin = t.length > 0 && words.length < 2 && t.length < 6;
-  const suspicious = gibberish || cutShort || tooThin;
+  const tooThin =
+    t.length > 0 &&
+    words.length === 1 &&
+    (t.length <= 2 ||
+      /^(?:um+|uh+|erm|hmm?|like|so|yeah|ok(?:ay)?|oh)$/i.test(t));
+  let suspicious = gibberish || cutShort || tooThin;
 
-  return { tidied: t, changed, suspicious };
+  // Date-word mishears: fix + flag for confirmation. Skipped inside
+  // grocery-verb fragments where "tomato" is probably a tomato.
+  let misheard = false;
+  if (!GROCERY_VERB_RE.test(t)) {
+    for (const [re, fix] of TRAILING_MISHEARS) {
+      if (re.test(t)) {
+        t = t.replace(re, fix);
+        misheard = true;
+        break;
+      }
+    }
+  }
+  if (misheard) suspicious = true;
+
+  // Near-miss date words — auto-fix + confirm (see fuzzDateWords).
+  let fuzzed = false;
+  const fz = fuzzDateWords(t);
+  if (fz != null) {
+    t = fz;
+    fuzzed = true;
+    suspicious = true;
+  }
+
+  return { tidied: t, changed: changed || misheard || fuzzed, suspicious };
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// Spell-pass trigger (goal: LLM formats, the deterministic side
+// builds). Counts tokens that look MISSPELLED against a ~10k common-
+// word list. The caller (Home, Pro only) runs the tiny Haiku clarify
+// pass over the whole string when this is > 0, then parses the
+// cleaned text locally — "gym cook dinner at 6 and tomorow call
+// danny" costs one ~0.03¢ format call instead of a 1¢ understand.
+//
+// Deliberately loose in BOTH directions:
+//   - lowercase names ("danny") count as unknown ON PURPOSE — the
+//     format pass capitalizes them, which we want anyway.
+//   - a rare-but-real word costs one no-op clarify. Cheap.
+// Skips: short tokens (<4), Capitalized words (names — except the
+// first word, where the capital is just the sentence), ALL-CAPS
+// acronyms, anything with digits, and the date shorthand the parser
+// already owns.
+// ═════════════════════════════════════════════════════════════════════
+const KNOWN_SHORTHAND_RE =
+  /^(?:t[omrw]{2,8}|2m\w+|tonite|wknds?|eod|eow|eom|nxt|asap)$/i;
+
+export const countUnknownWords = (text: string): number => {
+  const tokens = text.match(/[A-Za-z''][A-Za-z'']*/g) ?? [];
+  let unknown = 0;
+  tokens.forEach((rawTok, i) => {
+    const tok = rawTok.replace(/[''‛`]/g, '');
+    if (tok.length < 4) return;
+    if (/\d/.test(rawTok)) return;
+    const isCapitalized = /^[A-Z]/.test(tok);
+    const isAllCaps = /^[A-Z]+$/.test(tok) && tok.length > 1;
+    if (isAllCaps) return; // acronym / emphasis
+    if (isCapitalized && i > 0) return; // mid-sentence name
+    const lc = tok.toLowerCase();
+    if (KNOWN_SHORTHAND_RE.test(lc)) return;
+    if (COMMON_WORDS.has(lc)) return;
+    // simple plural/verb endings — "groceries"→groceri? handle the
+    // common suffixes before declaring unknown.
+    if (lc.endsWith('s') && COMMON_WORDS.has(lc.slice(0, -1))) return;
+    if (lc.endsWith('es') && COMMON_WORDS.has(lc.slice(0, -2))) return;
+    if (lc.endsWith('ed') && COMMON_WORDS.has(lc.slice(0, -2))) return;
+    if (lc.endsWith('ing') && COMMON_WORDS.has(lc.slice(0, -3))) return;
+    if (lc.endsWith('ly') && COMMON_WORDS.has(lc.slice(0, -2))) return;
+    unknown++;
+  });
+  return unknown;
 };
 
 // ═════════════════════════════════════════════════════════════════════

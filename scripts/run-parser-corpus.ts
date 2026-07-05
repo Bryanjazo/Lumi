@@ -12,6 +12,7 @@ import {
   routeCapture,
   tidyTranscript,
   type CaptureContext,
+  countUnknownWords,
 } from '../lib/capture';
 import { personalizeTask } from '../lib/personalize';
 import type { Correction } from '../store/correctionsStore';
@@ -283,6 +284,27 @@ const check = (name: string, cond: boolean, detail: string) => {
     );
   }
 
+  // countUnknownWords — the Pro spell-pass trigger. 0 = parses
+  // directly; >0 = one tiny Haiku format call, then local parse.
+  const spellCases: Array<{ name: string; input: string; min: number; max: number }> = [
+    { name: 'spell: clean text never triggers', input: 'call mom tomorrow at 5', min: 0, max: 0 },
+    { name: 'spell: lanch/mam trigger', input: 'call mam for lanch', min: 1, max: 3 },
+    { name: 'spell: parser-owned Tomorow is NOT a spell trigger', input: 'Tomorow call mom', min: 0, max: 0 },
+    { name: 'spell: first-word typo counts despite capital', input: 'Grocries then the gym', min: 1, max: 1 },
+    { name: 'spell: names + acronyms are not typos', input: 'email David about the RSVP', min: 0, max: 0 },
+    { name: 'spell: shorthand the parser owns is not a typo', input: 'gym tmrw and eod report', min: 0, max: 0 },
+    { name: 'spell: plurals/suffixes of known words pass', input: 'water the plants and fold blankets', min: 0, max: 0 },
+  ];
+  for (const c of spellCases) {
+    const n = countUnknownWords(c.input);
+    check(
+      c.name,
+      n >= c.min && n <= c.max,
+      `got ${n}, want ${c.min}..${c.max} for "${c.input}"`,
+      true,
+    );
+  }
+
   // tidyTranscript — the "did you mean" pre-flight for voice.
   const tidyCases: Array<{
     name: string;
@@ -317,6 +339,88 @@ const check = (name: string, cond: boolean, detail: string) => {
       input: 'buy oat milk tomorrow',
       tidied: 'buy oat milk tomorrow',
       suspicious: false,
+    },
+    {
+      name: 'tidy: tomorrws near-miss fuzzed + flagged',
+      input: 'call mam tomorrws',
+      tidied: 'call mam tomorrow',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: tonigt fuzzed',
+      input: 'gym tonigt',
+      tidied: 'gym tonight',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: wendsday fuzzed',
+      input: 'dentist appointment wendsday',
+      tidied: 'dentist appointment wednesday',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: warning is NOT morning',
+      input: 'check the warning light',
+      tidied: 'check the warning light',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: sundae is NOT sunday',
+      input: 'take leo for a sundae',
+      tidied: 'take leo for a sundae',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: weekends plural survives (recur depends on it)',
+      input: 'pack lunch on weekends',
+      tidied: 'pack lunch on weekends',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: money is NOT monday',
+      input: 'deposit the money',
+      tidied: 'deposit the money',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: one-word tasks are legit',
+      input: 'gym',
+      tidied: 'gym',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: verb particles are not dangling',
+      input: 'turn the heating on',
+      tidied: 'turn the heating on',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: lone filler is junk',
+      input: 'uh',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: trailing "and" is cut off',
+      input: 'buy milk and',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: tomato mishear fixed + flagged',
+      input: 'call emori tomato',
+      tidied: 'call emori tomorrow',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: real groceries keep their tomato',
+      input: 'buy tomato',
+      tidied: 'buy tomato',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: split "to night" fixed + flagged',
+      input: 'text sam to night',
+      tidied: 'text sam tonight',
+      suspicious: true,
     },
   ];
   for (const c of tidyCases) {

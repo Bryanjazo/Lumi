@@ -176,6 +176,12 @@ export const CORPUS: CorpusCase[] = [
     expect: [{ title: 'Dentist', dateOffset: 3 }],
   },
   {
+    name: 'nxt week shorthand',
+    input: 'dentist nxt week',
+    expect: [{ title: 'Dentist', dateOffset: 3 }],
+    guard: true,
+  },
+  {
     name: 'this week is a soft deadline',
     input: 'finish the report this week',
     expect: [{ title: 'Finish the report', dateOffset: 2, deadline: true }],
@@ -227,6 +233,36 @@ export const CORPUS: CorpusCase[] = [
     input: 'tmrw call the vet',
     expect: [{ dateOffset: 1, title: 'Call the vet' }],
     target: true,
+  },
+  {
+    name: 'tmmrw texting typo (double-m, no vowels)',
+    input: 'call my mom tmmrw',
+    expect: [{ dateOffset: 1, title: 'Call my mom' }],
+    guard: true,
+  },
+  {
+    name: 'tmw shorthand',
+    input: 'tmw gym',
+    expect: [{ dateOffset: 1 }],
+    guard: true,
+  },
+  {
+    name: '2moro texting',
+    input: 'text sam 2moro',
+    expect: [{ dateOffset: 1, title: 'Text sam' }],
+    guard: true,
+  },
+  {
+    name: 'tomrrw (dropped vowels)',
+    input: 'call mom tomrrw',
+    expect: [{ dateOffset: 1, title: 'Call mom' }],
+    guard: true,
+  },
+  {
+    name: 'toro is sushi, not tomorrow',
+    input: 'order toro sushi',
+    expect: [{ title: 'Order toro sushi' }],
+    guard: true,
   },
   {
     name: 'noon',
@@ -464,6 +500,37 @@ export const CORPUS: CorpusCase[] = [
     name: 'correction inside a multi-dump',
     input: 'finish the report, no wait, the slides, and call the bank',
     expect: [{ title: 'Finish the slides' }, { title: 'Call the bank' }],
+  },
+
+  // ═══ H3 · Unpunctuated run-ons (typed, no commas) ═══
+  {
+    name: 'run-on: three verbs three tasks',
+    input: 'call mom buy milk finish the report',
+    expect: [
+      { title: 'Call mom' },
+      { title: 'Buy milk' },
+      { title: 'Finish the report' },
+    ],
+  },
+  {
+    name: 'run-on: two chores split',
+    input: 'make dinner do laundry',
+    expect: [{ title: 'Make dinner' }, { title: 'Do laundry' }],
+  },
+  {
+    name: 'run-on guard: noun "call" stays one task',
+    input: 'schedule a call with the bank',
+    expect: [{ title: 'Schedule a call with the bank' }],
+  },
+  {
+    name: 'run-on guard: "go get" is one clause',
+    input: 'go get milk',
+    expect: [{ title: 'Go get milk' }],
+  },
+  {
+    name: 'typo date: tomorow',
+    input: 'email sarah tomorow',
+    expect: [{ title: 'Email sarah', dateOffset: 1 }],
   },
 
   // ═══ I · The full Bryan dump (end-to-end guard) ═══

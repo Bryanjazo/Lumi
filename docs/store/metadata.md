@@ -69,7 +69,7 @@ Hello, world. Lumi 1.0 — brain dump to done.
 ```
 Lumi is a task manager for ADHD/busy minds: the user speaks or types a messy "brain dump" and the app deterministically (and optionally with AI) organizes it into scheduled tasks.
 
-DEMO ACCOUNT: use the credentials provided below. The account is pre-seeded with tasks so all surfaces are populated.
+DEMO ACCOUNT: use the credentials provided below. The account is pre-seeded with tasks so all surfaces are populated, and has Pro unlocked so all premium features (AI limits, "Hey Lumi", skins, full weekly story) are testable without a purchase.
 
 KEY FLOWS (60 seconds):
 1. Home → tap "Dump a thought…" → type: "call the dentist tomorrow, groceries this weekend, finish the report by friday" → three organized tasks appear for review → Accept.
@@ -81,6 +81,8 @@ AI ARCHITECTURE: AI requests go exclusively through our own Supabase Edge Functi
 SUBSCRIPTION: Lumi Pro (monthly with 7-day free trial / annual intro price) raises AI usage limits. All core functionality is available on the free tier — the app is never locked behind the paywall. Purchases via StoreKit/RevenueCat.
 
 VOICE: speech is transcribed on-device by iOS speech recognition (see mic/speech permission strings). No audio is uploaded.
+
+"HEY LUMI" WAKE PHRASE (Pro, opt-in): with the toggle ON (Me tab → Input & privacy, or the one-time card on Home), saying "Hey Lumi" while the app is OPEN on the Home screen starts a hands-free capture. Implementation notes for review: listening only occurs while the app is foregrounded on Home with the feature enabled (iOS shows the mic indicator the whole time); wake-phrase detection and transcription run entirely on-device via SFSpeechRecognizer; ambient audio is discarded immediately unless the wake phrase is heard; there is NO background listening and no audio ever leaves the device — only the final task text is processed like any typed capture. To test: sign in with the demo account, enable the toggle, stay on Home, say "Hey Lumi, remind me to call the dentist tomorrow" and pause — the sheet reads back the task and saves it.
 
 ACCOUNT DELETION: Profile → bottom → Delete account (server-side deletion via Edge Function).
 ```

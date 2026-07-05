@@ -69,6 +69,21 @@ const useSpeechRecognitionEvent =
 // gate UI on it (Capture's mic disable) check this flag.
 export const isVoiceConfigured = _speech != null;
 
+// ── Foreign-session ownership (Hey Lumi) ──────────────────────────
+// expo-speech-recognition has ONE global recognizer and GLOBAL
+// events. The "Hey Lumi" wake engine (lib/heyLumi.ts) runs its own
+// continuous sessions; while it owns the mic, useVoice's handlers
+// must ignore events entirely — otherwise a wake-session "no-speech"
+// error toasts "I didn't catch that" out of nowhere, and a wake
+// session's `end` could settle a pill promise. Sessions themselves
+// never overlap (Home suspends the wake loop before starting the
+// pill mic); this flag covers the async event stragglers.
+let _foreignSession = false;
+export const setForeignVoiceSession = (v: boolean): void => {
+  _foreignSession = v;
+};
+export const isForeignVoiceSession = (): boolean => _foreignSession;
+
 export type VoiceState = 'idle' | 'recording' | 'transcribing';
 
 interface VoiceController {
@@ -101,6 +116,15 @@ export const useVoice = (): VoiceController => {
   // Safety: if the platform never fires `end`, settle the promise
   // after a short fallback so the UI doesn't hang.
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Cold-start bounce guard: iOS sometimes fires an immediate `end`
+  // (or no-speech error) right after the FIRST start of a session —
+  // the audio pipeline wasn't warm yet. If that happens within the
+  // window, with nothing transcribed and no stop requested, restart
+  // once silently instead of flipping the button back to idle and
+  // making the user press twice.
+  const startedAtRef = useRef(0);
+  const stopRequestedRef = useRef(false);
+  const autoRetriedRef = useRef(false);
 
   const settle = (text: string | null) => {
     if (fallbackTimerRef.current) {
@@ -114,6 +138,7 @@ export const useVoice = (): VoiceController => {
   };
 
   useSpeechRecognitionEvent('result', (event) => {
+    if (isForeignVoiceSession()) return; // Hey Lumi owns the mic
     // With interimResults: true the library fires this repeatedly as
     // the recognizer's hypothesis evolves. Update both the rolling
     // ref (used to settle the promise on `end`) and the partial
@@ -127,12 +152,15 @@ export const useVoice = (): VoiceController => {
   });
 
   useSpeechRecognitionEvent('end', () => {
+    if (isForeignVoiceSession()) return; // Hey Lumi owns the mic
+    if (bounceRetry()) return; // cold-start blip — session restarted
     const text = transcriptRef.current.trim();
     setState('idle');
     settle(text.length > 0 ? text : null);
   });
 
   useSpeechRecognitionEvent('error', (event) => {
+    if (isForeignVoiceSession()) return; // Hey Lumi owns the mic
     // Common error codes from expo-speech-recognition:
     //   "no-speech"      — they didn't say anything
     //   "audio-capture"  — mic permission issue
@@ -140,6 +168,7 @@ export const useVoice = (): VoiceController => {
     //   "network"        — Android: cloud fallback needed but offline
     //   "aborted"        — we cancelled
     const code = event.error ?? 'unknown';
+    if (code === 'no-speech' && bounceRetry()) return;
     if (code === 'aborted') {
       // Silent — user cancelled.
       setState('idle');
@@ -168,6 +197,36 @@ export const useVoice = (): VoiceController => {
     [],
   );
 
+  const nativeStart = () => {
+    ExpoSpeechRecognitionModule!.start({
+      lang: 'en-US',
+      // Stream partials so Capture can show what the user is
+      // saying as they speak (live transcription in the field).
+      interimResults: true,
+      continuous: false,
+      // Prefer on-device when the platform supports it (iOS 13+).
+      // Android typically routes through Google's free recognizer.
+      requiresOnDeviceRecognition: false,
+    });
+  };
+
+  const bounceRetry = (): boolean => {
+    const bounced =
+      !stopRequestedRef.current &&
+      !autoRetriedRef.current &&
+      transcriptRef.current.trim().length === 0 &&
+      Date.now() - startedAtRef.current < 900;
+    if (!bounced || !ExpoSpeechRecognitionModule) return false;
+    autoRetriedRef.current = true;
+    try {
+      nativeStart();
+      startedAtRef.current = Date.now();
+      return true; // still recording — swallow the bounce
+    } catch {
+      return false;
+    }
+  };
+
   const start = async () => {
     setError(null);
     transcriptRef.current = '';
@@ -183,16 +242,10 @@ export const useVoice = (): VoiceController => {
         );
         return;
       }
-      ExpoSpeechRecognitionModule.start({
-        lang: 'en-US',
-        // Stream partials so Capture can show what the user is
-        // saying as they speak (live transcription in the field).
-        interimResults: true,
-        continuous: false,
-        // Prefer on-device when the platform supports it (iOS 13+).
-        // Android typically routes through Google's free recognizer.
-        requiresOnDeviceRecognition: false,
-      });
+      nativeStart();
+      startedAtRef.current = Date.now();
+      stopRequestedRef.current = false;
+      autoRetriedRef.current = false;
       setPartial('');
       setState('recording');
     } catch (e) {
@@ -201,7 +254,12 @@ export const useVoice = (): VoiceController => {
     }
   };
 
+  const markStopRequested = () => {
+    stopRequestedRef.current = true;
+  };
+
   const stopAndTranscribe = (): Promise<string | null> => {
+    markStopRequested();
     if (state !== 'recording') return Promise.resolve(null);
     if (!ExpoSpeechRecognitionModule) return Promise.resolve(null);
     setState('transcribing');
@@ -228,6 +286,7 @@ export const useVoice = (): VoiceController => {
   };
 
   const cancel = async () => {
+    markStopRequested();
     setError(null);
     if (
       ExpoSpeechRecognitionModule &&

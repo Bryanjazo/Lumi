@@ -174,6 +174,12 @@ interface UserState {
   /** Local Y-M-D the backlog nudge ("these have followed you…") was
    *  answered — one gentle offer per day, never a nag. */
   backlogNudgeDismissedDate: string | null;
+  /**
+   * "Hey Lumi" wake word (Pro): while the app is open, saying
+   * "hey lumi" opens the hands-free capture sheet. Opt-in — the mic
+   * only listens while this is on AND the user has Pro.
+   */
+  heyLumiEnabled: boolean;
   shieldAvailable: boolean;
   shieldUsedThisWeek: boolean;
   onboarded: boolean;
@@ -309,6 +315,7 @@ interface UserState {
   dismissRescue: () => void;
   /** Backlog nudge answered — quiet until tomorrow. */
   dismissBacklogNudge: () => void;
+  setHeyLumiEnabled: (v: boolean) => void;
   consumeShield: () => void;
   rechargeShield: () => void;
   completeOnboarding: () => void;
@@ -411,6 +418,7 @@ export const useUserStore = create<UserState>()(
       lastOpenedDate: null,
       rescueDismissedDate: null,
       backlogNudgeDismissedDate: null,
+      heyLumiEnabled: false,
       shieldAvailable: true,
       shieldUsedThisWeek: false,
       onboarded: false,
@@ -491,6 +499,8 @@ export const useUserStore = create<UserState>()(
 
       dismissBacklogNudge: () =>
         set({ backlogNudgeDismissedDate: today() }),
+
+      setHeyLumiEnabled: (v) => set({ heyLumiEnabled: v }),
 
       consumeShield: () =>
         set({ shieldAvailable: false, shieldUsedThisWeek: true }),
@@ -644,6 +654,7 @@ export const useUserStore = create<UserState>()(
           lastOpenedDate: null,
           rescueDismissedDate: null,
           backlogNudgeDismissedDate: null,
+          heyLumiEnabled: false,
           shieldAvailable: true,
           shieldUsedThisWeek: false,
           onboarded: false,

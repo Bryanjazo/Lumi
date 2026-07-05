@@ -24,7 +24,7 @@
 //   - Multi-card Lumi-noticed carousel → ONE calm card
 //   - Level/rank display → moved to Me tab (per spec §2)
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -39,7 +39,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
@@ -73,6 +73,7 @@ import {
   parseSmartCapture,
   routeCapture,
   tidyTranscript,
+  countUnknownWords,
   difficultyFromImportance,
   pickWindowForDemand,
   type CaptureContext,
@@ -87,9 +88,16 @@ import {
   dominantStaleCluster,
 } from '../../lib/learning/avoidance';
 import { useRescueStore } from '../../store/rescueStore';
+import { useAccessStatus } from '../../lib/subscription';
 import { RescueCard } from '../../components/RescueCard';
 import { WelcomeBackCard } from '../../components/WelcomeBackCard';
-import { useVoice } from '../../lib/voice';
+import {
+  useVoice,
+  isVoiceConfigured,
+  isForeignVoiceSession,
+} from '../../lib/voice';
+import { useHeyLumi, requestHeyLumiPermission } from '../../lib/heyLumi';
+import { HeyLumiSheet } from '../../components/HeyLumiSheet';
 import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
 import { TwinkleMotes } from '../../components/TwinkleMotes';
@@ -109,6 +117,7 @@ import {
 import {
   llmUnderstand,
   isLlmAvailable,
+  llmClarify,
   type UnderstandContext,
   type UnderstoodTask,
 } from '../../lib/anthropic';
@@ -1016,6 +1025,10 @@ export default function Home() {
   // evening-window end. Captured at 10:15 PM with a 11:45 PM bedtime
   // and saying "before bed" → land tonight, not tomorrow morning.
   const anchors = useUserStore((s) => s.anchors);
+  const heyLumiEnabled = useUserStore((s) => s.heyLumiEnabled);
+  const setHeyLumiEnabled = useUserStore((s) => s.setHeyLumiEnabled);
+  const hintsSeen = useUserStore((s) => s.hintsSeen);
+  const markHintSeen = useUserStore((s) => s.markHintSeen);
 
   const quests = useQuestStore((s) => s.quests);
   const toggle = useQuestStore((s) => s.toggle);
@@ -1029,6 +1042,9 @@ export default function Home() {
   const recordCorrection = useCorrectionsStore((s) => s.record);
   const recentCorrections = useCorrectionsStore((s) => s.recent);
   // §2.5 metrics — route decisions + edit flags for the current preview.
+  // Pro gate for the LLM clarify pass — free users keep the
+  // deterministic tidy; AI-powered "did you mean" is an upgrade.
+  const access = useAccessStatus(null);
   const recordAiMetric = useAiMetricsStore((s) => s.record);
   const updateAiMetric = useAiMetricsStore((s) => s.update);
   const lastMetricIdRef = useRef<string | null>(null);
@@ -1053,6 +1069,24 @@ export default function Home() {
   const [focusPickerOpen, setFocusPickerOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
   const [capText, setCapText] = useState('');
+  // "Did you mean?" — persists over the capture pill after a
+  // suspicious voice transcript until the user edits or sends
+  // (a vanishing toast was too easy to miss).
+  const [dymHint, setDymHint] = useState(false);
+  // The clarify LLM's whole-sentence repair, shown IN the card with
+  // a "use this" action — it must be visible and explicit, never a
+  // silent swap of what the user typed (they couldn't tell what
+  // changed).
+  const [dymSuggestion, setDymSuggestion] = useState<string | null>(null);
+  // Send-time soft stop bookkeeping: if we already held a suspicious
+  // text once and the user sends it again unchanged, we respect the
+  // intent and let it through.
+  const dymHeldRef = useRef<string | null>(null);
+  // Measured content height of the pill input — iOS multiline
+  // TextInputs don't auto-grow from min/maxHeight alone; we track
+  // contentSize and set an explicit height (clamped to ~5 lines,
+  // scrolls internally beyond).
+  const [pillInputH, setPillInputH] = useState(0);
   // The waiting card ("N more waiting — Lumi's holding them") —
   // collapsed by default, same calm-first default as Done today.
   const [waitingOpen, setWaitingOpen] = useState(false);
@@ -2043,10 +2077,17 @@ export default function Home() {
     return `“${titlePreview}” — tucked into your ${winLabel}.`;
   };
 
-  const sendCapture = () => {
-    const text = capText.trim();
-    if (!text) return;
-
+  /**
+   * Parse + preview — shared by the direct send and the spell-format
+   * pass. `spellFixed` means the text already went through the tiny
+   * Haiku format pass (spelling/caps fixed), so a plain multi-
+   * fragment gate result parses LOCALLY — the deterministic splitter
+   * is corpus-proven on clean lists, and that swap is the token win
+   * (one ~0.03¢ format call instead of a ~1¢ understand).
+   * Returns false when nothing task-shaped came out (caller keeps
+   * the pill text).
+   */
+  const parseAndPreview = (text: string, spellFixed = false): boolean => {
     const ctx: CaptureContext = {
       sharpWindow,
       foggyWindow,
@@ -2063,7 +2104,7 @@ export default function Home() {
     };
 
     const detTasks = parseSmartCapture(text, ctx);
-    if (detTasks.length === 0) return;
+    if (detTasks.length === 0) return false;
 
     // The user just said they're overwhelmed — Luna sits with them
     // (the ONE sanctioned sad pose, emotional-model spec §1).
@@ -2072,16 +2113,13 @@ export default function Home() {
       showToast("That sounds like a lot. Let's carry it together.");
     }
 
-    setEditingIdx(null);
-    setCapText('');
-    setCapOpen(false);
-    Haptics.selectionAsync();
-
     // The routing gate (goal §2.1) — a clean single-task capture ships
     // the deterministic result instantly: zero tokens, zero spinner.
-    // Multi-task / long / emotional captures earn the LLM.
+    // Multi-task / long / emotional captures earn the LLM — EXCEPT a
+    // spell-fixed multi (see doc above).
     const gate = routeCapture(text, detTasks);
-    if (isLlmAvailable() && gate.route === 'llm') {
+    const skipLlm = spellFixed && gate.reason === 'multi';
+    if (isLlmAvailable() && gate.route === 'llm' && !skipLlm) {
       // Sorting flow — don't show the deterministic preview at all.
       // sortingRaw drives the "Lumi is sorting…" card up top; we
       // only set previewTasks once the LLM has returned (or the
@@ -2116,15 +2154,88 @@ export default function Home() {
         }
       });
     } else {
-      // Local path — gate said simple (or the LLM is unavailable).
+      // Local path — gate said simple, LLM unavailable, or the text
+      // is spell-fixed and just needs the splitter.
       lastMetricIdRef.current = recordAiMetric({
         route: 'local',
-        reason: gate.reason,
+        reason: skipLlm ? 'multi-spellfixed' : gate.reason,
         latencyMs: 0,
         edited: false,
       });
       setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
+    return true;
+  };
+
+  const sendCapture = () => {
+    const text = capText.trim();
+    if (!text) return;
+    // Typed mistakes get the same net as voice (goal: any mistake →
+    // Lumi suggests): a suspicious text is held ONCE with the
+    // did-you-mean card + background clarify. Sending the same text
+    // again means "I meant it" — it goes through.
+    const typedTidy = tidyTranscript(text);
+    if (typedTidy.suspicious && dymHeldRef.current !== text) {
+      const parked = typedTidy.changed ? typedTidy.tidied : text;
+      dymHeldRef.current = parked;
+      // Deterministic fixes (date-word near-misses) apply directly —
+      // they're surgical and safe. The LLM's whole-sentence repair
+      // shows in the card instead, so the user SEES the suggestion
+      // and chooses it ("use this") rather than discovering their
+      // text quietly rewritten.
+      if (typedTidy.changed) setCapText(parked);
+      setDymHint(true);
+      setDymSuggestion(null);
+      if (isLlmAvailable() && access.hasPremium) {
+        void llmClarify(parked).then((fixed) => {
+          if (!fixed || fixed === parked) return;
+          dymHeldRef.current = fixed; // either way, next send passes
+          setDymSuggestion(fixed);
+        });
+      }
+      return;
+    }
+    setDymHint(false);
+    setDymSuggestion(null);
+    setPillInputH(0);
+
+    // ── Spell-format pass (Pro, goal: "LLM formats it, our smart
+    // parser picks it up"). Text isn't suspicious, but it contains
+    // words the ~10k common-word list doesn't know ("lanch",
+    // "tomorow", lowercase "danny") → one tiny Haiku call fixes
+    // spelling + capitalization, then the DETERMINISTIC engine
+    // builds the tasks from the clean string. Free tier skips this
+    // (their captures parse exactly as before).
+    if (
+      isLlmAvailable() &&
+      access.hasPremium &&
+      text.length <= 300 &&
+      countUnknownWords(text) > 0
+    ) {
+      setEditingIdx(null);
+      setCapText('');
+      setCapOpen(false);
+      Haptics.selectionAsync();
+      setSortingRaw(text);
+      setAiPending(true);
+      void llmClarify(text).then((fixed) => {
+        setSortingRaw(null);
+        setAiPending(false);
+        const finalText = fixed && fixed.trim() ? fixed.trim() : text;
+        if (!parseAndPreview(finalText, true)) {
+          // Nothing task-shaped — put their words back, lose nothing.
+          setCapText(text);
+        }
+      });
+      return;
+    }
+
+    if (!parseAndPreview(text)) return; // vent-only etc — keep the pill text
+
+    setEditingIdx(null);
+    setCapText('');
+    setCapOpen(false);
+    Haptics.selectionAsync();
   };
 
   // ── Preview confirmation handlers ────────────────────────────────
@@ -2220,72 +2331,6 @@ export default function Home() {
       setPreviewTasks(remaining);
       setEditingIdx(null);
     }
-  };
-
-  /** Tap a "When's it due?" chip on a deadline-type previewed task.
-   *  Locks the date (today / tomorrow / this Saturday) on the task and
-   *  flips needsFollowup off so the row collapses. The user can always
-   *  Tweak to refine further. */
-  const pickFollowupDate = (
-    idx: number,
-    date: string,
-    window?: 'morning' | 'midday' | 'afternoon' | 'evening',
-  ) => {
-    if (!previewTasks) return;
-    Haptics.selectionAsync();
-    const updated = [...previewTasks];
-    updated[idx] = {
-      ...updated[idx],
-      date,
-      window: window ?? updated[idx].window,
-      needsFollowup: false,
-    };
-    setPreviewTasks(updated);
-  };
-
-  /** Pick one of the AM/PM options for an ambiguous bare-hour capture
-   *  ("today at 9" → 9 AM or 9 PM). Locks the chosen time on the
-   *  previewed task and clears the chip picker. */
-  const pickTimeOption = (idx: number, minutes: number) => {
-    if (!previewTasks) return;
-    Haptics.selectionAsync();
-    const updated = [...previewTasks];
-    updated[idx] = {
-      ...updated[idx],
-      at: minutes,
-      timeMode: 'anchored',
-      // Clearing the options collapses the chip row — the user has
-      // made the call.
-      timeOptions: undefined,
-    };
-    setPreviewTasks(updated);
-  };
-
-  /** Set the length on a previewed task — driven by the inline
-   *  "How long?" chips so the user picks before Accept commits. */
-  const pickDuration = (idx: number, minutes: number) => {
-    if (!previewTasks) return;
-    Haptics.selectionAsync();
-    const updated = [...previewTasks];
-    updated[idx] = { ...updated[idx], durationMinutes: minutes };
-    setPreviewTasks(updated);
-  };
-
-  /** Set the part-of-day window on a previewed task — driven by the
-   *  inline chips so a user who didn't specify a time still picks a
-   *  rough slot before Accept commits. Skip the anchored time case
-   *  (the user already gave an exact clock time, no need to ask). */
-  const pickWindow = (idx: number, window: WindowKey) => {
-    if (!previewTasks) return;
-    Haptics.selectionAsync();
-    const updated = [...previewTasks];
-    updated[idx] = {
-      ...updated[idx],
-      window,
-      timeMode: 'windowed',
-      at: null,
-    };
-    setPreviewTasks(updated);
   };
 
   /** Per-task dismiss — drops ONE task from the preview without
@@ -2387,31 +2432,114 @@ export default function Home() {
   // just speaking their tasks into existence.
 
   /**
-   * Post-transcribe processing — shared by the two mic entry points:
-   * the standalone MicButton on the floating capture pill AND the old
-   * inline `handleMic` path that lives inside the expanded capture.
-   * Same behavior in both places: transcript → parseSmartCapture →
-   * previewTasks (user reviews before commit). Text is stashed in
-   * capText briefly so any UI that reads it while the parse is
-   * happening still shows what Lumi heard.
+   * Post-transcribe handling — shared by every mic entry point (the
+   * capture-pill mic and the dump modal's MicButton). Voice FILLS
+   * the capture field; the user presses send to parse. Runs the
+   * deterministic tidy first and nudges "did you mean" when the
+   * transcript looks off.
    */
   const handleTranscribed = (text: string) => {
-    let final = text.trim();
+    const final = text.trim();
     if (!final) return;
-    // "Did you mean…?" pre-flight: deterministic tidy of the raw
-    // transcript. Suspicious (cut short / gibberish) → park the
-    // cleaned text in the pill for a one-tap confirm instead of
-    // parsing a guess. Merely-messy → continue with the tidied text
-    // (cleaner input = better parses, fewer LLM tokens).
+    // Voice FILLS, the user FIRES: the transcript parks in the
+    // capture field — appended if they'd typed — and nothing parses
+    // until they press send. Deterministic tidy runs first; a
+    // suspicious transcript raises the "did you mean" card AND kicks
+    // off the tiny LLM clarify pass (~100 tokens) in the background.
+    // If the model recovers a better reading before the user edits,
+    // the parked text upgrades in place — then the user's send still
+    // routes through the deterministic engine (usually local), so
+    // the expensive understand pass never runs for garble.
     const tidy = tidyTranscript(final);
+    const spoken =
+      tidy.changed || tidy.suspicious ? tidy.tidied || final : final;
+    const prevText = capText.trim();
+    const parked = prevText ? `${prevText} ${spoken}` : spoken;
+    setCapText(parked);
     if (tidy.suspicious) {
-      setCapText(tidy.tidied || final);
-      setCapOpen(false);
-      showToast('did you mean this? check it, then send ✦');
-      return;
+      setDymHint(true);
+      setDymSuggestion(null);
+      if (isLlmAvailable() && access.hasPremium) {
+        void llmClarify(spoken).then((fixed) => {
+          if (!fixed || fixed === spoken) return;
+          const upgraded = prevText ? `${prevText} ${fixed}` : fixed;
+          // Visible suggestion in the card — never a silent rewrite.
+          setDymSuggestion(upgraded);
+        });
+      }
     }
-    if (tidy.changed) final = tidy.tidied;
-    setCapText(final);
+  };
+
+
+  const handleMic = async () => {
+    if (voice.state === 'idle') {
+      // Hand the recognizer over: the Hey-Lumi wake loop (if armed)
+      // aborts first, and a short beat lets its terminal `end` land
+      // before the pill claims the singleton mic.
+      if (heyLumiArmed) {
+        heyLumi.cancel();
+        // Wait for the drained session's terminal event to actually
+        // land (not a fixed beat) — otherwise the pill's cold-start
+        // events get swallowed by the foreign-session guard.
+        for (let i = 0; i < 10 && isForeignVoiceSession(); i++) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+      // Stays IN the pill — the brain-dump modal is its own room
+      // (the expand button); the mic just talks into the input.
+      await voice.start();
+    } else if (voice.state === 'recording') {
+      const text = await voice.stopAndTranscribe();
+      if (text && text.trim()) {
+        // Park it — the user reviews and presses send themselves.
+        handleTranscribed(text);
+      }
+    }
+  };
+
+  // Surface voice errors as a calm toast.
+  useEffect(() => {
+    if (voice.error) showToast(voice.error);
+  }, [voice.error]);
+
+  // ── "Hey Lumi" wake word (Pro) ───────────────────────────────────
+  // Foreground hands-free capture: say "hey Lumi" and the voice
+  // layer (components/HeyLumiSheet) streams what follows through the
+  // SAME pipeline as the pill — tidy → routing gate → deterministic
+  // or LLM understand — then reads it back and auto-keeps in 5s.
+  // Armed only when: pref ON + Pro + this tab focused + the pill mic
+  // idle + no capture flow already in progress. The recognizer is a
+  // global singleton, so the wake loop stands down the moment any
+  // other mic (or the preview flow) needs the stage.
+  const [isFocused, setIsFocused] = useState(true);
+  const heyLumiRef = useRef<{ cancel: () => void } | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => {
+        setIsFocused(false);
+        // A live wake/command session must not follow the user to
+        // another tab — Untangle's mic shares the same recognizer.
+        heyLumiRef.current?.cancel();
+      };
+    }, []),
+  );
+  const heyLumiArmed =
+    heyLumiEnabled &&
+    access.hasPremium &&
+    isVoiceConfigured &&
+    isFocused &&
+    voice.state === 'idle' &&
+    !capOpen &&
+    !sortingRaw &&
+    !previewTasks;
+
+  /** Same pipeline as sendCapture, promise-shaped for the sheet. */
+  const heyLumiParse = async (raw: string): Promise<SmartTask[]> => {
+    const tidy = tidyTranscript(raw);
+    const text = ((tidy.changed ? tidy.tidied : raw) || raw).trim();
+    if (!text) return [];
+    const d = new Date();
     const ctx: CaptureContext = {
       sharpWindow,
       foggyWindow,
@@ -2420,34 +2548,16 @@ export default function Home() {
       slumpStart: digest.curve.slumpStart,
       slumpEnd: digest.curve.slumpEnd,
       effectiveWindows,
-      now,
-      nowMin: now.getHours() * 60 + now.getMinutes(),
+      now: d,
+      nowMin: d.getHours() * 60 + d.getMinutes(),
       wakeMin: anchors.wake,
       sleepMin: anchors.sleep,
       anchors,
     };
-    const detTasks = parseSmartCapture(final, ctx);
-    if (textReadsOverwhelmed(final)) {
-      triggerEmpathize();
-      showToast("That sounds like a lot. Let's carry it together.");
-    }
-    if (detTasks.length === 0) {
-      // Deterministic parser couldn't extract anything — surface the
-      // transcript in the expanded capture so the user can edit and
-      // resubmit. Beats swallowing the voice input silently.
-      setCapOpen(true);
-      return;
-    }
-    setEditingIdx(null);
-    setCapText('');
-    setCapOpen(false);
-    Haptics.selectionAsync();
-    // Same sorting → LLM → preview flow as the typed path. Never
-    // show the deterministic guess up front; only render once the
-    // LLM has resolved (or 5s timeout falls back).
-    // Same routing gate as the typed path (goal §2.1) — voice
-    // transcripts of simple captures skip the LLM too.
-    const gate = routeCapture(final, detTasks);
+    const detTasks = parseSmartCapture(text, ctx);
+    if (detTasks.length === 0) return [];
+    if (textReadsOverwhelmed(text)) triggerEmpathize();
+    const gate = routeCapture(text, detTasks);
     if (isLlmAvailable() && gate.route === 'llm') {
       const metricId = recordAiMetric({
         route: 'llm',
@@ -2457,21 +2567,14 @@ export default function Home() {
       });
       lastMetricIdRef.current = metricId;
       const startedAt = Date.now();
-      setSortingRaw(final);
-      setAiPending(true);
-      void runLlmUnderstand(final).then((llmTasks) => {
-        setSortingRaw(null);
-        setAiPending(false);
-        if (llmTasks && llmTasks.length > 0) {
-          updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
-          setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
-        } else {
-          updateAiMetric(metricId, {
-            route: 'llm_fallback',
-            latencyMs: Date.now() - startedAt,
-          });
-          setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
-        }
+      const llmTasks = await runLlmUnderstand(text);
+      if (llmTasks && llmTasks.length > 0) {
+        updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
+        return smartTasksFromLlm(llmTasks, detTasks);
+      }
+      updateAiMetric(metricId, {
+        route: 'llm_fallback',
+        latencyMs: Date.now() - startedAt,
       });
     } else {
       lastMetricIdRef.current = recordAiMetric({
@@ -2480,64 +2583,40 @@ export default function Home() {
         latencyMs: 0,
         edited: false,
       });
-      setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
+    return personalizeTasks(detTasks, recentCorrections(20));
   };
 
-  const handleMic = async () => {
-    if (voice.state === 'idle') {
-      if (!capOpen) setCapOpen(true);
-      await voice.start();
-    } else if (voice.state === 'recording') {
-      const text = await voice.stopAndTranscribe();
-      if (text && text.trim()) {
-        // Surface the transcript so the user can see what Lumi heard,
-        // then auto-submit through the smart-capture pipeline.
-        setCapText(text);
-        // Defer one tick so React commits the text before parsing.
-        setTimeout(() => {
-          // Re-read latest text via state by using a fresh closure.
-          let final = text.trim();
-          if (!final) return;
-          const tidy = tidyTranscript(final);
-          if (tidy.suspicious) {
-            setCapText(tidy.tidied || final);
-            showToast('did you mean this? check it, then send ✦');
-            return;
-          }
-          if (tidy.changed) final = tidy.tidied;
-          // Inline send: same logic as sendCapture but uses the
-          // transcribed value directly (state may not have flushed).
-          const ctx: CaptureContext = {
-            sharpWindow,
-            foggyWindow,
-            peakStart: digest.curve.peakStart,
-            peakEnd: digest.curve.peakEnd,
-            effectiveWindows,
-            now,
-            nowMin: now.getHours() * 60 + now.getMinutes(),
-            wakeMin: anchors.wake,
-            sleepMin: anchors.sleep,
-            anchors,
-          };
-          const tasks = parseSmartCapture(final, ctx);
-          if (tasks.length === 0) return;
-          // Voice → preview (same as text path). User taps Looks
-          // good to commit, or Tweak to edit before saving.
-          setPreviewTasks(personalizeTasks(tasks, recentCorrections(20)));
-          setEditingIdx(null);
-          setCapText('');
-          setCapOpen(false);
-          Haptics.selectionAsync();
-        }, 30);
+  const heyLumi = useHeyLumi({
+    enabled: heyLumiArmed,
+    parse: heyLumiParse,
+    onCommit: (kept) => {
+      for (const t of kept) commitTask(t);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      showToast(
+        kept.length > 1
+          ? `Saved ${kept.length} tasks — sorted into your day.`
+          : placementToast(kept[0]),
+      );
+    },
+    onFixUp: (raw, parsed) => {
+      if (parsed.length > 0) {
+        // "Fix up" lands in the normal preview cards — same editing
+        // surface as a pill capture.
+        setPreviewTasks(parsed);
+      } else {
+        setCapText(raw);
+        showToast('Put it in the pill — tweak it and send.');
       }
-    }
-  };
-
-  // Surface voice errors as a calm toast.
-  useEffect(() => {
-    if (voice.error) showToast(voice.error);
-  }, [voice.error]);
+    },
+    onMicProblem: () => {
+      setHeyLumiEnabled(false);
+      showToast(
+        'Mic access is off — “Hey Lumi” paused. Enable it in Settings → Lumi.',
+      );
+    },
+  });
+  heyLumiRef.current = heyLumi;
 
   // Suggestion → schedule sheet → commit. The user picks cadence
   // (daily/weekly/monthly/etc.), an optional day, and an exact time
@@ -3527,6 +3606,98 @@ export default function Home() {
           ]}
           pointerEvents="box-none"
         >
+          {/* One-time "Hey Lumi" intro — Pro users who haven't turned
+              the wake word on. Same calm dusk surface as the
+              did-you-mean card; two taps and it's live. */}
+          {!dymHint &&
+            access.hasPremium &&
+            isVoiceConfigured &&
+            !heyLumiEnabled &&
+            !hintsSeen.includes('heyLumiIntro') && (
+              <View style={styles.dymHint}>
+                <Text style={styles.dymHintText}>
+                  new: say “hey Lumi” to capture hands-free ✧
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    void requestHeyLumiPermission().then((ok) => {
+                      markHintSeen('heyLumiIntro');
+                      if (ok) {
+                        setHeyLumiEnabled(true);
+                        void Haptics.notificationAsync(
+                          Haptics.NotificationFeedbackType.Success,
+                        ).catch(() => {});
+                        showToast('“Hey Lumi” is on — just say it.');
+                      } else {
+                        showToast(
+                          'Mic access is off — enable it in Settings → Lumi.',
+                        );
+                      }
+                    });
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.dymHintClear, { color: accent.fg }]}>
+                    turn it on
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    markHintSeen('heyLumiIntro');
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={styles.dymHintClear}>not now</Text>
+                </Pressable>
+              </View>
+            )}
+          {dymHint && (
+            <View style={styles.dymHint}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dymHintText}>
+                  {dymSuggestion
+                    ? 'did you mean —'
+                    : 'did you mean this? check it, then send ✦'}
+                </Text>
+                {dymSuggestion && (
+                  <Text style={styles.dymSuggestionText}>
+                    “{dymSuggestion}”
+                  </Text>
+                )}
+              </View>
+              {dymSuggestion && (
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setCapText(dymSuggestion);
+                    dymHeldRef.current = dymSuggestion;
+                    setDymSuggestion(null);
+                    // Card stays up so the copy still reads "check
+                    // it, then send" — one tap left.
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.dymHintClear, { color: accent.fg }]}>
+                    use this
+                  </Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setDymHint(false);
+                  setDymSuggestion(null);
+                  setCapText('');
+                  setPillInputH(0);
+                }}
+                hitSlop={8}
+              >
+                <Text style={styles.dymHintClear}>scrap it</Text>
+              </Pressable>
+            </View>
+          )}
           <View style={styles.capturePillInner}>
             <Text
               style={[styles.capturePillSpark, { color: accent.fg }]}
@@ -3544,7 +3715,14 @@ export default function Home() {
                   : capText
               }
               editable={voice.state !== 'recording'}
-              onChangeText={setCapText}
+              onChangeText={(t) => {
+                setCapText(t);
+                if (!t) setPillInputH(0);
+                if (dymHint) {
+                  setDymHint(false);
+                  setDymSuggestion(null);
+                }
+              }}
               placeholder={
                 voice.state === 'recording'
                   ? 'listening…'
@@ -3553,8 +3731,26 @@ export default function Home() {
               placeholderTextColor={C.mute}
               style={[
                 styles.capturePillInput,
+                {
+                  // Flat single-line pill until the text actually
+                  // wraps; then grow with content to ~5 lines and
+                  // scroll inside beyond that. Empty ALWAYS means
+                  // flat — iOS doesn't emit a contentSize event on
+                  // programmatic clears (e.g. after send), so a
+                  // stale tall measurement would otherwise stick.
+                  height:
+                    !capText &&
+                    !(voice.state === 'recording' && voice.partial)
+                      ? 36
+                      : pillInputH <= 24
+                        ? 36
+                        : Math.min(130, pillInputH + 16),
+                },
                 voice.state === 'recording' && { color: C.dusk },
               ]}
+              onContentSizeChange={(e) =>
+                setPillInputH(e.nativeEvent.contentSize.height)
+              }
               multiline
               scrollEnabled
               returnKeyType="send"
@@ -3755,6 +3951,17 @@ export default function Home() {
         onSubmit={sendCapture}
         onTranscribed={handleTranscribed}
         submitting={aiPending}
+      />
+      {/* "Hey Lumi" voice layer — phrase-triggered only, Pro. */}
+      <HeyLumiSheet
+        phase={heyLumi.phase}
+        transcript={heyLumi.transcript}
+        tasks={heyLumi.tasks}
+        countdown={heyLumi.countdown}
+        autoKeep={heyLumi.autoKeep}
+        onKeep={heyLumi.keep}
+        onFixUp={heyLumi.fixUp}
+        onCancel={heyLumi.cancel}
       />
     </SafeAreaView>
   );
@@ -4408,6 +4615,39 @@ const makeStyles = (accent: Accent) =>
       bottom: FLOATING_NAV_CLEARANCE + 4,
       zIndex: 30,
     },
+    dymHint: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      backgroundColor: hexA(C.dusk, 0.14),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.35),
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      marginBottom: 8,
+    },
+    dymSuggestionText: {
+      fontFamily: fonts.inter,
+      fontSize: 13,
+      color: C.bone,
+      marginTop: 3,
+      lineHeight: 18,
+    },
+    dymHintText: {
+      flex: 1,
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: C.dusk,
+    },
+    dymHintClear: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11.5,
+      color: C.boneDim,
+      textDecorationLine: 'underline',
+    },
     capturePillInner: {
       flexDirection: 'row',
       // alignItems: flex-end so when the input grows multiline the
@@ -4451,14 +4691,10 @@ const makeStyles = (accent: Accent) =>
       color: C.bone,
       letterSpacing: -0.1,
       padding: 0,
-      // Reverted to the previous simple pattern per user — min +
-      // maxHeight caps growth to ~5 lines. iOS won't do true
-      // internal scrolling with maxHeight alone (that needed the
-      // tracked-height pattern we removed), but the visual cap
-      // + long-dump-expand path via the fullscreen brain-dump
-      // modal is what the user asked for.
-      minHeight: 36,
-      maxHeight: 130,
+      // Height is set inline from measured contentSize (see the
+      // render) — grows with the text to ~5 lines, then scrolls
+      // internally. The fullscreen brain-dump modal stays the path
+      // for truly long spills.
       paddingTop: 8,
       paddingBottom: 8,
       lineHeight: 20,
@@ -4665,14 +4901,6 @@ const makeStyles = (accent: Accent) =>
       fontSize: 12.5,
       color: C.dusk,
       letterSpacing: -0.1,
-    },
-    timeOptionsWrap: { marginBottom: 8 },
-    timeOptionsAsk: {
-      fontFamily: fonts.fraunces,
-      fontStyle: 'italic',
-      fontSize: 12.5,
-      color: C.dusk,
-      marginBottom: 6,
     },
     previewEditLabel: {
       fontFamily: fonts.interSemi,
@@ -4975,19 +5203,6 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
-    waitingTitleRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 7,
-      minWidth: 0,
-    },
-    waitingKindDot: {
-      width: 5,
-      height: 5,
-      borderRadius: 2.5,
-      flexShrink: 0,
-      opacity: 0.9,
-    },
     waitingRowTitle: {
       // flex so the title truncates INSIDE the kind-dot row instead
       // of pushing the dot / overflowing the card.
@@ -5007,19 +5222,6 @@ const makeStyles = (accent: Accent) =>
       fontFamily: fonts.inter,
       fontSize: 12,
       flexShrink: 0,
-    },
-    nowPill: {
-      borderWidth: 1,
-      borderColor: hexA(C.ember, 0.5),
-      borderRadius: 100,
-      paddingHorizontal: 13,
-      paddingVertical: 6,
-      flexShrink: 0,
-    },
-    nowPillText: {
-      fontFamily: fonts.interSemi,
-      fontSize: 12.5,
-      color: C.ember,
     },
     waitingFooter: {
       textAlign: 'center',

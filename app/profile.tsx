@@ -38,6 +38,7 @@ import { DayRibbon } from '../components/DayRibbon';
 
 import { fonts } from '../constants/fonts';
 import { skins } from '../constants/skins';
+import { syncNotifications } from '../lib/notifications';
 import { lunaSource, useLunaSkin, type LunaMood } from '../lib/luna-source';
 import { skinPreview } from '../lib/skin-preview';
 import { useAmbientLunaMood } from '../lib/luna-mood';
@@ -54,6 +55,7 @@ import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { signOut, useSession, changeEmail, deleteAccount } from '../lib/auth';
 import { useAccessStatus } from '../lib/subscription';
+import { requestHeyLumiPermission } from '../lib/heyLumi';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
 import { languageLabel } from '../lib/languages';
 import { useLearningDigest } from '../lib/learning';
@@ -839,8 +841,60 @@ export default function AccountScreen() {
   // Settings state
   const notifPrefs = useUserStore((s) => s.notifPrefs);
   const setNotifPref = useUserStore((s) => s.setNotifPref);
+  // Toggle → store → notification sync (interactive: may prompt for
+  // permission on first enable). Denied? Flip the toggle back and
+  // point at Settings — a switch that looks on but does nothing is
+  // worse than a clear no.
+  const changeNotifPref = (
+    key: Parameters<typeof setNotifPref>[0],
+    value: boolean,
+  ) => {
+    setNotifPref(key, value);
+    void syncNotifications({ interactive: value }).then(({ granted }) => {
+      if (!granted && value) {
+        setNotifPref(key, false);
+        Alert.alert(
+          'Notifications are off',
+          'Enable them for Lumi in Settings → Notifications, then flip this back on.',
+        );
+      }
+    });
+  };
   const voiceEnabled = useUserStore((s) => s.voiceEnabled);
   const setVoiceEnabled = useUserStore((s) => s.setVoiceEnabled);
+  const heyLumiEnabled = useUserStore((s) => s.heyLumiEnabled);
+  const setHeyLumiEnabled = useUserStore((s) => s.setHeyLumiEnabled);
+
+  /** "Hey Lumi" wake word — Pro-only. Flipping it ON asks for the
+   *  mic/speech permission right here, where it's explainable; a
+   *  denial flips the switch back with directions instead of leaving
+   *  a toggle that silently does nothing. */
+  const changeHeyLumi = async (v: boolean) => {
+    Haptics.selectionAsync();
+    if (!v) {
+      // OFF always works — a lapsed subscription must never trap the
+      // switch behind the paywall.
+      setHeyLumiEnabled(false);
+      return;
+    }
+    if (!access.hasPremium) {
+      router.push('/paywall');
+      return;
+    }
+    const ok = await requestHeyLumiPermission();
+    if (!ok) {
+      setHeyLumiEnabled(false);
+      Alert.alert(
+        'Mic access needed',
+        '“Hey Lumi” listens for the wake phrase while the app is open. Enable Microphone and Speech Recognition in Settings → Lumi.',
+      );
+      return;
+    }
+    setHeyLumiEnabled(true);
+    void Haptics.notificationAsync(
+      Haptics.NotificationFeedbackType.Success,
+    ).catch(() => {});
+  };
   const captureLang = useUserStore((s) => s.captureLang);
   const theme = useUserStore((s) => s.theme);
   const setTheme = useUserStore((s) => s.setTheme);
@@ -3014,7 +3068,7 @@ export default function AccountScreen() {
             sub="a soft tap for what's next"
             prefKey="nudges"
             value={notifPrefs.nudges}
-            onChange={(v) => setNotifPref('nudges', v)}
+            onChange={(v) => changeNotifPref('nudges', v)}
           />
           <NotifRow
             icon="◷"
@@ -3022,7 +3076,7 @@ export default function AccountScreen() {
             sub="your Sunday recap is ready"
             prefKey="recap"
             value={notifPrefs.recap}
-            onChange={(v) => setNotifPref('recap', v)}
+            onChange={(v) => changeNotifPref('recap', v)}
           />
           <NotifRow
             icon="🔁"
@@ -3030,7 +3084,7 @@ export default function AccountScreen() {
             sub="for quests you've set to repeat"
             prefKey="recurring"
             value={notifPrefs.recurring}
-            onChange={(v) => setNotifPref('recurring', v)}
+            onChange={(v) => changeNotifPref('recurring', v)}
           />
           <NotifRow
             icon="☾"
@@ -3038,7 +3092,7 @@ export default function AccountScreen() {
             sub={`nothing after ${fmtTime(anchors.sleep)}`}
             prefKey="quiet"
             value={notifPrefs.quiet}
-            onChange={(v) => setNotifPref('quiet', v)}
+            onChange={(v) => changeNotifPref('quiet', v)}
             last
           />
         </Group>
@@ -3060,6 +3114,31 @@ export default function AccountScreen() {
                 thumbColor={voiceEnabled ? C.void : C.boneDim}
                 ios_backgroundColor={C.surface}
               />
+            }
+          />
+          <Row
+            icon="✧"
+            label="“Hey Lumi”"
+            sub={
+              access.hasPremium
+                ? 'hands-free capture while the app is open'
+                : 'hands-free capture · Pro'
+            }
+            onPress={access.hasPremium ? undefined : () => router.push('/paywall')}
+            right={
+              access.hasPremium ? (
+                <Switch
+                  value={heyLumiEnabled}
+                  onValueChange={(v) => void changeHeyLumi(v)}
+                  trackColor={{ false: C.surface, true: accent.fg }}
+                  thumbColor={heyLumiEnabled ? C.void : C.boneDim}
+                  ios_backgroundColor={C.surface}
+                />
+              ) : (
+                <View style={styles.heyLumiProBadge}>
+                  <Text style={styles.heyLumiProBadgeText}>✦ PRO</Text>
+                </View>
+              )
             }
           />
           <Row
@@ -4202,6 +4281,18 @@ const makeStyles = (accent: Accent) =>
       height: 42,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    heyLumiProBadge: {
+      backgroundColor: 'rgba(224,122,79,0.16)',
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    heyLumiProBadgeText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9,
+      color: '#E07A4F',
+      letterSpacing: 0.6,
     },
     skinLockBadge: {
     position: 'absolute',

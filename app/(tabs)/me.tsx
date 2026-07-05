@@ -40,6 +40,7 @@ import {
 import { computeVitality } from '../../lib/vitality';
 import { last7DaysEnergy, useLearningDigest } from '../../lib/learning';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
+import { ProfileIcon } from '../../components/ProfileIcon';
 import {
   useQuestStore,
   selectTodayQuests,
@@ -1560,32 +1561,10 @@ export default function MeTab() {
           <View style={styles.heroTopBar}>
             <Text style={styles.heroEyebrow}>{petName}&apos;s room</Text>
             <View style={{ flex: 1 }} />
-            <Pressable
-              onPress={() => {
-                Haptics.selectionAsync();
-                router.push('/profile');
-              }}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Your account"
-              style={styles.heroProfileBtn}
-            >
-              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
-                <Circle
-                  cx={12}
-                  cy={8.6}
-                  r={3.4}
-                  stroke={C.honey}
-                  strokeWidth={1.7}
-                />
-                <Path
-                  d="M5.4 19.4c1.3-3 3.8-4.5 6.6-4.5s5.3 1.5 6.6 4.5"
-                  stroke={C.honey}
-                  strokeWidth={1.7}
-                  strokeLinecap="round"
-                />
-              </Svg>
-            </Pressable>
+            {/* Same canonical icon as every other tab (components/
+                ProfileIcon) — Me used to draw its own honey variant
+                and the mismatch read as a bug. */}
+            <ProfileIcon />
           </View>
           {/* Whisper-thin bottom fade — blends into the page, doesn't cover Luna */}
           <View pointerEvents="none" style={styles.heroBottomFade} />

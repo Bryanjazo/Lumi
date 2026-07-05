@@ -88,6 +88,22 @@ export interface AccessStatus {
   hasAccess: boolean;
 }
 
+/**
+ * True while the subscription is PAID — 'active', or 'cancelled' /
+ * 'past_due' with time left on the period the user already paid for.
+ * RC's CANCELLATION event only means auto-renew is off; access runs
+ * until EXPIRATION. Mirrors the server's has_access() exactly —
+ * keep the two in sync.
+ */
+export const isPaidThrough = (
+  status: SubscriptionStatus,
+  currentPeriodEnd: string | null,
+): boolean =>
+  status === 'active' ||
+  ((status === 'cancelled' || status === 'past_due') &&
+    currentPeriodEnd != null &&
+    new Date(currentPeriodEnd).getTime() > Date.now());
+
 export const useAccessStatus = (
   // `session` kept in the signature so callers don't have to change
   // their call shape during the migration. It's no longer used to
@@ -96,9 +112,10 @@ export const useAccessStatus = (
 ): AccessStatus => {
   const status = useUserStore((s) => s.subscriptionStatus);
   const trialStartedAt = useUserStore((s) => s.trialStartedAt);
+  const periodEnd = useUserStore((s) => s.subscriptionCurrentPeriodEnd);
 
   return useMemo(() => {
-    const hasActive = status === 'active';
+    const hasActive = isPaidThrough(status, periodEnd);
     const trialAlreadyUsed = trialStartedAt != null;
 
     // Trial math — derived from trialStartedAt, NOT created_at.
@@ -120,11 +137,11 @@ export const useAccessStatus = (
       inTrial,
       trialDaysLeft,
       status,
-      hasActiveSubscription: hasActive,
+      hasActiveSubscription: status === 'active',
       isFree,
       trialAlreadyUsed,
       // Legacy alias — keep until every caller is renamed.
       hasAccess: hasPremium,
     };
-  }, [status, trialStartedAt]);
+  }, [status, trialStartedAt, periodEnd]);
 };

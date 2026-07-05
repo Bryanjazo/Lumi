@@ -23,23 +23,33 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { SYSTEM_PROMPTS, KIND_MAX_TOKENS } from "./prompts.ts";
 
 type AiKind =
   | "brain_dump"
   | "untangle"
   | "followup"
   | "title_clean"
+  | "clarify"
   | "weekly_report";
 
+// Only kinds with a LIVE client caller are accepted. Dead kinds
+// (brain_dump / followup / weekly_report) were removed with their
+// dead client functions — fewer doors, less to audit.
 const ALLOWED_KINDS: AiKind[] = [
-  "brain_dump",
   "untangle",
-  "followup",
   "title_clean",
-  "weekly_report",
+  "clarify",
 ];
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
+// Per-kind model pick — server-side so a modified client can't
+// route a heavy kind to itself. clarify is a ~40-token spelling
+// repair: Haiku is ~4× cheaper and, more importantly, noticeably
+// faster (the "did you mean" suggestion appears sooner).
+const KIND_MODEL: Partial<Record<AiKind, string>> = {
+  clarify: "claude-haiku-4-5-20251001",
+};
 // Model allowlist (security audit §3) — the client may only pick from
 // models we've priced for. Anything else silently falls back to the
 // default instead of being passed through to Anthropic.
@@ -99,22 +109,27 @@ const validateBody = (raw: unknown): CallBody | { error: string } => {
       return { error: "Each message needs {role, content}" };
     }
   }
-  if (b.system != null && typeof b.system !== "string") {
-    return { error: "system must be a string" };
-  }
+  // SECURITY (audit round 2): the system prompt is SERVER-pinned per
+  // kind — client-supplied `system` is ignored, so our quota can't be
+  // repurposed as a generic Claude API by a modified client. Old app
+  // builds still send `system`; ignoring (not rejecting) keeps them
+  // working.
+  const kind = b.kind as AiKind;
+  const kindCeiling = KIND_MAX_TOKENS[kind] ?? 600;
   const max =
     typeof b.max_tokens === "number" && b.max_tokens > 0
-      ? Math.min(b.max_tokens, MAX_TOKENS_HARD_LIMIT)
-      : 600;
+      ? Math.min(b.max_tokens, kindCeiling, MAX_TOKENS_HARD_LIMIT)
+      : Math.min(600, kindCeiling);
   return {
-    kind: b.kind as AiKind,
-    system: (b.system as string | undefined) ?? "",
+    kind,
+    system: SYSTEM_PROMPTS[kind] ?? "",
     messages: b.messages as CallBody["messages"],
     max_tokens: max,
     model:
-      typeof b.model === "string" && ALLOWED_MODELS.has(b.model)
+      KIND_MODEL[kind] ??
+      (typeof b.model === "string" && ALLOWED_MODELS.has(b.model)
         ? b.model
-        : DEFAULT_MODEL,
+        : DEFAULT_MODEL),
   };
 };
 
@@ -201,7 +216,10 @@ Deno.serve(async (req: Request) => {
       500,
     );
   }
-  if (quota === false) {
+  if (quota !== true) {
+    // FAIL-CLOSED (audit): null/undefined from the RPC used to slip
+    // through a `=== false` check — anything but an explicit true is
+    // a denial now.
     // Distinguish premium ceiling vs free cap so the client can
     // choose calmer wording for premium hits ("let's keep it quick
     // for now") vs the free-tier conversion prompt. Both still
@@ -236,7 +254,25 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         model: body.model,
         max_tokens: body.max_tokens,
-        ...(body.system ? { system: body.system } : {}),
+        // PROMPT CACHING: the system prompt is server-pinned and
+        // byte-identical for every call of a kind, so it's a perfect
+        // cache prefix — reads bill at 10% of input price (writes
+        // +25%, 5-min TTL refreshed on every hit, shared across all
+        // users since the prefix is org-scoped). understand's ~5.4k-
+        // token prompt is the whole cost line; this halves it at any
+        // real traffic. Prompts under the 1024-token cache minimum
+        // (clarify) are silently not cached — no error, no downside.
+        ...(body.system
+          ? {
+              system: [
+                {
+                  type: "text",
+                  text: body.system,
+                  cache_control: { type: "ephemeral" },
+                },
+              ],
+            }
+          : {}),
         messages: body.messages,
       }),
     });
@@ -267,9 +303,23 @@ Deno.serve(async (req: Request) => {
 
   const out = (await upstream.json()) as {
     content?: { type: string; text?: string }[];
-    usage?: { input_tokens?: number; output_tokens?: number };
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
     error?: { type: string; message: string };
   };
+  // Cost telemetry — cache_read > 0 means the prompt cache is doing
+  // its job (visible via `supabase functions logs anthropic-proxy`).
+  console.log(
+    `[proxy] ${body.kind} in=${out.usage?.input_tokens ?? 0} out=${
+      out.usage?.output_tokens ?? 0
+    } cache_write=${out.usage?.cache_creation_input_tokens ?? 0} cache_read=${
+      out.usage?.cache_read_input_tokens ?? 0
+    }`,
+  );
   if (out.error) {
     return json(
       { error: { code: "upstream", message: out.error.message } },
@@ -281,14 +331,18 @@ Deno.serve(async (req: Request) => {
     .map((c) => c.text as string)
     .join("\n");
 
-  // ── 4. Log usage (best-effort — don't block the response if it
-  //      fails; the user still gets their answer). ───────────────
-  void adminClient.from("ai_usage").insert({
+  // ── 4. Log usage. AWAITED on purpose: supabase-js builders are
+  //      lazy — the old `void client.insert(...)` never executed, so
+  //      ai_usage stayed empty and has_ai_quota counted 0 forever
+  //      (free caps were silently unenforced). The insert costs a
+  //      few ms; correctness of the quota system is worth it.
+  const { error: logErr } = await adminClient.from("ai_usage").insert({
     user_id: userId,
     kind: body.kind,
     tokens_in: out.usage?.input_tokens ?? null,
     tokens_out: out.usage?.output_tokens ?? null,
   });
+  if (logErr) console.error("[proxy] ai_usage insert failed:", logErr.message);
 
   return json({ text });
 });
