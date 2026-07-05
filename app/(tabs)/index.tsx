@@ -1053,6 +1053,10 @@ export default function Home() {
   const [focusPickerOpen, setFocusPickerOpen] = useState(false);
   const [capOpen, setCapOpen] = useState(false);
   const [capText, setCapText] = useState('');
+  // "Did you mean?" — persists over the capture pill after a
+  // suspicious voice transcript until the user edits or sends
+  // (a vanishing toast was too easy to miss).
+  const [dymHint, setDymHint] = useState(false);
   // The waiting card ("N more waiting — Lumi's holding them") —
   // collapsed by default, same calm-first default as Done today.
   const [waitingOpen, setWaitingOpen] = useState(false);
@@ -2046,6 +2050,7 @@ export default function Home() {
   const sendCapture = () => {
     const text = capText.trim();
     if (!text) return;
+    setDymHint(false);
 
     const ctx: CaptureContext = {
       sharpWindow,
@@ -2405,7 +2410,7 @@ export default function Home() {
     const spoken = tidy.changed || tidy.suspicious ? tidy.tidied || final : final;
     setCapText((prev) => (prev.trim() ? `${prev.trim()} ${spoken}` : spoken));
     if (tidy.suspicious) {
-      showToast('did you mean this? check it, then send ✦');
+      setDymHint(true);
     }
   };
 
@@ -3416,6 +3421,23 @@ export default function Home() {
           ]}
           pointerEvents="box-none"
         >
+          {dymHint && (
+            <View style={styles.dymHint}>
+              <Text style={styles.dymHintText}>
+                did you mean this? check it, then send ✦
+              </Text>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setDymHint(false);
+                  setCapText('');
+                }}
+                hitSlop={8}
+              >
+                <Text style={styles.dymHintClear}>scrap it</Text>
+              </Pressable>
+            </View>
+          )}
           <View style={styles.capturePillInner}>
             <Text
               style={[styles.capturePillSpark, { color: accent.fg }]}
@@ -3433,7 +3455,10 @@ export default function Home() {
                   : capText
               }
               editable={voice.state !== 'recording'}
-              onChangeText={setCapText}
+              onChangeText={(t) => {
+                setCapText(t);
+                if (dymHint) setDymHint(false);
+              }}
               placeholder={
                 voice.state === 'recording'
                   ? 'listening…'
@@ -4296,6 +4321,32 @@ const makeStyles = (accent: Accent) =>
       // as stacked, not touching.
       bottom: FLOATING_NAV_CLEARANCE + 4,
       zIndex: 30,
+    },
+    dymHint: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      backgroundColor: hexA(C.dusk, 0.14),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.35),
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      marginBottom: 8,
+    },
+    dymHintText: {
+      flex: 1,
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: C.dusk,
+    },
+    dymHintClear: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11.5,
+      color: C.boneDim,
+      textDecorationLine: 'underline',
     },
     capturePillInner: {
       flexDirection: 'row',
