@@ -2411,7 +2411,8 @@ export default function Home() {
 
   const handleMic = async () => {
     if (voice.state === 'idle') {
-      if (!capOpen) setCapOpen(true);
+      // Stays IN the pill — the brain-dump modal is its own room
+      // (the expand button); the mic just talks into the input.
       await voice.start();
     } else if (voice.state === 'recording') {
       const text = await voice.stopAndTranscribe();
