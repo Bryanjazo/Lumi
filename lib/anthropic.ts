@@ -259,6 +259,49 @@ export interface SmartTitleResponse {
 }
 
 // ═════════════════════════════════════════════════════════════════════
+// llmClarify — the TINY "what did they mean" pass (goal: any mistake
+// gets fixed by Lumi's suggestion, cheaply).
+//
+// When a transcript looks wrong and the deterministic rules couldn't
+// confidently repair it, this asks the model ONLY to recover the
+// intended text — ~100 output tokens vs ~3000 for the full
+// understand pass. The fixed text then flows through the
+// DETERMINISTIC engine (and usually routes local), so the expensive
+// call never happens for a capture that just needed de-garbling.
+// ═════════════════════════════════════════════════════════════════════
+const CLARIFY_SYSTEM = `You repair speech-to-text and typing mistakes in a short task capture. Return ONLY JSON: {"fixed":"..."}.
+Rules:
+- Recover what the user MEANT: mishears ("call emori tomato" → "call Emory tomorrow"), split words ("to morrow"), typos, dropped words.
+- Keep names and words you cannot confidently fix exactly as given.
+- NEVER add, remove, or reorder tasks. NEVER invent details, times, or dates that aren't implied by the mistake itself.
+- Keep the user's casual voice. No punctuation beautification beyond what meaning requires.`;
+
+export const llmClarify = async (raw: string): Promise<string | null> => {
+  if (!isAnthropicConfigured) return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 300) return null;
+  try {
+    const text = await Promise.race([
+      callMessages({
+        kind: 'title_clean',
+        system: CLARIFY_SYSTEM,
+        maxTokens: 120,
+        messages: [{ role: 'user', content: trimmed }],
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('clarify timeout')), 4000),
+      ),
+    ]);
+    const parsed = extractJson<{ fixed?: unknown }>(text);
+    if (typeof parsed.fixed !== 'string') return null;
+    const fixed = parsed.fixed.trim().slice(0, 300);
+    return fixed.length > 0 ? fixed : null;
+  } catch {
+    return null; // deterministic tidy already parked a usable version
+  }
+};
+
+// ═════════════════════════════════════════════════════════════════════
 // llmUnderstand — ONE structured-extraction call per capture.
 // Replaces the dual {llmCleanTitle, llmInferCapture} pattern with a
 // single comprehension pass that returns title + importance +

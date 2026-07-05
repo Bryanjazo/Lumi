@@ -109,6 +109,7 @@ import {
 import {
   llmUnderstand,
   isLlmAvailable,
+  llmClarify,
   type UnderstandContext,
   type UnderstoodTask,
 } from '../../lib/anthropic';
@@ -1057,6 +1058,10 @@ export default function Home() {
   // suspicious voice transcript until the user edits or sends
   // (a vanishing toast was too easy to miss).
   const [dymHint, setDymHint] = useState(false);
+  // Send-time soft stop bookkeeping: if we already held a suspicious
+  // text once and the user sends it again unchanged, we respect the
+  // intent and let it through.
+  const dymHeldRef = useRef<string | null>(null);
   // Measured content height of the pill input — iOS multiline
   // TextInputs don't auto-grow from min/maxHeight alone; we track
   // contentSize and set an explicit height (clamped to ~5 lines,
@@ -2055,6 +2060,25 @@ export default function Home() {
   const sendCapture = () => {
     const text = capText.trim();
     if (!text) return;
+    // Typed mistakes get the same net as voice (goal: any mistake →
+    // Lumi suggests): a suspicious text is held ONCE with the
+    // did-you-mean card + background clarify. Sending the same text
+    // again means "I meant it" — it goes through.
+    const typedTidy = tidyTranscript(text);
+    if (typedTidy.suspicious && dymHeldRef.current !== text) {
+      const parked = typedTidy.changed ? typedTidy.tidied : text;
+      dymHeldRef.current = parked;
+      if (typedTidy.changed) setCapText(parked);
+      setDymHint(true);
+      if (isLlmAvailable()) {
+        void llmClarify(parked).then((fixed) => {
+          if (!fixed || fixed === parked) return;
+          dymHeldRef.current = fixed;
+          setCapText((cur) => (cur === parked ? fixed : cur));
+        });
+      }
+      return;
+    }
     setDymHint(false);
     setPillInputH(0);
 
@@ -2407,18 +2431,34 @@ export default function Home() {
   const handleTranscribed = (text: string) => {
     const final = text.trim();
     if (!final) return;
-    // Voice FILLS, the user FIRES (Bryan's rule): the transcript
-    // parks in the capture field — appended if they'd typed — and
-    // nothing parses until they press send. The deterministic tidy
-    // still runs first; a suspicious transcript gets the
-    // "did you mean" nudge on top of the parked text.
+    // Voice FILLS, the user FIRES: the transcript parks in the
+    // capture field — appended if they'd typed — and nothing parses
+    // until they press send. Deterministic tidy runs first; a
+    // suspicious transcript raises the "did you mean" card AND kicks
+    // off the tiny LLM clarify pass (~100 tokens) in the background.
+    // If the model recovers a better reading before the user edits,
+    // the parked text upgrades in place — then the user's send still
+    // routes through the deterministic engine (usually local), so
+    // the expensive understand pass never runs for garble.
     const tidy = tidyTranscript(final);
-    const spoken = tidy.changed || tidy.suspicious ? tidy.tidied || final : final;
-    setCapText((prev) => (prev.trim() ? `${prev.trim()} ${spoken}` : spoken));
+    const spoken =
+      tidy.changed || tidy.suspicious ? tidy.tidied || final : final;
+    const prevText = capText.trim();
+    const parked = prevText ? `${prevText} ${spoken}` : spoken;
+    setCapText(parked);
     if (tidy.suspicious) {
       setDymHint(true);
+      if (isLlmAvailable()) {
+        void llmClarify(spoken).then((fixed) => {
+          if (!fixed || fixed === spoken) return;
+          const upgraded = prevText ? `${prevText} ${fixed}` : fixed;
+          // Only upgrade if the user hasn't touched the text since.
+          setCapText((cur) => (cur === parked ? upgraded : cur));
+        });
+      }
     }
   };
+
 
   const handleMic = async () => {
     if (voice.state === 'idle') {
