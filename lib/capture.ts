@@ -1503,7 +1503,7 @@ export interface TidiedTranscript {
 
 const GIBBERISH_TOKEN_RE = /^[^aeiouy\s]{4,}$/i; // no-vowel consonant runs
 const DANGLING_END_RE =
-  /\b(?:the|a|an|to|and|or|by|at|on|in|for|with|my|your|of)$/i;
+  /\b(?:the|a|an|to|and|or|by|at|for|with|my|your|of)$/i;
 
 export const tidyTranscript = (raw: string): TidiedTranscript => {
   const original = raw.trim();
@@ -1529,7 +1529,11 @@ export const tidyTranscript = (raw: string): TidiedTranscript => {
     words.filter((w) => GIBBERISH_TOKEN_RE.test(w)).length / words.length >
       0.34;
   const cutShort = words.length >= 1 && DANGLING_END_RE.test(t);
-  const tooThin = t.length > 0 && words.length < 2 && t.length < 6;
+  const tooThin =
+    t.length > 0 &&
+    words.length === 1 &&
+    (t.length <= 2 ||
+      /^(?:um+|uh+|erm|hmm?|like|so|yeah|ok(?:ay)?|oh)$/i.test(t));
   const suspicious = gibberish || cutShort || tooThin;
 
   return { tidied: t, changed, suspicious };
