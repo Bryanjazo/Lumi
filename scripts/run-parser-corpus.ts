@@ -318,6 +318,28 @@ const check = (name: string, cond: boolean, detail: string) => {
       tidied: 'buy oat milk tomorrow',
       suspicious: false,
     },
+    {
+      name: 'tidy: one-word tasks are legit',
+      input: 'gym',
+      tidied: 'gym',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: verb particles are not dangling',
+      input: 'turn the heating on',
+      tidied: 'turn the heating on',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: lone filler is junk',
+      input: 'uh',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: trailing "and" is cut off',
+      input: 'buy milk and',
+      suspicious: true,
+    },
   ];
   for (const c of tidyCases) {
     const r = tidyTranscript(c.input);
