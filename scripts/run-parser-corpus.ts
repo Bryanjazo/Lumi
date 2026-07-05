@@ -10,6 +10,7 @@
 import {
   parseSmartCapture,
   routeCapture,
+  tidyTranscript,
   type CaptureContext,
 } from '../lib/capture';
 import { personalizeTask } from '../lib/personalize';
@@ -279,6 +280,54 @@ const check = (name: string, cond: boolean, detail: string) => {
       `kind: "${input}" → ${expectKind}`,
       got.kind === expectKind && got.dur === expectDur,
       `got kind=${got.kind} dur=${got.dur}, want ${expectKind}/${expectDur}`,
+    );
+  }
+
+  // tidyTranscript — the "did you mean" pre-flight for voice.
+  const tidyCases: Array<{
+    name: string;
+    input: string;
+    tidied?: string;
+    suspicious: boolean;
+  }> = [
+    {
+      name: 'tidy: stutters dedupe',
+      input: 'call call the the dentist',
+      tidied: 'call the dentist',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: edge fillers trimmed',
+      input: 'um uh so call mom um',
+      tidied: 'call mom',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: cut-off transcript is suspicious',
+      input: 'remind me to call the',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: gibberish is suspicious',
+      input: 'txhq brzk dentist',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: clean input passes untouched',
+      input: 'buy oat milk tomorrow',
+      tidied: 'buy oat milk tomorrow',
+      suspicious: false,
+    },
+  ];
+  for (const c of tidyCases) {
+    const r = tidyTranscript(c.input);
+    const ok =
+      r.suspicious === c.suspicious &&
+      (c.tidied === undefined || r.tidied === c.tidied);
+    check(
+      c.name,
+      ok,
+      `got tidied="${r.tidied}" suspicious=${r.suspicious}`,
     );
   }
 

@@ -72,6 +72,7 @@ import { useAccent, accentFor, type Accent } from '../../lib/theme';
 import {
   parseSmartCapture,
   routeCapture,
+  tidyTranscript,
   difficultyFromImportance,
   pickWindowForDemand,
   type CaptureContext,
@@ -2395,8 +2396,21 @@ export default function Home() {
    * happening still shows what Lumi heard.
    */
   const handleTranscribed = (text: string) => {
-    const final = text.trim();
+    let final = text.trim();
     if (!final) return;
+    // "Did you mean…?" pre-flight: deterministic tidy of the raw
+    // transcript. Suspicious (cut short / gibberish) → park the
+    // cleaned text in the pill for a one-tap confirm instead of
+    // parsing a guess. Merely-messy → continue with the tidied text
+    // (cleaner input = better parses, fewer LLM tokens).
+    const tidy = tidyTranscript(final);
+    if (tidy.suspicious) {
+      setCapText(tidy.tidied || final);
+      setCapOpen(false);
+      showToast('did you mean this? check it, then send ✦');
+      return;
+    }
+    if (tidy.changed) final = tidy.tidied;
     setCapText(final);
     const ctx: CaptureContext = {
       sharpWindow,
@@ -2483,8 +2497,15 @@ export default function Home() {
         // Defer one tick so React commits the text before parsing.
         setTimeout(() => {
           // Re-read latest text via state by using a fresh closure.
-          const final = text.trim();
+          let final = text.trim();
           if (!final) return;
+          const tidy = tidyTranscript(final);
+          if (tidy.suspicious) {
+            setCapText(tidy.tidied || final);
+            showToast('did you mean this? check it, then send ✦');
+            return;
+          }
+          if (tidy.changed) final = tidy.tidied;
           // Inline send: same logic as sendCapture but uses the
           // transcribed value directly (state may not have flushed).
           const ctx: CaptureContext = {

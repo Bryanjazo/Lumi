@@ -1487,6 +1487,55 @@ const stripTokens = (raw: string, tokens: string[]): string => {
 };
 
 // ═════════════════════════════════════════════════════════════════════
+// Transcript tidy + "did you mean" (goal: soft-confirm garbled voice
+// BEFORE any parse — the LLM never has to guess, and a confirmed
+// clean transcript often routes local instead of paying tokens).
+// ═════════════════════════════════════════════════════════════════════
+export interface TidiedTranscript {
+  /** Cleaned text — stutters deduped, edge fillers trimmed. */
+  tidied: string;
+  /** The tidy actually changed something (beyond whitespace). */
+  changed: boolean;
+  /** The transcript looks OFF — cut short, dangling, or gibberish.
+   *  Callers should show "did you mean this?" instead of parsing. */
+  suspicious: boolean;
+}
+
+const GIBBERISH_TOKEN_RE = /^[^aeiouy\s]{4,}$/i; // no-vowel consonant runs
+const DANGLING_END_RE =
+  /\b(?:the|a|an|to|and|or|by|at|on|in|for|with|my|your|of)$/i;
+
+export const tidyTranscript = (raw: string): TidiedTranscript => {
+  const original = raw.trim();
+  let t = original;
+
+  // 1. Stutter dedupe — "call call the the dentist" (ASR loves this).
+  t = t.replace(/\b(\w+)(\s+\1\b)+/gi, '$1');
+  // 2. Edge fillers — leading/trailing um/uh/like/so noise.
+  t = t
+    .replace(/^(?:\s*(?:um+|uh+|erm|hmm?|like|so|yeah|ok(?:ay)?)[,\s]+)+/i, '')
+    .replace(/(?:[,\s]+(?:um+|uh+|erm|hmm?))+\s*$/i, '');
+  // 3. Whitespace + stray punctuation runs.
+  t = t.replace(/\s{2,}/g, ' ').replace(/([,.!?])\1+/g, '$1').trim();
+
+  const changed =
+    t.toLowerCase().replace(/\s+/g, ' ') !==
+    original.toLowerCase().replace(/\s+/g, ' ');
+
+  // Suspicion — the transcript probably isn't what they meant:
+  const words = t.split(/\s+/).filter(Boolean);
+  const gibberish =
+    words.length > 0 &&
+    words.filter((w) => GIBBERISH_TOKEN_RE.test(w)).length / words.length >
+      0.34;
+  const cutShort = words.length >= 1 && DANGLING_END_RE.test(t);
+  const tooThin = t.length > 0 && words.length < 2 && t.length < 6;
+  const suspicious = gibberish || cutShort || tooThin;
+
+  return { tidied: t, changed, suspicious };
+};
+
+// ═════════════════════════════════════════════════════════════════════
 // Main entry point
 // ═════════════════════════════════════════════════════════════════════
 export const parseSmartCapture = (
