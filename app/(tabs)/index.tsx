@@ -3562,6 +3562,9 @@ export default function Home() {
                       markHintSeen('heyLumiIntro');
                       if (ok) {
                         setHeyLumiEnabled(true);
+                        void Haptics.notificationAsync(
+                          Haptics.NotificationFeedbackType.Success,
+                        ).catch(() => {});
                         showToast('“Hey Lumi” is on — just say it.');
                       } else {
                         showToast(

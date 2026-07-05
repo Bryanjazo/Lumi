@@ -891,6 +891,9 @@ export default function AccountScreen() {
       return;
     }
     setHeyLumiEnabled(true);
+    void Haptics.notificationAsync(
+      Haptics.NotificationFeedbackType.Success,
+    ).catch(() => {});
   };
   const captureLang = useUserStore((s) => s.captureLang);
   const theme = useUserStore((s) => s.theme);

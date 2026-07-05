@@ -359,9 +359,17 @@ export const useHeyLumi = (opts: HeyLumiOpts): HeyLumiController => {
     wakeAtRef.current = Date.now();
     setTranscript(tail);
     setPhase('wake');
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(
+    // Double-tap "I heard you" (mock: wake = soft double haptic).
+    // A single Medium blended into handling noise on device — two
+    // spaced hits read unmistakably as a response.
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(
       () => {},
     );
+    later(() => {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(
+        () => {},
+      );
+    }, 120);
     // The mock's 800ms beat — trimmed a touch since the mic never
     // actually pauses.
     later(() => {
