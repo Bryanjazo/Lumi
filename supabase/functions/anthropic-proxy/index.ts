@@ -29,6 +29,7 @@ type AiKind =
   | "untangle"
   | "followup"
   | "title_clean"
+  | "clarify"
   | "weekly_report";
 
 const ALLOWED_KINDS: AiKind[] = [
@@ -36,6 +37,7 @@ const ALLOWED_KINDS: AiKind[] = [
   "untangle",
   "followup",
   "title_clean",
+  "clarify",
   "weekly_report",
 ];
 
@@ -281,14 +283,18 @@ Deno.serve(async (req: Request) => {
     .map((c) => c.text as string)
     .join("\n");
 
-  // ── 4. Log usage (best-effort — don't block the response if it
-  //      fails; the user still gets their answer). ───────────────
-  void adminClient.from("ai_usage").insert({
+  // ── 4. Log usage. AWAITED on purpose: supabase-js builders are
+  //      lazy — the old `void client.insert(...)` never executed, so
+  //      ai_usage stayed empty and has_ai_quota counted 0 forever
+  //      (free caps were silently unenforced). The insert costs a
+  //      few ms; correctness of the quota system is worth it.
+  const { error: logErr } = await adminClient.from("ai_usage").insert({
     user_id: userId,
     kind: body.kind,
     tokens_in: out.usage?.input_tokens ?? null,
     tokens_out: out.usage?.output_tokens ?? null,
   });
+  if (logErr) console.error("[proxy] ai_usage insert failed:", logErr.message);
 
   return json({ text });
 });

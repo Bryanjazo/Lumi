@@ -28,6 +28,7 @@ import { fonts } from '../../constants/fonts';
 import { timeColors as TC } from '../../constants/colors';
 import { LunaPixel } from '../../components/auth/LunaPixel';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
+import { supabase } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
 import { PRICING } from '../../lib/subscription';
 
@@ -130,6 +131,13 @@ export default function TrialChoiceScreen() {
   const acceptTrial = () => {
     Haptics.selectionAsync();
     startTrial();
+    // Register the trial server-side too (once-only, immutable RPC) —
+    // has_ai_quota's premium path reads trial_started_at from the
+    // server, so without this the trial would be local-only and AI
+    // calls would hit free caps.
+    void supabase.rpc('start_trial').then(({ error }) => {
+      if (error) console.warn('[trial] server registration failed', error.message);
+    });
     markTrialChoiceSeen();
     router.replace('/(tabs)');
   };

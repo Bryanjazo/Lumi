@@ -85,6 +85,7 @@ type AiKind =
   | 'untangle'
   | 'followup'
   | 'title_clean'
+  | 'clarify'
   | 'weekly_report';
 
 const BRAIN_DUMP_SYSTEM = `Parse this messy text into a list of discrete tasks. Each task should be actionable and specific. Return JSON: { "tasks": [{ "title": "...", "difficulty": "easy|medium|hard" }] }`;
@@ -283,7 +284,7 @@ export const llmClarify = async (raw: string): Promise<string | null> => {
   try {
     const text = await Promise.race([
       callMessages({
-        kind: 'title_clean',
+        kind: 'clarify',
         system: CLARIFY_SYSTEM,
         maxTokens: 120,
         messages: [{ role: 'user', content: trimmed }],

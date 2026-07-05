@@ -62,6 +62,7 @@ const CheckIcon = ({ color, size = 13 }: { color: string; size?: number }) => (
 const COMPARE_ROWS = [
   { label: 'Daily brain-dumps', free: '3 / day', pro: 'Unlimited' },
   { label: 'AI sorting & re-plan', free: 'Basic', pro: 'Smart' },
+  { label: '“Did you mean?” fixes', free: 'Rules', pro: 'AI-powered' },
   { label: 'Weekly reflection', free: 'Snippet', pro: 'Full story' },
   { label: 'Calendar sync', free: '1 calendar', pro: 'Multi-cal' },
   { label: "Luna's worlds & skins", free: 'Starter', pro: 'All' },

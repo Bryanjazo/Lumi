@@ -22,6 +22,7 @@ export type QuotaKind =
   | 'untangle'
   | 'followup'
   | 'title_clean'
+  | 'clarify'
   | 'weekly_report';
 
 interface QuotaPromptState {

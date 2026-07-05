@@ -87,6 +87,7 @@ import {
   dominantStaleCluster,
 } from '../../lib/learning/avoidance';
 import { useRescueStore } from '../../store/rescueStore';
+import { useAccessStatus } from '../../lib/subscription';
 import { RescueCard } from '../../components/RescueCard';
 import { WelcomeBackCard } from '../../components/WelcomeBackCard';
 import { useVoice } from '../../lib/voice';
@@ -1030,6 +1031,9 @@ export default function Home() {
   const recordCorrection = useCorrectionsStore((s) => s.record);
   const recentCorrections = useCorrectionsStore((s) => s.recent);
   // §2.5 metrics — route decisions + edit flags for the current preview.
+  // Pro gate for the LLM clarify pass — free users keep the
+  // deterministic tidy; AI-powered "did you mean" is an upgrade.
+  const access = useAccessStatus(null);
   const recordAiMetric = useAiMetricsStore((s) => s.record);
   const updateAiMetric = useAiMetricsStore((s) => s.update);
   const lastMetricIdRef = useRef<string | null>(null);
@@ -2070,7 +2074,7 @@ export default function Home() {
       dymHeldRef.current = parked;
       if (typedTidy.changed) setCapText(parked);
       setDymHint(true);
-      if (isLlmAvailable()) {
+      if (isLlmAvailable() && access.hasPremium) {
         void llmClarify(parked).then((fixed) => {
           if (!fixed || fixed === parked) return;
           dymHeldRef.current = fixed;
@@ -2448,7 +2452,7 @@ export default function Home() {
     setCapText(parked);
     if (tidy.suspicious) {
       setDymHint(true);
-      if (isLlmAvailable()) {
+      if (isLlmAvailable() && access.hasPremium) {
         void llmClarify(spoken).then((fixed) => {
           if (!fixed || fixed === spoken) return;
           const upgraded = prevText ? `${prevText} ${fixed}` : fixed;
