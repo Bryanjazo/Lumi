@@ -32,6 +32,7 @@ import { useQuestStore } from '../store/questStore';
 import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { useSession, handleAuthDeepLink } from '../lib/auth';
+import { syncNotifications } from '../lib/notifications';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { useCloudSync, useSyncStatus } from '../lib/sync';
 import { useWidgetSync } from '../lib/widget';
@@ -227,6 +228,26 @@ export default function RootLayout() {
     });
     return () => sub.remove();
   }, []);
+
+  // ── Notification sync (passive) ────────────────────────────────
+  // Re-align the scheduled set whenever the inputs move: app start,
+  // anchor edits (times shift), pref changes made elsewhere, or the
+  // recurring-quest roster changing. Passive mode NEVER prompts for
+  // permission — only the profile toggles do that.
+  const notifPrefs = useUserStore((s) => s.notifPrefs);
+  const notifAnchors = useUserStore((s) => s.anchors);
+  const recurSignature = useQuestStore((s) =>
+    s.quests
+      .filter((q) => q.recur && !q.completed)
+      .map((q) => q.id)
+      .join(','),
+  );
+  useEffect(() => {
+    const t = setTimeout(() => {
+      void syncNotifications().catch(() => {});
+    }, 1500); // debounce bursts (onboarding writes several anchors)
+    return () => clearTimeout(t);
+  }, [notifPrefs, notifAnchors, recurSignature]);
 
   const trialChoiceSeen = useUserStore((s) => s.trialChoiceSeen);
 

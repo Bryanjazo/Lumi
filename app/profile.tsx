@@ -38,6 +38,7 @@ import { DayRibbon } from '../components/DayRibbon';
 
 import { fonts } from '../constants/fonts';
 import { skins } from '../constants/skins';
+import { syncNotifications } from '../lib/notifications';
 import { lunaSource, useLunaSkin, type LunaMood } from '../lib/luna-source';
 import { skinPreview } from '../lib/skin-preview';
 import { useAmbientLunaMood } from '../lib/luna-mood';
@@ -839,6 +840,25 @@ export default function AccountScreen() {
   // Settings state
   const notifPrefs = useUserStore((s) => s.notifPrefs);
   const setNotifPref = useUserStore((s) => s.setNotifPref);
+  // Toggle → store → notification sync (interactive: may prompt for
+  // permission on first enable). Denied? Flip the toggle back and
+  // point at Settings — a switch that looks on but does nothing is
+  // worse than a clear no.
+  const changeNotifPref = (
+    key: Parameters<typeof setNotifPref>[0],
+    value: boolean,
+  ) => {
+    setNotifPref(key, value);
+    void syncNotifications({ interactive: value }).then(({ granted }) => {
+      if (!granted && value) {
+        setNotifPref(key, false);
+        Alert.alert(
+          'Notifications are off',
+          'Enable them for Lumi in Settings → Notifications, then flip this back on.',
+        );
+      }
+    });
+  };
   const voiceEnabled = useUserStore((s) => s.voiceEnabled);
   const setVoiceEnabled = useUserStore((s) => s.setVoiceEnabled);
   const captureLang = useUserStore((s) => s.captureLang);
@@ -3014,7 +3034,7 @@ export default function AccountScreen() {
             sub="a soft tap for what's next"
             prefKey="nudges"
             value={notifPrefs.nudges}
-            onChange={(v) => setNotifPref('nudges', v)}
+            onChange={(v) => changeNotifPref('nudges', v)}
           />
           <NotifRow
             icon="◷"
@@ -3022,7 +3042,7 @@ export default function AccountScreen() {
             sub="your Sunday recap is ready"
             prefKey="recap"
             value={notifPrefs.recap}
-            onChange={(v) => setNotifPref('recap', v)}
+            onChange={(v) => changeNotifPref('recap', v)}
           />
           <NotifRow
             icon="🔁"
@@ -3030,7 +3050,7 @@ export default function AccountScreen() {
             sub="for quests you've set to repeat"
             prefKey="recurring"
             value={notifPrefs.recurring}
-            onChange={(v) => setNotifPref('recurring', v)}
+            onChange={(v) => changeNotifPref('recurring', v)}
           />
           <NotifRow
             icon="☾"
@@ -3038,7 +3058,7 @@ export default function AccountScreen() {
             sub={`nothing after ${fmtTime(anchors.sleep)}`}
             prefKey="quiet"
             value={notifPrefs.quiet}
-            onChange={(v) => setNotifPref('quiet', v)}
+            onChange={(v) => changeNotifPref('quiet', v)}
             last
           />
         </Group>
