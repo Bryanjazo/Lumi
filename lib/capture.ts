@@ -664,7 +664,7 @@ interface ParsedTime {
 // canonical form; the shorthand itself is pushed into `matched` so it
 // still gets stripped from the visible title.
 const TIME_SYNONYMS: Array<[RegExp, string]> = [
-  [/\btmrw\b|\btmr\b/g, 'tomorrow'],
+  [/\btmrw\b|\btmr\b|\btomm?orr?ow?\b|\btommorrow\b/g, 'tomorrow'],
   [/\btonite\b/g, 'tonight'],
   [/\bwknds?\b/g, 'weekend'],
   [/\beod\b/g, 'end of day'],
@@ -1344,6 +1344,46 @@ const SPLIT_SEP =
 const CORRECTION_GLUE =
   /[,;]?\s*\b(no,? wait|wait,? no|scratch that|actually,? make (?:that|it)|no,? actually|i mean)\b[,.;]?\s*/gi;
 
+// ── Run-on subdivision (unpunctuated typing) ───────────────────────
+// "call mom buy milk finish the report" has no separators, so the
+// splitter sees ONE fragment. Subdivide at verb boundaries: a new
+// lexicon verb starts a new task — UNLESS the previous word marks it
+// as part of the same clause ("to call", "a quick walk", "go get").
+// Conservative on purpose: each piece must keep >=2 words and its
+// own verb; anything ambiguous stays whole (the LLM path handles it
+// when available — this is the deterministic floor).
+const RUNON_GUARD_PREV =
+  /^(?:to|and|or|then|also|just|go|gonna|please|a|an|the|this|that|my|your|our|his|her|their|i|you|we|they|will|would|wanna|can|can'?t|should|don'?t|must|lets|let'?s|me|quick|long|short|big|small|little|deep|fast|slow|daily|nice|good|morning|evening|really|finally)$/i;
+
+const splitRunOn = (frag: string): string[] => {
+  const words = frag.split(/\s+/).filter(Boolean);
+  if (words.length < 4) return [frag];
+  const pieces: string[] = [];
+  let start = 0;
+  let verbsInPiece = 0;
+  for (let i = 0; i < words.length; i++) {
+    const token = words[i].replace(/[^\w'']/g, '');
+    const isVerb = token.length > 1 && VERB_RE.test(token);
+    if (
+      isVerb &&
+      i > start &&
+      verbsInPiece >= 1 &&
+      i - start >= 2 &&
+      words.length - i >= 2 &&
+      !RUNON_GUARD_PREV.test(words[i - 1].replace(/[^\w'']/g, '')) &&
+      !/[''']s$/i.test(words[i - 1]) // possessive → "sarah's email" is a noun
+    ) {
+      pieces.push(words.slice(start, i).join(' '));
+      start = i;
+      verbsInPiece = 1;
+      continue;
+    }
+    if (isVerb) verbsInPiece++;
+  }
+  pieces.push(words.slice(start).join(' '));
+  return pieces;
+};
+
 const splitFragments = (text: string): string[] => {
   // Fuse correction markers to their neighbors BEFORE splitting so
   // "buy milk, no wait, oat milk" stays one fragment (one task, one
@@ -1376,7 +1416,16 @@ const splitFragments = (text: string): string[] => {
     }
   }
   if (current) frags.push(current);
-  return frags.map((s) => s.trim()).filter((s) => s.length > 1);
+  return (
+    frags
+      // Corrections resolve BEFORE run-on subdivision — otherwise
+      // "call mom no wait call dad" splits at the second verb into
+      // two tasks instead of collapsing to the corrected one.
+      .map(applySelfCorrection)
+      .flatMap(splitRunOn)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 1)
+  );
 };
 
 /**

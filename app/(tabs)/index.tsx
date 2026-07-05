@@ -3473,10 +3473,13 @@ export default function Home() {
               style={[
                 styles.capturePillInput,
                 {
-                  height: Math.min(
-                    130,
-                    Math.max(36, pillInputH + 16),
-                  ),
+                  // Flat single-line pill until the text actually
+                  // wraps; then grow with content to ~5 lines and
+                  // scroll inside beyond that.
+                  height:
+                    pillInputH <= 24
+                      ? 36
+                      : Math.min(130, pillInputH + 16),
                 },
                 voice.state === 'recording' && { color: C.dusk },
               ]}

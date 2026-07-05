@@ -466,6 +466,37 @@ export const CORPUS: CorpusCase[] = [
     expect: [{ title: 'Finish the slides' }, { title: 'Call the bank' }],
   },
 
+  // ═══ H3 · Unpunctuated run-ons (typed, no commas) ═══
+  {
+    name: 'run-on: three verbs three tasks',
+    input: 'call mom buy milk finish the report',
+    expect: [
+      { title: 'Call mom' },
+      { title: 'Buy milk' },
+      { title: 'Finish the report' },
+    ],
+  },
+  {
+    name: 'run-on: two chores split',
+    input: 'make dinner do laundry',
+    expect: [{ title: 'Make dinner' }, { title: 'Do laundry' }],
+  },
+  {
+    name: 'run-on guard: noun "call" stays one task',
+    input: 'schedule a call with the bank',
+    expect: [{ title: 'Schedule a call with the bank' }],
+  },
+  {
+    name: 'run-on guard: "go get" is one clause',
+    input: 'go get milk',
+    expect: [{ title: 'Go get milk' }],
+  },
+  {
+    name: 'typo date: tomorow',
+    input: 'email sarah tomorow',
+    expect: [{ title: 'Email sarah', dateOffset: 1 }],
+  },
+
   // ═══ I · The full Bryan dump (end-to-end guard) ═══
   {
     name: 'the mega-dump',
