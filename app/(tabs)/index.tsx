@@ -3289,12 +3289,12 @@ export default function Home() {
                             { backgroundColor: classifyKind(q.title).color },
                           ]}
                         />
-                        <Text numberOfLines={1} style={styles.waitingRowTitle}>
+                        <Text style={styles.waitingRowTitle}>
                           {q.title}
                         </Text>
                       </View>
                       {q.note && (
-                        <Text numberOfLines={1} style={styles.waitingNote}>
+                        <Text style={styles.waitingNote}>
                           {q.note}
                         </Text>
                       )}
@@ -3389,7 +3389,7 @@ export default function Home() {
               <View style={styles.doneTodayBadge}>
                 <Text style={styles.doneTodayBadgeGlyph}>✓</Text>
               </View>
-              <Text numberOfLines={1} style={styles.doneTodayHeadTitle}>
+              <Text style={styles.doneTodayHeadTitle}>
                 {doneTodayList.length} done today —{' '}
                 {doneTodayList.length >= 5
                   ? 'a genuinely full day'
@@ -3415,7 +3415,7 @@ export default function Home() {
                         <Text style={styles.historyCheckGlyph}>✓</Text>
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.historyTitle} numberOfLines={1}>
+                        <Text style={styles.historyTitle}>
                           {q.title}
                         </Text>
                         <Text style={styles.historyMeta}>

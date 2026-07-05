@@ -418,7 +418,7 @@ function PickStep({
                   {TIER[suggested.importance].sigil}
                 </Text>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.suggestTitle} numberOfLines={1}>
+                  <Text style={styles.suggestTitle}>
                     {suggested.title}
                   </Text>
                   <Text style={styles.suggestSub}>
@@ -449,7 +449,7 @@ function PickStep({
                 {TIER[q.importance].sigil}
               </Text>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.listTitle} numberOfLines={1}>
+                <Text style={styles.listTitle}>
                   {q.title}
                 </Text>
                 <Text style={styles.listSub}>{TIER[q.importance].label}</Text>
@@ -639,7 +639,7 @@ function PickStep({
                       >
                         {TIER[q.importance].sigil}
                       </Text>
-                      <Text style={styles.monthComingTitle} numberOfLines={1}>
+                      <Text style={styles.monthComingTitle}>
                         {q.title}
                       </Text>
                       <Text style={styles.rowChev}>›</Text>

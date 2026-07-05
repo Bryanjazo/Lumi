@@ -913,7 +913,7 @@ const DayView = ({
                 </View>
                 <Text style={styles.dayNowLabel}>now · {fmt(nowMin)}</Text>
                 {openAhead != null && (
-                  <Text numberOfLines={1} style={styles.dayNowSub}>
+                  <Text style={styles.dayNowSub}>
                     {dur(openAhead)} of open water ahead
                   </Text>
                 )}
@@ -1178,7 +1178,7 @@ const WeekView = ({
                         {q.tier ? IMPORTANCE[q.tier].sigil : '◆'}
                       </Text>
                       <Text
-                        numberOfLines={1}
+                        numberOfLines={2}
                         style={[
                           styles.weekChipTitle,
                           q.done && {
@@ -1570,7 +1570,6 @@ const MonthView = ({
                   </Text>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text
-                      numberOfLines={1}
                       style={[
                         styles.monthPeekTaskTitle,
                         q.done && {
@@ -1760,7 +1759,7 @@ const NextBar = ({
         <Text style={[styles.nextBarEyebrow, { color: accent.fg }]}>
           {nextUp.isToday ? 'Up next' : 'Next · tomorrow'}
         </Text>
-        <Text numberOfLines={1} style={styles.nextBarTitle}>
+        <Text style={styles.nextBarTitle}>
           {nextUp.item.title}
         </Text>
       </View>
