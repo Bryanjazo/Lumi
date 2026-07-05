@@ -3513,11 +3513,27 @@ export default function Home() {
               ✦
             </Text>
             <TextInput
-              value={capText}
+              // While recording, the live partial transcript streams
+              // into the pill (dusk-dimmed) so speaking never feels
+              // blind — the words appear as they're heard, then the
+              // final transcript submits through the same pipeline.
+              value={
+                voice.state === 'recording' && voice.partial
+                  ? voice.partial
+                  : capText
+              }
+              editable={voice.state !== 'recording'}
               onChangeText={setCapText}
-              placeholder="Dump a thought…"
+              placeholder={
+                voice.state === 'recording'
+                  ? 'listening…'
+                  : 'Dump a thought…'
+              }
               placeholderTextColor={C.mute}
-              style={styles.capturePillInput}
+              style={[
+                styles.capturePillInput,
+                voice.state === 'recording' && { color: C.dusk },
+              ]}
               multiline
               scrollEnabled
               returnKeyType="send"

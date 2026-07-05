@@ -15,6 +15,8 @@ import { useVoice } from '../lib/voice';
 import { MicIcon } from './MicIcon';
 
 interface Props {
+  /** Live interim transcript while recording ('' when idle/done). */
+  onPartial?: (text: string) => void;
   /** Called with the final transcribed text. */
   onTranscribed: (text: string) => void;
   /** Show inline error messages below the button. */
@@ -32,8 +34,16 @@ export const MicButton = ({
   onTranscribed,
   showError = true,
   size = 'medium',
+  onPartial,
 }: Props) => {
-  const { state, error, start, stopAndTranscribe, cancel } = useVoice();
+  const { state, error, start, stopAndTranscribe, cancel, partial } =
+    useVoice();
+
+  // Stream the live partial to the parent (the modal shows it in the
+  // textarea so speaking never feels blind).
+  useEffect(() => {
+    onPartial?.(state === 'recording' ? partial : '');
+  }, [partial, state, onPartial]);
   const pulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {

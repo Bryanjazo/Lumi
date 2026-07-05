@@ -16,7 +16,7 @@
 // the caller's job — we call onClose() and expect it to unwind any
 // in-flight recording.
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Modal,
   View,
@@ -78,6 +78,9 @@ export function HomeCaptureModal({
   onTranscribed,
   submitting,
 }: HomeCaptureModalProps) {
+  // Live interim transcript from the mic — display-only overlay so
+  // speaking into the modal streams words as they're heard.
+  const [livePartial, setLivePartial] = useState('');
   // Fresh open → don't accidentally carry text from a prior dismiss.
   // Home handles the state clear on close, but wire a guard anyway
   // so the modal always renders clean when it slides up.
@@ -139,7 +142,13 @@ export function HomeCaptureModal({
             <View style={styles.textareaWrap}>
               <TextInput
                 autoFocus
-                value={capText}
+                value={
+                  livePartial
+                    ? capText
+                      ? `${capText} ${livePartial}`
+                      : livePartial
+                    : capText
+                }
                 onChangeText={setCapText}
                 placeholder="behind on the pitch deck and stressing about thursday, need to edit the podcast, invoice is overdue, mom's birthday coming up don't forget…"
                 placeholderTextColor={C.mute}
@@ -147,7 +156,7 @@ export function HomeCaptureModal({
                 multiline
                 textAlignVertical="top"
                 scrollEnabled
-                editable={!submitting}
+                editable={!submitting && !livePartial}
               />
             </View>
 
@@ -157,6 +166,7 @@ export function HomeCaptureModal({
                 <MicButton
                   size="medium"
                   showError={false}
+                  onPartial={setLivePartial}
                   onTranscribed={(text) => {
                     if (!text) return;
                     // Prepend transcribed text into the composer. User

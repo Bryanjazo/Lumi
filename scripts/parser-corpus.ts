@@ -434,6 +434,38 @@ export const CORPUS: CorpusCase[] = [
     expect: [{ title: 'Call the plumber' }, { title: 'Book the hotel' }],
   },
 
+  // ═══ H2 · Self-corrections (Wispr-Flow behavior, zero tokens) ═══
+  {
+    name: 'correction: full restatement',
+    input: 'call mom no wait call dad',
+    expect: [{ title: 'Call dad' }],
+  },
+  {
+    name: 'correction: object swap keeps verb',
+    input: 'buy milk, no wait, oat milk',
+    expect: [{ title: 'Buy oat milk' }],
+  },
+  {
+    name: 'correction: scratch that + date survives',
+    input: 'text jess scratch that text sam tomorrow',
+    expect: [{ title: 'Text sam', dateOffset: 1 }],
+  },
+  {
+    name: 'correction: verb particle kept',
+    input: 'pick up coffee no wait tea',
+    expect: [{ title: 'Pick up tea' }],
+  },
+  {
+    name: 'correction: chained keeps final intent',
+    input: 'call mom no wait dad i mean grandma',
+    expect: [{ title: 'Call grandma' }],
+  },
+  {
+    name: 'correction inside a multi-dump',
+    input: 'finish the report, no wait, the slides, and call the bank',
+    expect: [{ title: 'Finish the slides' }, { title: 'Call the bank' }],
+  },
+
   // ═══ I · The full Bryan dump (end-to-end guard) ═══
   {
     name: 'the mega-dump',

@@ -273,6 +273,11 @@ CORE STANCE — read every input through these lenses BEFORE you classify:
 
   1. ADHD users brain-dump. They don't write tidy lists. A single capture often contains 3-5 tasks woven through filler words, half-thoughts, and "oh wait also" inserts. Extract them all, lose nothing important.
 
+  1b. SELF-CORRECTIONS: spoken input contains disruptions — "no wait",
+     "scratch that", "actually make that 4pm", "…I mean…". Honor ONLY
+     the corrected version. NEVER create a task from an abandoned
+     first attempt ("call mom no wait call dad" = ONE task: call dad).
+
   2. ADHD users use emotional language that signals task weight:
      - "the thing I've been avoiding / putting off / dreading"  → HIGH importance + HIGH energyDemand (it's avoidance — they need it scheduled into their PEAK, not buried in slump)
      - "really really need to" / "ok I HAVE to" / repeated emphasis  → HIGH importance (the repetition is them building motivation)

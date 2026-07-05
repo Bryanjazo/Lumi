@@ -1300,6 +1300,39 @@ const standsAlone = (clause: string): boolean => {
   return clause.split(/\s+/).length > 6;
 };
 
+// ── Self-corrections (goal: speak naturally, land right) ────────────
+// "call mom— no wait, call dad" must produce ONE task: "Call dad".
+// The marker splits a clause into head (abandoned) and tail (meant).
+// If the tail carries its own verb it simply replaces the head; if
+// it's just the corrected object ("buy milk no wait oat milk"), we
+// keep the head's verb and swap the object: "buy oat milk".
+const CORRECTION_RE =
+  /\s*(?:,\s*)?\b(?:no,? wait|wait,? no|scratch that|actually,? make (?:that|it)|no,? actually|i mean)\b[,.]?\s+/i;
+
+const applySelfCorrection = (fragment: string): string => {
+  const m = fragment.match(CORRECTION_RE);
+  if (!m || m.index == null) return fragment;
+  const head = fragment.slice(0, m.index).trim();
+  // Recurse so chained corrections keep only the final intent.
+  const tail = applySelfCorrection(
+    fragment.slice(m.index + m[0].length).trim(),
+  );
+  if (!tail) return head;
+  if (!head) return tail;
+  if (VERB_RE.test(tail)) return tail; // full restatement wins
+  // Object-only correction: keep the head's verb (+ particle), swap
+  // the rest. "buy milk" + "oat milk" → "buy oat milk".
+  const vm = head.match(VERB_RE);
+  if (vm && vm.index != null) {
+    let end = vm.index + vm[0].length;
+    const after = head.slice(end);
+    const particle = after.match(/^\s+(?:up|out|off|on|in|back|over)\b/i);
+    if (particle) end += particle[0].length;
+    return `${head.slice(0, end).trim()} ${tail}`.trim();
+  }
+  return tail;
+};
+
 const INTENT_START =
   /^(?:don'?t let me forget|remember to\b|i keep meaning to)/i;
 
@@ -1308,8 +1341,15 @@ const INTENT_START =
 const SPLIT_SEP =
   /(,?\s+(?:and then|and also|oh and|and|then|also|plus|but)\s+|,?\s*(?=don'?t let me forget|remember to |i keep meaning to )|\s*[.;]\s*|\s*[—–]\s*|\s+-\s+|\s*,\s*)/i;
 
+const CORRECTION_GLUE =
+  /[,;]?\s*\b(no,? wait|wait,? no|scratch that|actually,? make (?:that|it)|no,? actually|i mean)\b[,.;]?\s*/gi;
+
 const splitFragments = (text: string): string[] => {
-  const parts = text.replace(/\n+/g, '. ').split(SPLIT_SEP);
+  // Fuse correction markers to their neighbors BEFORE splitting so
+  // "buy milk, no wait, oat milk" stays one fragment (one task, one
+  // deterministic fix, zero tokens) instead of three.
+  const fused = text.replace(CORRECTION_GLUE, ' $1 ');
+  const parts = fused.replace(/\n+/g, '. ').split(SPLIT_SEP);
   const frags: string[] = [];
   let current = (parts[0] ?? '').trim();
   for (let i = 1; i < parts.length; i += 2) {
@@ -1461,7 +1501,9 @@ export const parseSmartCapture = (
     // Vent stripping: cut a trailing stress clause ("…it's stressing
     // me out"), then drop fragments that are PURE vent — the feeling
     // is real, it just isn't a task.
-    const raw = frag.trim().replace(VENT_TAILS, '').trim();
+    const raw = applySelfCorrection(frag.trim())
+      .replace(VENT_TAILS, '')
+      .trim();
     if (raw.length < 2) continue;
     if (VENT_ONLY.some((re) => re.test(raw))) {
       droppedVent = true;
