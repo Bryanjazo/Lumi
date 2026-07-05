@@ -24,7 +24,7 @@
 //   - Multi-card Lumi-noticed carousel → ONE calm card
 //   - Level/rank display → moved to Me tab (per spec §2)
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -39,7 +39,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
@@ -90,7 +90,13 @@ import { useRescueStore } from '../../store/rescueStore';
 import { useAccessStatus } from '../../lib/subscription';
 import { RescueCard } from '../../components/RescueCard';
 import { WelcomeBackCard } from '../../components/WelcomeBackCard';
-import { useVoice } from '../../lib/voice';
+import {
+  useVoice,
+  isVoiceConfigured,
+  isForeignVoiceSession,
+} from '../../lib/voice';
+import { useHeyLumi, requestHeyLumiPermission } from '../../lib/heyLumi';
+import { HeyLumiSheet } from '../../components/HeyLumiSheet';
 import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
 import { TwinkleMotes } from '../../components/TwinkleMotes';
@@ -1018,6 +1024,10 @@ export default function Home() {
   // evening-window end. Captured at 10:15 PM with a 11:45 PM bedtime
   // and saying "before bed" → land tonight, not tomorrow morning.
   const anchors = useUserStore((s) => s.anchors);
+  const heyLumiEnabled = useUserStore((s) => s.heyLumiEnabled);
+  const setHeyLumiEnabled = useUserStore((s) => s.setHeyLumiEnabled);
+  const hintsSeen = useUserStore((s) => s.hintsSeen);
+  const markHintSeen = useUserStore((s) => s.markHintSeen);
 
   const quests = useQuestStore((s) => s.quests);
   const toggle = useQuestStore((s) => s.toggle);
@@ -2400,6 +2410,18 @@ export default function Home() {
 
   const handleMic = async () => {
     if (voice.state === 'idle') {
+      // Hand the recognizer over: the Hey-Lumi wake loop (if armed)
+      // aborts first, and a short beat lets its terminal `end` land
+      // before the pill claims the singleton mic.
+      if (heyLumiArmed) {
+        heyLumi.cancel();
+        // Wait for the drained session's terminal event to actually
+        // land (not a fixed beat) — otherwise the pill's cold-start
+        // events get swallowed by the foreign-session guard.
+        for (let i = 0; i < 10 && isForeignVoiceSession(); i++) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
       // Stays IN the pill — the brain-dump modal is its own room
       // (the expand button); the mic just talks into the input.
       await voice.start();
@@ -2416,6 +2438,122 @@ export default function Home() {
   useEffect(() => {
     if (voice.error) showToast(voice.error);
   }, [voice.error]);
+
+  // ── "Hey Lumi" wake word (Pro) ───────────────────────────────────
+  // Foreground hands-free capture: say "hey Lumi" and the voice
+  // layer (components/HeyLumiSheet) streams what follows through the
+  // SAME pipeline as the pill — tidy → routing gate → deterministic
+  // or LLM understand — then reads it back and auto-keeps in 5s.
+  // Armed only when: pref ON + Pro + this tab focused + the pill mic
+  // idle + no capture flow already in progress. The recognizer is a
+  // global singleton, so the wake loop stands down the moment any
+  // other mic (or the preview flow) needs the stage.
+  const [isFocused, setIsFocused] = useState(true);
+  const heyLumiRef = useRef<{ cancel: () => void } | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => {
+        setIsFocused(false);
+        // A live wake/command session must not follow the user to
+        // another tab — Untangle's mic shares the same recognizer.
+        heyLumiRef.current?.cancel();
+      };
+    }, []),
+  );
+  const heyLumiArmed =
+    heyLumiEnabled &&
+    access.hasPremium &&
+    isVoiceConfigured &&
+    isFocused &&
+    voice.state === 'idle' &&
+    !capOpen &&
+    !sortingRaw &&
+    !previewTasks;
+
+  /** Same pipeline as sendCapture, promise-shaped for the sheet. */
+  const heyLumiParse = async (raw: string): Promise<SmartTask[]> => {
+    const tidy = tidyTranscript(raw);
+    const text = ((tidy.changed ? tidy.tidied : raw) || raw).trim();
+    if (!text) return [];
+    const d = new Date();
+    const ctx: CaptureContext = {
+      sharpWindow,
+      foggyWindow,
+      peakStart: digest.curve.peakStart,
+      peakEnd: digest.curve.peakEnd,
+      slumpStart: digest.curve.slumpStart,
+      slumpEnd: digest.curve.slumpEnd,
+      effectiveWindows,
+      now: d,
+      nowMin: d.getHours() * 60 + d.getMinutes(),
+      wakeMin: anchors.wake,
+      sleepMin: anchors.sleep,
+      anchors,
+    };
+    const detTasks = parseSmartCapture(text, ctx);
+    if (detTasks.length === 0) return [];
+    if (textReadsOverwhelmed(text)) triggerEmpathize();
+    const gate = routeCapture(text, detTasks);
+    if (isLlmAvailable() && gate.route === 'llm') {
+      const metricId = recordAiMetric({
+        route: 'llm',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
+      lastMetricIdRef.current = metricId;
+      const startedAt = Date.now();
+      const llmTasks = await runLlmUnderstand(text);
+      if (llmTasks && llmTasks.length > 0) {
+        updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
+        return smartTasksFromLlm(llmTasks, detTasks);
+      }
+      updateAiMetric(metricId, {
+        route: 'llm_fallback',
+        latencyMs: Date.now() - startedAt,
+      });
+    } else {
+      lastMetricIdRef.current = recordAiMetric({
+        route: 'local',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
+    }
+    return personalizeTasks(detTasks, recentCorrections(20));
+  };
+
+  const heyLumi = useHeyLumi({
+    enabled: heyLumiArmed,
+    parse: heyLumiParse,
+    onCommit: (kept) => {
+      for (const t of kept) commitTask(t);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      showToast(
+        kept.length > 1
+          ? `Saved ${kept.length} tasks — sorted into your day.`
+          : placementToast(kept[0]),
+      );
+    },
+    onFixUp: (raw, parsed) => {
+      if (parsed.length > 0) {
+        // "Fix up" lands in the normal preview cards — same editing
+        // surface as a pill capture.
+        setPreviewTasks(parsed);
+      } else {
+        setCapText(raw);
+        showToast('Put it in the pill — tweak it and send.');
+      }
+    },
+    onMicProblem: () => {
+      setHeyLumiEnabled(false);
+      showToast(
+        'Mic access is off — “Hey Lumi” paused. Enable it in Settings → Lumi.',
+      );
+    },
+  });
+  heyLumiRef.current = heyLumi;
 
   // Suggestion → schedule sheet → commit. The user picks cadence
   // (daily/weekly/monthly/etc.), an optional day, and an exact time
@@ -3405,6 +3543,50 @@ export default function Home() {
           ]}
           pointerEvents="box-none"
         >
+          {/* One-time "Hey Lumi" intro — Pro users who haven't turned
+              the wake word on. Same calm dusk surface as the
+              did-you-mean card; two taps and it's live. */}
+          {!dymHint &&
+            access.hasPremium &&
+            isVoiceConfigured &&
+            !heyLumiEnabled &&
+            !hintsSeen.includes('heyLumiIntro') && (
+              <View style={styles.dymHint}>
+                <Text style={styles.dymHintText}>
+                  new: say “hey Lumi” to capture hands-free ✧
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    void requestHeyLumiPermission().then((ok) => {
+                      markHintSeen('heyLumiIntro');
+                      if (ok) {
+                        setHeyLumiEnabled(true);
+                        showToast('“Hey Lumi” is on — just say it.');
+                      } else {
+                        showToast(
+                          'Mic access is off — enable it in Settings → Lumi.',
+                        );
+                      }
+                    });
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.dymHintClear, { color: accent.fg }]}>
+                    turn it on
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    markHintSeen('heyLumiIntro');
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={styles.dymHintClear}>not now</Text>
+                </Pressable>
+              </View>
+            )}
           {dymHint && (
             <View style={styles.dymHint}>
               <Text style={styles.dymHintText}>
@@ -3673,6 +3855,17 @@ export default function Home() {
         onSubmit={sendCapture}
         onTranscribed={handleTranscribed}
         submitting={aiPending}
+      />
+      {/* "Hey Lumi" voice layer — phrase-triggered only, Pro. */}
+      <HeyLumiSheet
+        phase={heyLumi.phase}
+        transcript={heyLumi.transcript}
+        tasks={heyLumi.tasks}
+        countdown={heyLumi.countdown}
+        autoKeep={heyLumi.autoKeep}
+        onKeep={heyLumi.keep}
+        onFixUp={heyLumi.fixUp}
+        onCancel={heyLumi.cancel}
       />
     </SafeAreaView>
   );

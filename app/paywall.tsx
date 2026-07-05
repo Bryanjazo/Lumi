@@ -63,6 +63,7 @@ const COMPARE_ROWS = [
   { label: 'Daily brain-dumps', free: '3 / day', pro: 'Unlimited' },
   { label: 'AI sorting & re-plan', free: 'Basic', pro: 'Smart' },
   { label: '“Did you mean?” fixes', free: 'Rules', pro: 'AI-powered' },
+  { label: '“Hey Lumi” hands-free', free: '—', pro: 'Wake word' },
   { label: 'Weekly reflection', free: 'Snippet', pro: 'Full story' },
   { label: 'Calendar sync', free: '1 calendar', pro: 'Multi-cal' },
   { label: "Luna's worlds & skins", free: 'Starter', pro: 'All' },

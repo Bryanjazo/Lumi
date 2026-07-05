@@ -69,6 +69,21 @@ const useSpeechRecognitionEvent =
 // gate UI on it (Capture's mic disable) check this flag.
 export const isVoiceConfigured = _speech != null;
 
+// ── Foreign-session ownership (Hey Lumi) ──────────────────────────
+// expo-speech-recognition has ONE global recognizer and GLOBAL
+// events. The "Hey Lumi" wake engine (lib/heyLumi.ts) runs its own
+// continuous sessions; while it owns the mic, useVoice's handlers
+// must ignore events entirely — otherwise a wake-session "no-speech"
+// error toasts "I didn't catch that" out of nowhere, and a wake
+// session's `end` could settle a pill promise. Sessions themselves
+// never overlap (Home suspends the wake loop before starting the
+// pill mic); this flag covers the async event stragglers.
+let _foreignSession = false;
+export const setForeignVoiceSession = (v: boolean): void => {
+  _foreignSession = v;
+};
+export const isForeignVoiceSession = (): boolean => _foreignSession;
+
 export type VoiceState = 'idle' | 'recording' | 'transcribing';
 
 interface VoiceController {
@@ -123,6 +138,7 @@ export const useVoice = (): VoiceController => {
   };
 
   useSpeechRecognitionEvent('result', (event) => {
+    if (isForeignVoiceSession()) return; // Hey Lumi owns the mic
     // With interimResults: true the library fires this repeatedly as
     // the recognizer's hypothesis evolves. Update both the rolling
     // ref (used to settle the promise on `end`) and the partial
@@ -136,6 +152,7 @@ export const useVoice = (): VoiceController => {
   });
 
   useSpeechRecognitionEvent('end', () => {
+    if (isForeignVoiceSession()) return; // Hey Lumi owns the mic
     if (bounceRetry()) return; // cold-start blip — session restarted
     const text = transcriptRef.current.trim();
     setState('idle');
@@ -143,6 +160,7 @@ export const useVoice = (): VoiceController => {
   });
 
   useSpeechRecognitionEvent('error', (event) => {
+    if (isForeignVoiceSession()) return; // Hey Lumi owns the mic
     // Common error codes from expo-speech-recognition:
     //   "no-speech"      — they didn't say anything
     //   "audio-capture"  — mic permission issue

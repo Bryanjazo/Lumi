@@ -55,6 +55,7 @@ import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { signOut, useSession, changeEmail, deleteAccount } from '../lib/auth';
 import { useAccessStatus } from '../lib/subscription';
+import { requestHeyLumiPermission } from '../lib/heyLumi';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
 import { languageLabel } from '../lib/languages';
 import { useLearningDigest } from '../lib/learning';
@@ -861,6 +862,36 @@ export default function AccountScreen() {
   };
   const voiceEnabled = useUserStore((s) => s.voiceEnabled);
   const setVoiceEnabled = useUserStore((s) => s.setVoiceEnabled);
+  const heyLumiEnabled = useUserStore((s) => s.heyLumiEnabled);
+  const setHeyLumiEnabled = useUserStore((s) => s.setHeyLumiEnabled);
+
+  /** "Hey Lumi" wake word — Pro-only. Flipping it ON asks for the
+   *  mic/speech permission right here, where it's explainable; a
+   *  denial flips the switch back with directions instead of leaving
+   *  a toggle that silently does nothing. */
+  const changeHeyLumi = async (v: boolean) => {
+    Haptics.selectionAsync();
+    if (!v) {
+      // OFF always works — a lapsed subscription must never trap the
+      // switch behind the paywall.
+      setHeyLumiEnabled(false);
+      return;
+    }
+    if (!access.hasPremium) {
+      router.push('/paywall');
+      return;
+    }
+    const ok = await requestHeyLumiPermission();
+    if (!ok) {
+      setHeyLumiEnabled(false);
+      Alert.alert(
+        'Mic access needed',
+        '“Hey Lumi” listens for the wake phrase while the app is open. Enable Microphone and Speech Recognition in Settings → Lumi.',
+      );
+      return;
+    }
+    setHeyLumiEnabled(true);
+  };
   const captureLang = useUserStore((s) => s.captureLang);
   const theme = useUserStore((s) => s.theme);
   const setTheme = useUserStore((s) => s.setTheme);
@@ -3083,6 +3114,31 @@ export default function AccountScreen() {
             }
           />
           <Row
+            icon="✧"
+            label="“Hey Lumi”"
+            sub={
+              access.hasPremium
+                ? 'hands-free capture while the app is open'
+                : 'hands-free capture · Pro'
+            }
+            onPress={access.hasPremium ? undefined : () => router.push('/paywall')}
+            right={
+              access.hasPremium ? (
+                <Switch
+                  value={heyLumiEnabled}
+                  onValueChange={(v) => void changeHeyLumi(v)}
+                  trackColor={{ false: C.surface, true: accent.fg }}
+                  thumbColor={heyLumiEnabled ? C.void : C.boneDim}
+                  ios_backgroundColor={C.surface}
+                />
+              ) : (
+                <View style={styles.heyLumiProBadge}>
+                  <Text style={styles.heyLumiProBadgeText}>✦ PRO</Text>
+                </View>
+              )
+            }
+          />
+          <Row
             icon="⌨"
             label="Capture language"
             sub={languageLabel(captureLang)}
@@ -4222,6 +4278,18 @@ const makeStyles = (accent: Accent) =>
       height: 42,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    heyLumiProBadge: {
+      backgroundColor: 'rgba(224,122,79,0.16)',
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    heyLumiProBadgeText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9,
+      color: '#E07A4F',
+      letterSpacing: 0.6,
     },
     skinLockBadge: {
     position: 'absolute',

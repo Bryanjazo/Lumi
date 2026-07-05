@@ -57,7 +57,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test:parser": "esbuild scripts/run-parser-corpus.ts --bundle --platform=node --outfile=/tmp/lumi-parser-corpus.js --log-level=error && node /tmp/lumi-parser-corpus.js"
+    "test:parser": "esbuild scripts/run-parser-corpus.ts --bundle --platform=node --outfile=/tmp/lumi-parser-corpus.js --log-level=error && node /tmp/lumi-parser-corpus.js",
+    "test:wake": "esbuild scripts/test-heylumi-wake.ts --bundle --platform=node --outfile=/tmp/lumi-wake-guards.js --log-level=error && node /tmp/lumi-wake-guards.js"
   },
   "private": true,
   "overrides": {
