@@ -2261,72 +2261,6 @@ export default function Home() {
     }
   };
 
-  /** Tap a "When's it due?" chip on a deadline-type previewed task.
-   *  Locks the date (today / tomorrow / this Saturday) on the task and
-   *  flips needsFollowup off so the row collapses. The user can always
-   *  Tweak to refine further. */
-  const pickFollowupDate = (
-    idx: number,
-    date: string,
-    window?: 'morning' | 'midday' | 'afternoon' | 'evening',
-  ) => {
-    if (!previewTasks) return;
-    Haptics.selectionAsync();
-    const updated = [...previewTasks];
-    updated[idx] = {
-      ...updated[idx],
-      date,
-      window: window ?? updated[idx].window,
-      needsFollowup: false,
-    };
-    setPreviewTasks(updated);
-  };
-
-  /** Pick one of the AM/PM options for an ambiguous bare-hour capture
-   *  ("today at 9" → 9 AM or 9 PM). Locks the chosen time on the
-   *  previewed task and clears the chip picker. */
-  const pickTimeOption = (idx: number, minutes: number) => {
-    if (!previewTasks) return;
-    Haptics.selectionAsync();
-    const updated = [...previewTasks];
-    updated[idx] = {
-      ...updated[idx],
-      at: minutes,
-      timeMode: 'anchored',
-      // Clearing the options collapses the chip row — the user has
-      // made the call.
-      timeOptions: undefined,
-    };
-    setPreviewTasks(updated);
-  };
-
-  /** Set the length on a previewed task — driven by the inline
-   *  "How long?" chips so the user picks before Accept commits. */
-  const pickDuration = (idx: number, minutes: number) => {
-    if (!previewTasks) return;
-    Haptics.selectionAsync();
-    const updated = [...previewTasks];
-    updated[idx] = { ...updated[idx], durationMinutes: minutes };
-    setPreviewTasks(updated);
-  };
-
-  /** Set the part-of-day window on a previewed task — driven by the
-   *  inline chips so a user who didn't specify a time still picks a
-   *  rough slot before Accept commits. Skip the anchored time case
-   *  (the user already gave an exact clock time, no need to ask). */
-  const pickWindow = (idx: number, window: WindowKey) => {
-    if (!previewTasks) return;
-    Haptics.selectionAsync();
-    const updated = [...previewTasks];
-    updated[idx] = {
-      ...updated[idx],
-      window,
-      timeMode: 'windowed',
-      at: null,
-    };
-    setPreviewTasks(updated);
-  };
-
   /** Per-task dismiss — drops ONE task from the preview without
    *  saving it. Useful when Lumi misread something the user typed. */
   const dismissTask = (idx: number) => {
@@ -4672,14 +4606,6 @@ const makeStyles = (accent: Accent) =>
       color: C.dusk,
       letterSpacing: -0.1,
     },
-    timeOptionsWrap: { marginBottom: 8 },
-    timeOptionsAsk: {
-      fontFamily: fonts.fraunces,
-      fontStyle: 'italic',
-      fontSize: 12.5,
-      color: C.dusk,
-      marginBottom: 6,
-    },
     previewEditLabel: {
       fontFamily: fonts.interSemi,
       fontSize: 9.5,
@@ -4981,19 +4907,6 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
-    waitingTitleRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 7,
-      minWidth: 0,
-    },
-    waitingKindDot: {
-      width: 5,
-      height: 5,
-      borderRadius: 2.5,
-      flexShrink: 0,
-      opacity: 0.9,
-    },
     waitingRowTitle: {
       // flex so the title truncates INSIDE the kind-dot row instead
       // of pushing the dot / overflowing the card.
@@ -5013,19 +4926,6 @@ const makeStyles = (accent: Accent) =>
       fontFamily: fonts.inter,
       fontSize: 12,
       flexShrink: 0,
-    },
-    nowPill: {
-      borderWidth: 1,
-      borderColor: hexA(C.ember, 0.5),
-      borderRadius: 100,
-      paddingHorizontal: 13,
-      paddingVertical: 6,
-      flexShrink: 0,
-    },
-    nowPillText: {
-      fontFamily: fonts.interSemi,
-      fontSize: 12.5,
-      color: C.ember,
     },
     waitingFooter: {
       textAlign: 'center',

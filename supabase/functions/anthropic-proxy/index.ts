@@ -23,6 +23,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { SYSTEM_PROMPTS, KIND_MAX_TOKENS } from "./prompts.ts";
 
 type AiKind =
   | "brain_dump"
@@ -32,13 +33,13 @@ type AiKind =
   | "clarify"
   | "weekly_report";
 
+// Only kinds with a LIVE client caller are accepted. Dead kinds
+// (brain_dump / followup / weekly_report) were removed with their
+// dead client functions — fewer doors, less to audit.
 const ALLOWED_KINDS: AiKind[] = [
-  "brain_dump",
   "untangle",
-  "followup",
   "title_clean",
   "clarify",
-  "weekly_report",
 ];
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -101,16 +102,20 @@ const validateBody = (raw: unknown): CallBody | { error: string } => {
       return { error: "Each message needs {role, content}" };
     }
   }
-  if (b.system != null && typeof b.system !== "string") {
-    return { error: "system must be a string" };
-  }
+  // SECURITY (audit round 2): the system prompt is SERVER-pinned per
+  // kind — client-supplied `system` is ignored, so our quota can't be
+  // repurposed as a generic Claude API by a modified client. Old app
+  // builds still send `system`; ignoring (not rejecting) keeps them
+  // working.
+  const kind = b.kind as AiKind;
+  const kindCeiling = KIND_MAX_TOKENS[kind] ?? 600;
   const max =
     typeof b.max_tokens === "number" && b.max_tokens > 0
-      ? Math.min(b.max_tokens, MAX_TOKENS_HARD_LIMIT)
-      : 600;
+      ? Math.min(b.max_tokens, kindCeiling, MAX_TOKENS_HARD_LIMIT)
+      : Math.min(600, kindCeiling);
   return {
-    kind: b.kind as AiKind,
-    system: (b.system as string | undefined) ?? "",
+    kind,
+    system: SYSTEM_PROMPTS[kind] ?? "",
     messages: b.messages as CallBody["messages"],
     max_tokens: max,
     model:
@@ -203,7 +208,10 @@ Deno.serve(async (req: Request) => {
       500,
     );
   }
-  if (quota === false) {
+  if (quota !== true) {
+    // FAIL-CLOSED (audit): null/undefined from the RPC used to slip
+    // through a `=== false` check — anything but an explicit true is
+    // a denial now.
     // Distinguish premium ceiling vs free cap so the client can
     // choose calmer wording for premium hits ("let's keep it quick
     // for now") vs the free-tier conversion prompt. Both still

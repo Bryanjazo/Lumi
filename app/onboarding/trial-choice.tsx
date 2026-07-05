@@ -135,9 +135,17 @@ export default function TrialChoiceScreen() {
     // has_ai_quota's premium path reads trial_started_at from the
     // server, so without this the trial would be local-only and AI
     // calls would hit free caps.
-    void supabase.rpc('start_trial').then(({ error }) => {
-      if (error) console.warn('[trial] server registration failed', error.message);
-    });
+    void supabase
+      .rpc('start_trial')
+      .then(({ error }) => {
+        if (error) {
+          console.warn('[trial] server registration failed', error.message);
+        }
+      })
+      .catch(() => {
+        // Network throw — the local trial is armed; the server copy
+        // registers on next successful sync/opt-in check.
+      });
     markTrialChoiceSeen();
     router.replace('/(tabs)');
   };
