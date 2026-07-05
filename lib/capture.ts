@@ -664,7 +664,13 @@ interface ParsedTime {
 // canonical form; the shorthand itself is pushed into `matched` so it
 // still gets stripped from the visible title.
 const TIME_SYNONYMS: Array<[RegExp, string]> = [
-  [/\btmrw\b|\btmr\b|\btomm?orr?ow?\b|\btommorrow\b/g, 'tomorrow'],
+  // t + any jumble of m/r/w ("tmrw", "tmmrw", "tmw", "tmrrw" — no
+  // real English word is t followed by only those letters), classic
+  // typo spellings, and the "2moro" texting family.
+  [
+    /\bt[mrw]{2,6}\b|\btomm?orr?ow?\b|\btommorrow\b|\b2m(?:o?rr?ow?|oro|rw)\b/g,
+    'tomorrow',
+  ],
   [/\btonite\b/g, 'tonight'],
   [/\bwknds?\b/g, 'weekend'],
   [/\beod\b/g, 'end of day'],

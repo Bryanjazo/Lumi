@@ -229,6 +229,24 @@ export const CORPUS: CorpusCase[] = [
     target: true,
   },
   {
+    name: 'tmmrw texting typo (double-m, no vowels)',
+    input: 'call my mom tmmrw',
+    expect: [{ dateOffset: 1, title: 'Call my mom' }],
+    guard: true,
+  },
+  {
+    name: 'tmw shorthand',
+    input: 'tmw gym',
+    expect: [{ dateOffset: 1 }],
+    guard: true,
+  },
+  {
+    name: '2moro texting',
+    input: 'text sam 2moro',
+    expect: [{ dateOffset: 1, title: 'Text sam' }],
+    guard: true,
+  },
+  {
     name: 'noon',
     input: 'lunch with sam at noon',
     expect: [{ at: 12 * 60 }],
