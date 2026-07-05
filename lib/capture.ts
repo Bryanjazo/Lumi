@@ -1574,6 +1574,90 @@ const TRAILING_MISHEARS: Array<[RegExp, string]> = [
 const DANGLING_END_RE =
   /\b(?:the|a|an|to|and|or|by|at|for|with|my|your|of)$/i;
 
+// ── Near-miss DATE/TIME words ("tomorrws", "tonigt", "wendsday") ──
+// The synonym table catches KNOWN shorthand; this catches novel
+// typos of the words that change parsing the most. Strict on
+// purpose: distance 1 for 5–7 letters, 2 only at 8+ — so "money"
+// (2 from "monday") and "fridge" (2 from "friday", but 6 long)
+// never fuzz. A hit auto-fixes AND raises did-you-mean; on Pro the
+// clarify pass then repairs the REST of the string ("mam" → "mom"),
+// and the confirmed send routes through the deterministic engine.
+const DATE_VOCAB = [
+  'today',
+  'tomorrow',
+  'tonight',
+  'morning',
+  'afternoon',
+  'evening',
+  'weekend',
+  'someday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+];
+// Real words that sit within the fuzz thresholds of a date word —
+// never rewrite these ("check the warning light" ≠ morning).
+const FUZZ_STOP = new Set([
+  'warning',
+  'moaning',
+  'mourning',
+  'sundae',
+  'sundry',
+]);
+
+/** Optimal-string-alignment distance (Levenshtein + adjacent
+ *  transposition, so "toady"→"today" counts as 1), capped early. */
+const osaDistance = (a: string, b: string, cap: number): number => {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  const m = a.length;
+  const n = b.length;
+  const d: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array<number>(n + 1).fill(0),
+  );
+  for (let i = 0; i <= m; i++) d[i][0] = i;
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+      }
+    }
+  }
+  return d[m][n];
+};
+
+/** Rewrite near-miss date words in place; returns null when nothing
+ *  fuzzed. Skips exact vocab words, their plurals ("weekends" drives
+ *  recurrence — must survive), and the FUZZ_STOP real words. */
+const fuzzDateWords = (text: string): string | null => {
+  let hit = false;
+  const out = text
+    .split(/(\s+)/)
+    .map((tok) => {
+      if (!/^[a-z]{5,}$/i.test(tok)) return tok;
+      const lc = tok.toLowerCase();
+      if (FUZZ_STOP.has(lc)) return tok;
+      if (DATE_VOCAB.includes(lc)) return tok;
+      if (DATE_VOCAB.includes(lc.replace(/s$/, ''))) return tok;
+      const cap = lc.length >= 8 ? 2 : 1;
+      for (const v of DATE_VOCAB) {
+        if (osaDistance(lc, v, cap) <= cap) {
+          hit = true;
+          return v;
+        }
+      }
+      return tok;
+    })
+    .join('');
+  return hit ? out : null;
+};
+
 export const tidyTranscript = (raw: string): TidiedTranscript => {
   const original = raw.trim();
   let t = original;
@@ -1619,7 +1703,16 @@ export const tidyTranscript = (raw: string): TidiedTranscript => {
   }
   if (misheard) suspicious = true;
 
-  return { tidied: t, changed: changed || misheard, suspicious };
+  // Near-miss date words — auto-fix + confirm (see fuzzDateWords).
+  let fuzzed = false;
+  const fz = fuzzDateWords(t);
+  if (fz != null) {
+    t = fz;
+    fuzzed = true;
+    suspicious = true;
+  }
+
+  return { tidied: t, changed: changed || misheard || fuzzed, suspicious };
 };
 
 // ═════════════════════════════════════════════════════════════════════

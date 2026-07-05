@@ -319,6 +319,48 @@ const check = (name: string, cond: boolean, detail: string) => {
       suspicious: false,
     },
     {
+      name: 'tidy: tomorrws near-miss fuzzed + flagged',
+      input: 'call mam tomorrws',
+      tidied: 'call mam tomorrow',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: tonigt fuzzed',
+      input: 'gym tonigt',
+      tidied: 'gym tonight',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: wendsday fuzzed',
+      input: 'dentist appointment wendsday',
+      tidied: 'dentist appointment wednesday',
+      suspicious: true,
+    },
+    {
+      name: 'tidy: warning is NOT morning',
+      input: 'check the warning light',
+      tidied: 'check the warning light',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: sundae is NOT sunday',
+      input: 'take leo for a sundae',
+      tidied: 'take leo for a sundae',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: weekends plural survives (recur depends on it)',
+      input: 'pack lunch on weekends',
+      tidied: 'pack lunch on weekends',
+      suspicious: false,
+    },
+    {
+      name: 'tidy: money is NOT monday',
+      input: 'deposit the money',
+      tidied: 'deposit the money',
+      suspicious: false,
+    },
+    {
       name: 'tidy: one-word tasks are legit',
       input: 'gym',
       tidied: 'gym',
