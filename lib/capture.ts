@@ -667,8 +667,14 @@ const TIME_SYNONYMS: Array<[RegExp, string]> = [
   // t + any jumble of m/r/w ("tmrw", "tmmrw", "tmw", "tmrrw" — no
   // real English word is t followed by only those letters), classic
   // typo spellings, and the "2moro" texting family.
+  // t + any jumble of o/m/r/w, 5-9 letters total — covers tomrrw,
+  // tomorow, tommorrow, tmmrw AND plain tomorrow (harmless self-
+  // replace). No common English word fits t[omrw]{4,} ("toro"/"trow"
+  // are 4 letters and stay under the minimum); plurals stay
+  // untouched because 's' breaks the match. Short texting forms are
+  // explicit.
   [
-    /\bt[mrw]{2,6}\b|\btomm?orr?ow?\b|\btommorrow\b|\b2m(?:o?rr?ow?|oro|rw)\b/g,
+    /\bt[omrw]{4,8}\b|\btmrw\b|\btmr\b|\btmw\b|\b2m(?:o?rr?ow?|oro|rw)\b/g,
     'tomorrow',
   ],
   [
