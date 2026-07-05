@@ -316,7 +316,9 @@ export const UNDERSTAND_CASES: UnderstandCase[] = [
         {
           titleIncludes: ['photos'],
           titleExcludes: ['user', 'i told'],
-          importance: 'medium',
+          // Prompt: "I told [X] I'd…" = MEDIUM-HIGH, often high — either
+          // reading is compliant. The real assert is the promise NOTE.
+          importanceIn: ['medium', 'high'],
         },
       ],
     },
@@ -522,7 +524,9 @@ export const UNDERSTAND_CASES: UnderstandCase[] = [
     raw: 'PICK UP MILK',
     expect: {
       taskCount: 1,
-      tasks: [{ titleIncludes: ['milk'], importance: 'low' }],
+      tasks: [{ titleIncludes: ['milk'], // The point: ALL CAPS must not bump it to HIGH. The prompt's own
+          // examples put groceries at medium, so accept low|medium.
+          importanceIn: ['low', 'medium'] }],
     },
     notes:
       'All-caps is emphasis, not urgency. A milk run is still a low-importance whim.',

@@ -60,7 +60,9 @@
     "web": "expo start --web",
     "test:parser": "esbuild scripts/run-parser-corpus.ts --bundle --platform=node --outfile=/tmp/lumi-parser-corpus.js --log-level=error && node /tmp/lumi-parser-corpus.js",
     "test:wake": "esbuild scripts/test-heylumi-wake.ts --bundle --platform=node --outfile=/tmp/lumi-wake-guards.js --log-level=error && node /tmp/lumi-wake-guards.js",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "bench:offline": "esbuild scripts/bench-offline.ts --bundle --platform=node --outfile=/tmp/lumi-bench-offline.js --log-level=error && node /tmp/lumi-bench-offline.js",
+    "bench:live": "esbuild scripts/bench-live.ts --bundle --platform=node --outfile=/tmp/lumi-bench-live.js --log-level=error && node /tmp/lumi-bench-live.js"
   },
   "private": true,
   "overrides": {
