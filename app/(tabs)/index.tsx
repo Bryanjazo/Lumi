@@ -2056,6 +2056,7 @@ export default function Home() {
     const text = capText.trim();
     if (!text) return;
     setDymHint(false);
+    setPillInputH(0);
 
     const ctx: CaptureContext = {
       sharpWindow,
@@ -3436,6 +3437,7 @@ export default function Home() {
                   Haptics.selectionAsync();
                   setDymHint(false);
                   setCapText('');
+                  setPillInputH(0);
                 }}
                 hitSlop={8}
               >
@@ -3462,6 +3464,7 @@ export default function Home() {
               editable={voice.state !== 'recording'}
               onChangeText={(t) => {
                 setCapText(t);
+                if (!t) setPillInputH(0);
                 if (dymHint) setDymHint(false);
               }}
               placeholder={
@@ -3475,11 +3478,17 @@ export default function Home() {
                 {
                   // Flat single-line pill until the text actually
                   // wraps; then grow with content to ~5 lines and
-                  // scroll inside beyond that.
+                  // scroll inside beyond that. Empty ALWAYS means
+                  // flat — iOS doesn't emit a contentSize event on
+                  // programmatic clears (e.g. after send), so a
+                  // stale tall measurement would otherwise stick.
                   height:
-                    pillInputH <= 24
+                    !capText &&
+                    !(voice.state === 'recording' && voice.partial)
                       ? 36
-                      : Math.min(130, pillInputH + 16),
+                      : pillInputH <= 24
+                        ? 36
+                        : Math.min(130, pillInputH + 16),
                 },
                 voice.state === 'recording' && { color: C.dusk },
               ]}
