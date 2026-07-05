@@ -157,6 +157,23 @@ interface UserState {
   xp: number;
   streak: number;
   lastActiveDate: string | null;
+  /**
+   * Last local Y-M-D the app was OPENED (vs lastActiveDate which
+   * needs a real action). Feeds the away/return experience + Rescue
+   * Mode (emotional-model spec §2/§3): opening the app daily without
+   * completing anything is still "being here" — no welcome-back
+   * ceremony, no rescue takeover.
+   */
+  lastOpenedDate: string | null;
+  /**
+   * Local Y-M-D the user last engaged with (or waved off) Rescue
+   * Mode — Home won't re-take-over the same day (emotional-model
+   * spec §3: gentle, never auto-punishing).
+   */
+  rescueDismissedDate: string | null;
+  /** Local Y-M-D the backlog nudge ("these have followed you…") was
+   *  answered — one gentle offer per day, never a nag. */
+  backlogNudgeDismissedDate: string | null;
   shieldAvailable: boolean;
   shieldUsedThisWeek: boolean;
   onboarded: boolean;
@@ -284,6 +301,14 @@ interface UserState {
   setAdhdType: (t: AdhdType) => void;
   addXp: (amount: number) => void;
   registerActivity: () => void;
+  /** Stamp today as an app-open day. Returns the PREVIOUS open date
+   *  so the caller can compute "how long were they away" before the
+   *  stamp erases it. */
+  registerOpen: () => string | null;
+  /** Rescue Mode was engaged or waved off — stand down for today. */
+  dismissRescue: () => void;
+  /** Backlog nudge answered — quiet until tomorrow. */
+  dismissBacklogNudge: () => void;
   consumeShield: () => void;
   rechargeShield: () => void;
   completeOnboarding: () => void;
@@ -383,6 +408,9 @@ export const useUserStore = create<UserState>()(
       xp: 0,
       streak: 0,
       lastActiveDate: null,
+      lastOpenedDate: null,
+      rescueDismissedDate: null,
+      backlogNudgeDismissedDate: null,
       shieldAvailable: true,
       shieldUsedThisWeek: false,
       onboarded: false,
@@ -451,6 +479,18 @@ export const useUserStore = create<UserState>()(
           }
         }
       },
+
+      registerOpen: () => {
+        const prev = get().lastOpenedDate;
+        const t = today();
+        if (prev !== t) set({ lastOpenedDate: t });
+        return prev;
+      },
+
+      dismissRescue: () => set({ rescueDismissedDate: today() }),
+
+      dismissBacklogNudge: () =>
+        set({ backlogNudgeDismissedDate: today() }),
 
       consumeShield: () =>
         set({ shieldAvailable: false, shieldUsedThisWeek: true }),
@@ -601,6 +641,9 @@ export const useUserStore = create<UserState>()(
           xp: 0,
           streak: 0,
           lastActiveDate: null,
+          lastOpenedDate: null,
+          rescueDismissedDate: null,
+          backlogNudgeDismissedDate: null,
           shieldAvailable: true,
           shieldUsedThisWeek: false,
           onboarded: false,

@@ -25,6 +25,61 @@ export const isAnthropicConfigured = isSupabaseConfigured;
 
 const FUNCTION_NAME = 'anthropic-proxy';
 
+// ═════════════════════════════════════════════════════════════════════
+// Outage circuit breaker (goal §1.7) — the single kill-switch path.
+//
+// When the proxy errors or times out repeatedly (Anthropic down,
+// Supabase down, dead network), we OPEN the breaker for a cooldown:
+// every AI surface then short-circuits to its deterministic twin
+// INSTANTLY — no spinner, no waiting out the race timeout on every
+// single capture during an outage. One success (or cooldown expiry)
+// closes it again. Quota 429s do NOT trip it — the service is up,
+// the user just hit their cap.
+//
+// `simulateLlmDown` is the dev drill: flip it in the dev screen and
+// the whole app runs deterministically, which must feel complete.
+// ═════════════════════════════════════════════════════════════════════
+const BREAKER_THRESHOLD = 2; // consecutive failures to trip
+const BREAKER_COOLDOWN_MS = 60_000;
+
+let consecutiveFailures = 0;
+let breakerOpenUntil = 0; // epoch ms
+let simulateLlmDown = false;
+
+const recordLlmFailure = () => {
+  consecutiveFailures++;
+  if (consecutiveFailures >= BREAKER_THRESHOLD) {
+    breakerOpenUntil = Date.now() + BREAKER_COOLDOWN_MS;
+    if (__DEV__) {
+      console.warn(
+        `[llm] circuit OPEN after ${consecutiveFailures} failures — deterministic-only for ${BREAKER_COOLDOWN_MS / 1000}s`,
+      );
+    }
+  }
+};
+
+const recordLlmSuccess = () => {
+  consecutiveFailures = 0;
+  breakerOpenUntil = 0;
+};
+
+/**
+ * Should a surface even ATTEMPT the LLM right now? False when the
+ * proxy isn't configured, the breaker is open, or the dev drill is
+ * on. Callers use this instead of `isAnthropicConfigured` to decide
+ * whether to show a "Lumi is sorting…" wait state — when this is
+ * false the deterministic result ships instantly.
+ */
+export const isLlmAvailable = (): boolean =>
+  isAnthropicConfigured && !simulateLlmDown && Date.now() >= breakerOpenUntil;
+
+/** Dev drill toggle — run the whole app as if Anthropic is down. */
+export const setSimulateLlmDown = (down: boolean): void => {
+  simulateLlmDown = down;
+  if (!down) recordLlmSuccess(); // also reset the breaker on re-enable
+};
+export const isSimulatingLlmDown = (): boolean => simulateLlmDown;
+
 type AiKind =
   | 'brain_dump'
   | 'untangle'
@@ -98,17 +153,32 @@ const callMessages = async (params: {
   if (!isAnthropicConfigured) {
     throw new Error('Supabase not configured — proxy unreachable');
   }
-  const { data, error } = await supabase.functions.invoke<ProxyOk | ProxyErr>(
-    FUNCTION_NAME,
-    {
-      body: {
-        kind: params.kind,
-        system: params.system,
-        messages: params.messages,
-        max_tokens: params.maxTokens,
+  if (simulateLlmDown) {
+    throw new Error('[dev] simulated LLM outage');
+  }
+  if (Date.now() < breakerOpenUntil) {
+    throw new Error('LLM circuit open — cooling down after failures');
+  }
+  let data: ProxyOk | ProxyErr | null;
+  let error: { message: string } | null;
+  try {
+    ({ data, error } = await supabase.functions.invoke<ProxyOk | ProxyErr>(
+      FUNCTION_NAME,
+      {
+        body: {
+          kind: params.kind,
+          system: params.system,
+          messages: params.messages,
+          max_tokens: params.maxTokens,
+        },
       },
-    },
-  );
+    ));
+  } catch (e) {
+    // Network-level throw (fetch failed, DNS, airplane mode) — the
+    // clearest outage signal there is.
+    recordLlmFailure();
+    throw e;
+  }
   if (error) {
     // supabase-js wraps non-2xx HTTP responses as FunctionsHttpError.
     // 429 = quota. We do two things:
@@ -122,15 +192,25 @@ const callMessages = async (params: {
       (error as unknown as { context?: { status?: number } })?.context
         ?.status ?? null;
     if (httpStatus === 429) {
+      // Quota is NOT an outage — the service is fine, the user hit
+      // their cap. Don't trip the breaker.
       useQuotaPromptStore
         .getState()
         .openPrompt(params.kind, isCurrentlyPremium());
       throw new QuotaExceededError(params.kind);
     }
+    recordLlmFailure();
     throw new Error(error.message);
   }
-  if (!data) throw new Error('Empty response from anthropic-proxy');
-  if ('error' in data) throw new Error(data.error.message);
+  if (!data) {
+    recordLlmFailure();
+    throw new Error('Empty response from anthropic-proxy');
+  }
+  if ('error' in data) {
+    recordLlmFailure();
+    throw new Error(data.error.message);
+  }
+  recordLlmSuccess();
   return data.text;
 };
 
@@ -192,6 +272,11 @@ const UNDERSTAND_SYSTEM = `You are Lumi, an organizing intelligence built specif
 CORE STANCE — read every input through these lenses BEFORE you classify:
 
   1. ADHD users brain-dump. They don't write tidy lists. A single capture often contains 3-5 tasks woven through filler words, half-thoughts, and "oh wait also" inserts. Extract them all, lose nothing important.
+
+  1b. SELF-CORRECTIONS: spoken input contains disruptions — "no wait",
+     "scratch that", "actually make that 4pm", "…I mean…". Honor ONLY
+     the corrected version. NEVER create a task from an abandoned
+     first attempt ("call mom no wait call dad" = ONE task: call dad).
 
   2. ADHD users use emotional language that signals task weight:
      - "the thing I've been avoiding / putting off / dreading"  → HIGH importance + HIGH energyDemand (it's avoidance — they need it scheduled into their PEAK, not buried in slump)
@@ -646,11 +731,29 @@ const buildContextBlock = (ctx: UnderstandContext): string => {
  * back to null on any error — callers keep the deterministic
  * preview. Reuses the title_clean cap bucket (per-capture pace).
  */
+// Dedupe cache (goal §2.3) — a double-tap of Send, or a voice retry
+// of the same sentence, must not bill twice. Same raw text within
+// the window → last result, zero tokens. One entry is enough (the
+// pattern is always immediate re-submission, not history replay).
+let understandCache: {
+  raw: string;
+  result: UnderstoodResponse;
+  at: number;
+} | null = null;
+const UNDERSTAND_CACHE_MS = 5 * 60_000;
+
 export const llmUnderstand = async (
   raw: string,
   ctx: UnderstandContext,
 ): Promise<UnderstoodResponse | null> => {
   if (!isAnthropicConfigured) return null;
+  if (
+    understandCache &&
+    understandCache.raw === raw.trim() &&
+    Date.now() - understandCache.at < UNDERSTAND_CACHE_MS
+  ) {
+    return understandCache.result;
+  }
   try {
     const ctxBlock = buildContextBlock(ctx);
     const text = await callMessages({
@@ -768,8 +871,19 @@ export const llmUnderstand = async (
         return cleaned;
       })
       .filter((t): t is UnderstoodTask => t != null);
+    understandCache = { raw: raw.trim(), result: { tasks }, at: Date.now() };
     return { tasks };
-  } catch {
+  } catch (e) {
+    // DEV-visible failure reason — a silent null here cost a full
+    // debugging session (truncated JSON from the proxy's token cap
+    // looked identical to "LLM not configured"). Never logs user
+    // content.
+    if (__DEV__) {
+      console.warn(
+        '[llm] understand failed:',
+        e instanceof Error ? e.message : String(e),
+      );
+    }
     return null;
   }
 };

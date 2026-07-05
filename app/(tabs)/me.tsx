@@ -212,15 +212,26 @@ const Room = ({
       return;
     }
     const RANGE = 70;
-    // Walk speed scales with mood; sad cat drags, happy cat zips.
-    const stepMs =
-      lunaMood === 'sad' ? 7000 : lunaMood === 'happy' ? 3500 : 5000;
-    // How long the cat stands still showing emotion at each end.
-    // Long enough to feel intentional (the user can read the mood),
-    // short enough that the room doesn't feel frozen.
-    const restMs = 2400;
+    // Walk SPEED (px/sec) scales with mood; sad drags, happy zips.
+    const pxPerSec =
+      lunaMood === 'sad' ? 20 : lunaMood === 'happy' ? 40 : 28;
     let stopped = false;
     let pauseTimer: ReturnType<typeof setTimeout> | null = null;
+    // Track where the cat is so each stroll can start from there —
+    // strolls go to RANDOM spots on the rug, not end-to-end laps.
+    let curX = 0;
+
+    // A real cat mostly SITS. Long, randomized rests (9–22s) between
+    // short strolls — the room breathes instead of pacing. (The old
+    // loop was walk-right → 2.4s → walk-left → 2.4s forever, which
+    // read as constant side-to-side motion.)
+    const restFor = () => 9_000 + Math.random() * 13_000;
+
+    const rest = (ms: number) => {
+      pauseTimer = setTimeout(() => {
+        if (!stopped) stroll();
+      }, ms);
+    };
 
     // No flip ANIMATION — instead we set scaleX instantly at the
     // start of each leg. The walking GIF naturally faces left, so:
@@ -228,49 +239,57 @@ const Room = ({
     //   walking left  (negative translateX) → scaleX = 1  (default)
     // While sitting + emoting, scaleX resets to 1 so the rest
     // sprites (luna-idle/happy/sad) never get mirrored.
-    const walkLeg = (to: number, dir: 'right' | 'left', next: () => void) => {
-      flipX.setValue(dir === 'right' ? -1 : 1);
+    const stroll = () => {
+      if (stopped) return;
+      // Sometimes she doesn't feel like moving at all — she grooms
+      // where she sits (or just keeps being a cat) and settles back.
+      if (Math.random() < 0.35) {
+        setIsLicking(true);
+        pauseTimer = setTimeout(() => {
+          if (stopped) return;
+          setIsLicking(false);
+          rest(restFor());
+        }, 1600);
+        return;
+      }
+      const to = (Math.random() * 2 - 1) * RANGE;
+      const dist = Math.abs(to - curX);
+      if (dist < 22) {
+        // Target too close to bother — skip this beat.
+        rest(restFor());
+        return;
+      }
+      flipX.setValue(to > curX ? -1 : 1);
       setIsWalking(true);
       setIsLicking(false);
       Animated.timing(walkX, {
         toValue: to,
-        duration: stepMs,
+        duration: (dist / pxPerSec) * 1000,
         useNativeDriver: true,
         easing: Easing.inOut(Easing.sin),
       }).start(({ finished }) => {
         if (!finished || stopped) return;
-        // Arrived — sit and show the current emotion. Reset flip
-        // so the sitting sprite renders in its natural orientation
-        // (mirrored idle cats look uncanny). 1-in-3 chance the cat
-        // grooms itself for ~1.6s before going back to its mood —
-        // ~half the pause beats it as a little character moment.
+        curX = to;
+        // Arrived — sit, face forward, occasionally groom, then a
+        // long rest before the next wander.
         flipX.setValue(1);
         setIsWalking(false);
-        const willLick = Math.random() < 0.33;
-        if (willLick) {
+        if (Math.random() < 0.33) {
           setIsLicking(true);
           pauseTimer = setTimeout(() => {
             if (stopped) return;
             setIsLicking(false);
-            pauseTimer = setTimeout(() => {
-              if (!stopped) next();
-            }, Math.max(0, restMs - 1600));
+            rest(restFor());
           }, 1600);
         } else {
-          pauseTimer = setTimeout(() => {
-            if (!stopped) next();
-          }, restMs);
+          rest(restFor());
         }
       });
     };
 
-    const loop = () => {
-      if (stopped) return;
-      walkLeg(RANGE, 'right', () =>
-        walkLeg(-RANGE, 'left', () => loop()),
-      );
-    };
-    loop();
+    // Open on a settled cat — first wander comes after a short beat,
+    // not the moment the tab mounts.
+    rest(3_500 + Math.random() * 4_000);
 
     return () => {
       stopped = true;

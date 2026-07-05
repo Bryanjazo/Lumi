@@ -279,6 +279,11 @@ export const pullAll = async (userId: string): Promise<void> => {
     // are proof enough.
     if (userRow.onboarded) {
       useUserStore.getState().markOnboardedForUser(userId);
+      // Same reasoning for the one-time trial-choice screen: it was
+      // offered right after this user's ORIGINAL onboarding. Without
+      // this, every fresh install re-asked the upgrade question on
+      // sign-in (the flag is device-local and defaulted false).
+      useUserStore.getState().markTrialChoiceSeen();
     }
   }
 
@@ -320,6 +325,7 @@ export const pullAll = async (userId: string): Promise<void> => {
     // the app before — don't re-onboard them.
     if (q.data.length > 0) {
       useUserStore.getState().markOnboardedForUser(userId);
+      useUserStore.getState().markTrialChoiceSeen();
     }
   }
 

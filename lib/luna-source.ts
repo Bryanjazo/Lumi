@@ -129,5 +129,19 @@ export const lunaSource = (
  * profile picker.
  */
 export const useLunaSkin = (): string => {
-  return useUserStore((s) => s.avatar) || 'default';
+  const avatar = useUserStore((s) => s.avatar) || 'default';
+  const status = useUserStore((s) => s.subscriptionStatus);
+  const trialStartedAt = useUserStore((s) => s.trialStartedAt);
+  // Enforce the Starter/Pro skin split at READ time too — a lapsed
+  // trial shouldn't keep a Pro skin equipped. Mirrors the paywall's
+  // "Starter vs All" promise without importing the whole access hook.
+  const hasPremium =
+    status === 'active' ||
+    (status === 'trial' &&
+      trialStartedAt != null &&
+      Date.now() - new Date(trialStartedAt).getTime() < 7 * 86_400_000);
+  if (!hasPremium && avatar !== 'default' && avatar !== 'cream') {
+    return 'default';
+  }
+  return avatar;
 };

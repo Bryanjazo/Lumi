@@ -14,6 +14,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
+  AppState,
   View,
   Text,
   StyleSheet,
@@ -30,7 +31,11 @@ import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { timeColors as TC } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { LunaPixel } from '../../components/auth/LunaPixel';
-import { resendConfirmation, useSession } from '../../lib/auth';
+import {
+  resendConfirmation,
+  tryPendingSignIn,
+  useSession,
+} from '../../lib/auth';
 
 const RESEND_COOLDOWN_S = 60;
 
@@ -56,6 +61,32 @@ export default function VerifyEmailScreen() {
       router.replace('/auth/done' as never);
     }
   }, [session, router]);
+
+  // Confirmation → signed in, NO deep link required. The user may
+  // click the link in desktop Gmail, a browser, anywhere — the
+  // tokens never reach this device. So we quietly retry sign-in
+  // with the stashed (memory-only) credentials: every 5s while the
+  // screen is open, and immediately when the app foregrounds (the
+  // "came back from the Mail app" moment). The instant Supabase
+  // marks the email confirmed, sign-in succeeds and the session
+  // effect above carries them through the door.
+  useEffect(() => {
+    if (session) return;
+    let cancelled = false;
+    const attempt = () => {
+      if (cancelled) return;
+      void tryPendingSignIn();
+    };
+    const interval = setInterval(attempt, 5000);
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') attempt();
+    });
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      sub.remove();
+    };
+  }, [session]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -121,7 +152,14 @@ export default function VerifyEmailScreen() {
 
   const handleChangeEmail = () => {
     Haptics.selectionAsync();
-    router.back();
+    // After sign-up this screen IS the stack root — back() had nothing
+    // behind it ("GO_BACK was not handled by any navigator") and the
+    // link silently failed. Replace to the sign-up screen instead.
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/auth/sign-up');
+    }
   };
 
   const resendLabel =

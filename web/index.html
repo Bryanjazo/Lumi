@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumi — Brain Dump to Done</title>
+<meta name="description" content="Your brain won't shut off. Lumi's listening. The AI companion that remembers everything so you don't have to — join the waitlist.">
+<meta property="og:title" content="Meet Lumi — Brain Dump to Done">
+<meta property="og:description" content="Try it right on the page: dump a thought, watch it get sorted. Then let Luna hold your spot until launch.">
+<meta property="og:url" content="https://lumitasks.app">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90' fill='%23E07A4F'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,400;1,9..144,500;1,9..144,600&family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#120E0C;--void2:#1A1512;--surface:#1F1813;--bone:#ECE0CB;--boneDim:#B0A38B;
+  --ember:#E07A4F;--emberLt:#E0A488;--glow:#F4C98A;--dusk:#8EA0B4;--honey:#C9A06A;
+  --lichen:#869072;--amethyst:#9A85A8;--ash:#5A5650;--mute:#6E655A;--hair:#2A2420;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--void)}
+body{
+  min-height:100vh;display:flex;flex-direction:column;
+  background:radial-gradient(130% 48% at 50% 0%, rgba(224,122,79,0.13), #120E0C 55%);
+  font-family:'Inter Tight',-apple-system,sans-serif;color:var(--bone);
+  -webkit-font-smoothing:antialiased;
+}
+a{color:inherit}
+button{font-family:inherit}
+
+nav{display:flex;align-items:center;justify-content:space-between;padding:26px 40px;max-width:1080px;width:100%;margin:0 auto}
+nav .brand{font-family:'Fraunces',serif;font-style:italic;font-weight:500;font-size:24px;color:var(--ember);letter-spacing:-0.5px;text-decoration:none}
+nav .links{display:flex;gap:26px;font-size:13.5px;color:var(--boneDim)}
+nav .links a{text-decoration:none;transition:color .15s}
+nav .links a:hover{color:var(--bone)}
+
+main{flex:1;width:100%;max-width:620px;margin:0 auto;padding:34px 24px 60px}
+
+.hero{text-align:center}
+.luna-wrap{display:flex;justify-content:center;margin-bottom:2px}
+.luna-halo{position:relative}
+.luna-halo::before{content:"";position:absolute;inset:-28px;border-radius:50%;background:radial-gradient(circle, rgba(244,201,138,0.17), transparent 70%);animation:wbreathe 3.4s ease-in-out infinite}
+img.luna{image-rendering:pixelated;display:block;position:relative}
+.eyebrow{font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--dusk);font-weight:700}
+.hero .eyebrow{margin:10px 0 14px}
+h1{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:46px;line-height:1.1;letter-spacing:-1.2px;text-wrap:pretty}
+.hero .sub{font-size:15.5px;color:var(--boneDim);line-height:1.6;margin:16px auto 0;max-width:400px}
+
+.demo{margin-top:44px;background:var(--void2);border:1px solid var(--hair);border-radius:22px;padding:24px 24px 20px;box-shadow:0 24px 60px rgba(0,0,0,0.4)}
+.demo-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;gap:12px}
+.demo-head .eyebrow{letter-spacing:1.8px}
+.demo-head .note{font-size:11px;color:var(--mute);text-align:right}
+.demo-q{font-family:'Fraunces',serif;font-style:italic;font-size:21px;color:var(--bone);margin-bottom:16px}
+.dump-row{display:flex;gap:10px}
+.dump-row input{flex:1;min-width:0;background:var(--void);border:1.5px solid var(--hair);border-radius:14px;padding:15px 16px;font-size:15px;color:var(--bone);font-family:inherit;outline:none;transition:border-color .18s}
+.dump-row input:focus{border-color:var(--ember)}
+.mic{display:none;align-items:center;justify-content:center;width:52px;flex-shrink:0;background:var(--void);border:1.5px solid var(--hair);border-radius:14px;color:var(--boneDim);cursor:pointer;transition:border-color .18s,color .18s}
+.mic.on{display:flex}
+.mic:hover{color:var(--bone);border-color:var(--mute)}
+.mic.rec{border-color:var(--ember);color:var(--ember);animation:wmic 1.2s ease-in-out infinite}
+.dump-row .go{display:flex;align-items:center;justify-content:center;background:var(--ember);color:var(--void);border:none;border-radius:14px;padding:0 22px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s}
+.dump-row .go:hover{background:var(--emberLt)}
+.mic-hint{font-size:11px;color:var(--mute);margin-top:8px;display:none;font-style:italic;font-family:'Fraunces',serif}
+.starters{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.starters button{font-size:12.5px;color:var(--boneDim);background:none;border:1px dashed #3a332c;border-radius:999px;padding:7px 14px;cursor:pointer;transition:color .15s,border-color .15s}
+.starters button:hover{color:var(--bone);border-color:var(--mute)}
+.thoughts{margin-top:18px;display:flex;flex-direction:column;gap:9px}
+.thought-messy{align-self:flex-start;background:var(--void);border:1px dashed #4a3f33;border-radius:12px;padding:11px 16px;font-size:14px;color:var(--boneDim);animation:wsettle .3s ease both;max-width:85%;overflow-wrap:anywhere}
+.thought-sorted{display:flex;align-items:center;gap:12px;background:var(--void);border:1px solid var(--hair);border-radius:12px;padding:12px 16px;animation:wpop .4s ease both}
+.thought-sorted .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.thought-sorted .txt{flex:1;font-size:14px;color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thought-sorted .tag{font-size:10.5px;font-weight:600;letter-spacing:.6px;border-radius:999px;padding:4px 10px;flex-shrink:0}
+.thought-sorted .est{font-size:11px;color:var(--mute);flex-shrink:0}
+.luna-line{font-size:12px;color:var(--dusk);margin-top:12px;font-style:italic;font-family:'Fraunces',serif;min-height:16px}
+
+.capture{margin-top:36px;text-align:center}
+.capture h2{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:20px;color:var(--bone);margin-bottom:4px}
+.capture .sub{font-size:13px;color:var(--mute);margin-bottom:16px}
+.email-row{display:flex;gap:10px;max-width:440px;margin:0 auto}
+.email-row input{flex:1;min-width:0;background:var(--void2);border:1.5px solid var(--hair);border-radius:999px;padding:16px 20px;font-size:15px;color:var(--bone);font-family:inherit;outline:none;transition:border-color .18s}
+.email-row input:focus{border-color:var(--ember)}
+.email-row button{display:flex;align-items:center;background:var(--ash);color:var(--void);border:none;border-radius:999px;padding:0 26px;font-size:14.5px;font-weight:600;cursor:pointer;transition:background .2s;white-space:nowrap}
+.email-row button.ready{background:var(--ember)}
+.email-row button.ready:hover{background:var(--emberLt)}
+.email-row button:disabled{cursor:default;opacity:.75}
+.consent{font-size:11.5px;color:var(--mute);margin-top:10px;display:none}
+.teaser{font-size:12px;color:var(--mute);margin-top:14px}
+.err{font-size:12.5px;color:var(--ember);margin-top:12px;min-height:17px}
+.hp{position:absolute;left:-9999px;opacity:0;height:0;overflow:hidden}
+
+.quote{text-align:center;margin-top:64px}
+.quote .q{font-family:'Fraunces',serif;font-style:italic;font-size:19px;color:var(--boneDim);line-height:1.6;max-width:400px;margin:0 auto}
+.quote .a{font-family:'Fraunces',serif;font-style:italic;font-size:15px;color:var(--ember);margin-top:10px}
+
+#joined{display:none;text-align:center;padding-top:40px;animation:wpop .5s ease both}
+#joined .luna-halo::before{inset:-30px;background:radial-gradient(circle, rgba(244,201,138,0.2), transparent 70%)}
+#joined .eyebrow{margin:4px 0 14px}
+#joined h1{font-size:44px;line-height:1.12;letter-spacing:-1px}
+#joined h1 .spot{color:var(--ember)}
+#joined .sub{font-size:15px;color:var(--boneDim);line-height:1.6;margin:16px auto 0;max-width:380px}
+.held{margin:30px auto 0;max-width:400px;text-align:left;background:var(--void2);border:1px solid var(--hair);border-radius:18px;padding:18px 20px;display:none}
+.held .label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:12px}
+.held .rows{display:flex;flex-direction:column;gap:9px}
+.held .row{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--bone)}
+.held .row .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.held .row .txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.held .row .tag{font-size:10.5px;font-weight:600;letter-spacing:.5px}
+.perks{display:flex;justify-content:center;gap:22px;margin-top:32px;font-size:12.5px;color:var(--mute);flex-wrap:wrap}
+.again{margin-top:36px;font-size:13px;color:var(--dusk);cursor:pointer;text-decoration:underline;text-underline-offset:3px;background:none;border:none}
+
+footer{border-top:1px solid var(--hair);padding:22px 40px;text-align:center;font-size:12.5px;color:var(--mute)}
+footer a{text-decoration:underline;color:var(--mute)}
+
+@keyframes wbreathe{0%,100%{transform:scale(1);opacity:.7}50%{transform:scale(1.14);opacity:1}}
+@keyframes wsettle{0%{transform:rotate(var(--tilt)) translateY(-6px);opacity:0}100%{transform:rotate(var(--tilt)) translateY(0);opacity:1}}
+@keyframes wpop{0%{transform:scale(.92);opacity:0}60%{transform:scale(1.03)}100%{transform:scale(1);opacity:1}}
+@keyframes wmic{0%,100%{box-shadow:0 0 0 0 rgba(224,122,79,0.35)}50%{box-shadow:0 0 0 7px rgba(224,122,79,0)}}
+@media (prefers-reduced-motion: reduce){
+  *,*::before{animation:none !important;transition:none !important}
+}
+@media (max-width:480px){
+  nav{padding:20px 22px}
+  h1{font-size:34px}
+  #joined h1{font-size:32px}
+  .email-row{flex-direction:column}
+  .email-row button{justify-content:center;padding:15px 26px}
+  .demo{padding:18px 16px 16px}
+  .perks{gap:12px}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="brand" href="/">Lumi</a>
+  <div class="links"><a href="/support">Support</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
+</nav>
+
+<main>
+  <!-- ============ MAIN STATE ============ -->
+  <div id="signup">
+    <div class="hero">
+      <div class="luna-wrap"><div class="luna-halo"><img class="luna" id="luna1" src="/luna-idle.gif" alt="Luna, a small pixel cat" style="width:108px;height:108px"></div></div>
+      <div class="eyebrow">✦ Meet Lumi — coming soon</div>
+      <h1>Your brain won't shut off.<br>Lumi's listening.</h1>
+      <div class="sub">The AI companion that remembers everything so you don't have to.</div>
+    </div>
+
+    <div class="demo">
+      <div class="demo-head">
+        <div class="eyebrow">Try it — don't just read about it</div>
+        <div class="note">stays on this page until you save your spot</div>
+      </div>
+      <div class="demo-q">What's rattling around in there?</div>
+      <div class="dump-row">
+        <input id="draft" placeholder="type one thing — messy is fine" maxlength="600" autocomplete="off" enterkeyhint="done">
+        <button class="mic" id="mic" type="button" aria-label="Speak a thought" title="Speak it instead">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+        </button>
+        <button class="go" id="dumpBtn" type="button">Dump it</button>
+      </div>
+      <div class="mic-hint" id="micHint">listening… say one thing, then pause.</div>
+      <div class="starters" id="starters">
+        <button type="button">call the dentist back</button>
+        <button type="button">finish the deck for Monday</button>
+        <button type="button">buy a birthday gift for Sam</button>
+      </div>
+      <div class="thoughts" id="thoughts" style="display:none"></div>
+      <div class="luna-line" id="lunaLine" style="display:none"></div>
+    </div>
+
+    <div class="capture">
+      <h2 id="ctaHeadline">Be first through the door.</h2>
+      <div class="sub">Early access + founding-member perks. Luna writes once, when it's time.</div>
+      <form class="email-row" id="joinForm" novalidate>
+        <input class="hp" type="text" name="website" tabindex="-1" aria-hidden="true" autocomplete="off">
+        <input id="email" type="email" placeholder="you@email.com" inputmode="email" autocomplete="email" maxlength="320">
+        <button id="joinBtn" type="submit">Save my spot</button>
+      </form>
+      <div class="consent" id="consent">Saving your spot sends your email and these thoughts to Lumi — nothing else, ever.</div>
+      <div class="err" id="joinErr" role="status"></div>
+      <div class="teaser" id="teaser">Founding spots are open — the earliest minds get the best perks.</div>
+    </div>
+
+    <div class="quote">
+      <div class="q">"I have 30 things to do and I don't even know where to start."</div>
+      <div class="a">That feeling is what Lumi is for.</div>
+    </div>
+  </div>
+
+  <!-- ============ JOINED STATE ============ -->
+  <div id="joined">
+    <div class="luna-wrap"><div class="luna-halo"><img class="luna" id="luna2" src="/luna-happy.gif" alt="Luna, happy" style="width:116px;height:116px"></div></div>
+    <div class="eyebrow">Luna will remember you</div>
+    <h1>You're <span class="spot" id="spotNum">in line</span>.</h1>
+    <div class="sub" id="joinedSub">We saved your spot — and your thoughts. When Lumi opens the door, they'll be waiting, sorted.</div>
+    <div class="held" id="held">
+      <div class="label">Held for you until launch</div>
+      <div class="rows" id="heldRows"></div>
+    </div>
+    <div class="perks"><span>✦ Founding-member pricing</span><span>✦ First in when doors open</span></div>
+    <button class="again" id="again" type="button">dump another thought while you wait</button>
+  </div>
+</main>
+
+<footer>
+  Coming soon to the App Store · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:support@lumitasks.app">support@lumitasks.app</a>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── config ──────────────────────────────────────────────────
+     ANON is Supabase's PUBLIC (publishable) key — safe to embed by
+     design. Row Level Security limits it to inserting waitlist rows;
+     it can never read data back. Real secrets live server-side. */
+  var SUPA = 'https://xnvutyllebwijisltott.supabase.co';
+  var ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhudnV0eWxsZWJ3aWppc2x0b3R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMDMwNzksImV4cCI6MjA5Njg3OTA3OX0.mqM_4LTS0BHgzubABq5-v1Os2bb8kRWLqeeDNZJhb58';
+  var LS_KEY = 'lumi.waitlist.v1';
+
+  /* ── classification (mirrors the app's tags) ────────────────── */
+  var TAGS = [
+    { match: /call|text|email|reply|message|mom|dad|dr|doctor|dentist/i, tag: 'REACH OUT', dot: '#8EA0B4', est: '~10 min' },
+    { match: /buy|get|pick up|order|grocer|return|renew|pay|bill/i, tag: 'ERRAND', dot: '#C9A06A', est: '~15 min' },
+    { match: /work|deck|report|meeting|boss|deadline|send|finish|write/i, tag: 'WORK', dot: '#E07A4F', est: '~45 min' },
+    { match: /clean|laundry|dishes|fix|plant|garage|closet/i, tag: 'HOME', dot: '#869072', est: '~20 min' },
+    { match: /someday|maybe|learn|trip|dream|book|idea/i, tag: 'SOMEDAY', dot: '#9A85A8', est: 'no rush' }
+  ];
+  var LUNA_LINES = [
+    "mm. that one's been circling for a while, hasn't it?",
+    "got it. see how it stopped buzzing?",
+    "one more thing your brain doesn't have to hold.",
+    "the pile sorts itself here. keep going if it helps."
+  ];
+  function alpha(hex, a) {
+    var h = hex.replace('#', '');
+    return 'rgba(' + parseInt(h.slice(0, 2), 16) + ',' + parseInt(h.slice(2, 4), 16) + ',' + parseInt(h.slice(4, 6), 16) + ',' + a + ')';
+  }
+  function classify(text) {
+    for (var i = 0; i < TAGS.length; i++) if (TAGS[i].match.test(text)) return TAGS[i];
+    return { tag: 'SORTED', dot: '#F4C98A', est: '~20 min' };
+  }
+
+  /* ── Luna — the app's real pixel-art GIFs ───────────────────── */
+  var lunaMood = 'idle';
+  function setLunaMood(m) {
+    lunaMood = m;
+    var el = document.getElementById('luna1');
+    if (el) el.src = m === 'happy' ? '/luna-happy.gif' : '/luna-idle.gif';
+  }
+
+  /* ── dom refs ───────────────────────────────────────────────── */
+  function $(id) { return document.getElementById(id); }
+  var signupEl = $('signup'), joinedEl = $('joined');
+  var draftEl = $('draft'), dumpBtn = $('dumpBtn'), startersEl = $('starters');
+  var thoughtsEl = $('thoughts'), lunaLineEl = $('lunaLine');
+  var ctaHeadline = $('ctaHeadline'), consentEl = $('consent');
+  var joinForm = $('joinForm'), emailEl = $('email'), joinBtn = $('joinBtn');
+  var joinErr = $('joinErr'), teaserEl = $('teaser');
+  var spotNum = $('spotNum'), joinedSub = $('joinedSub');
+  var heldEl = $('held'), heldRows = $('heldRows'), againBtn = $('again');
+  var micBtn = $('mic'), micHint = $('micHint');
+
+  /* ── state ──────────────────────────────────────────────────── */
+  var thoughts = []; // {text, tag, dot, est}
+  var joined = false;
+
+  /* ── brain-dump demo ────────────────────────────────────────── */
+  function sortedRow(t) {
+    var sorted = document.createElement('div');
+    sorted.className = 'thought-sorted';
+    var dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = t.dot;
+    var txt = document.createElement('span'); txt.className = 'txt'; txt.textContent = t.text;
+    var tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = t.tag;
+    tag.style.color = t.dot; tag.style.background = alpha(t.dot, 0.12);
+    var est = document.createElement('span'); est.className = 'est'; est.textContent = t.est;
+    sorted.appendChild(dot); sorted.appendChild(txt); sorted.appendChild(tag); sorted.appendChild(est);
+    return sorted;
+  }
+
+  function afterAdd() {
+    startersEl.style.display = 'none';
+    thoughtsEl.style.display = 'flex';
+    lunaLineEl.style.display = 'block';
+    lunaLineEl.textContent = LUNA_LINES[Math.min(thoughts.length - 1, LUNA_LINES.length - 1)];
+    ctaHeadline.textContent = 'Want Lumi to hold these until launch?';
+    consentEl.style.display = 'block';
+  }
+
+  /* ── mini-parser: a lite port of the app's real splitter, so a
+     pasted brain-dump becomes SEVERAL sorted thoughts (the wow) ── */
+  var VERB_RE = /\b(?:call|text|email|reply|buy|get|grab|pick|order|book|schedule|cancel|pay|send|submit|finish|start|write|read|review|study|clean|wash|fold|fix|water|feed|walk|take|return|renew|sign|check|update|plan|make|cook|do|go|visit|meet|pack|clear|mail|drop|look|figure|sort|organize|vacuum)\b/i;
+  var VENT_RE = /\b(?:i'?m so (?:stressed|overwhelmed|tired|anxious|behind)|it'?s stressing me( out)?|stressing me out|my brain(?:'?s| is) (?:all )?over the place|everything(?:'s| is) too much|i can'?t keep up|ugh+)\b/i;
+  var PREFIX_RE = /^(?:ok(?:ay)?,?\s+|so\s+|um+\s+|i (?:really |also )?(?:need|have|want|got) to\s+|i'?ve got(?:ta)? to\s+|gotta\s+|i gotta\s+|don'?t (?:let me )?forget to\s+|remember to\s+|i keep meaning to\s+|i should(?: probably)?\s+|need to\s+|also\s+|and\s+|then\s+)+/i;
+
+  function cleanPiece(p) {
+    p = p.trim().replace(PREFIX_RE, '').trim();
+    p = p.replace(/[.!?]+$/, '').trim();
+    if (p) p = p.charAt(0).toUpperCase() + p.slice(1);
+    return p;
+  }
+
+  function splitDump(text) {
+    var parts = String(text).replace(/\n+/g, '. ')
+      .split(/[.;]|,|\s+(?:and then|and also|oh and)\s+|\s+(?:and|then|also|plus)\s+(?=\w)/i);
+    // merge "and X" pieces that have no verb back into the previous
+    var out = [], vented = false;
+    for (var i = 0; i < parts.length; i++) {
+      var raw = (parts[i] || '').trim();
+      if (!raw) continue;
+      if (VENT_RE.test(raw)) { vented = true; continue; }
+      var hasVerb = VERB_RE.test(raw);
+      if (!hasVerb && out.length && raw.split(/\s+/).length <= 5) {
+        out[out.length - 1] += ' and ' + raw; // "…coffee beans" + "dog food"
+        continue;
+      }
+      var clean = cleanPiece(raw);
+      if (clean.length > 2) out.push(clean);
+    }
+    return { pieces: out, vented: vented };
+  }
+
+  var MAX_DEMO = 5;
+
+  function lockDemo() {
+    draftEl.disabled = true;
+    draftEl.placeholder = "Luna's holding five already…";
+    dumpBtn.textContent = 'Save my spot';
+    dumpBtn.onclick = function () {
+      emailEl.focus();
+      emailEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    micBtn.classList.remove('on');
+    lunaLineEl.textContent = "my paws are full — I can hold five out here. inside, I hold everything.";
+  }
+
+  function addThought(text) {
+    text = (text || '').trim().slice(0, 200);
+    if (!text || thoughts.length >= MAX_DEMO) return;
+    var meta = classify(text);
+    var t = { text: text, tag: meta.tag, dot: meta.dot, est: meta.est };
+    thoughts.push(t);
+    setLunaMood('happy');
+    draftEl.value = '';
+
+    var el = document.createElement('div');
+    var tilt = (Math.random() * 5 - 2.5).toFixed(1) + 'deg';
+    el.className = 'thought-messy';
+    el.style.setProperty('--tilt', tilt);
+    el.style.transform = 'rotate(' + tilt + ')';
+    el.style.alignSelf = Math.random() > 0.5 ? 'flex-start' : 'flex-end';
+    el.textContent = text;
+    thoughtsEl.appendChild(el);
+
+    setTimeout(function () {
+      if (el.parentNode === thoughtsEl) thoughtsEl.replaceChild(sortedRow(t), el);
+    }, 950);
+
+    afterAdd();
+    persist();
+    if (thoughts.length >= MAX_DEMO) lockDemo();
+  }
+
+  function dump(text) {
+    var res = splitDump(text);
+    if (!res.pieces.length && !res.vented) { addThought(text); return; }
+    draftEl.value = '';
+    var room = Math.max(0, MAX_DEMO - thoughts.length);
+    var toAdd = res.pieces.slice(0, room);
+    toAdd.forEach(function (p, i) {
+      setTimeout(function () { addThought(p); }, i * 220);
+    });
+    if (res.vented) {
+      setTimeout(function () {
+        lunaLineEl.style.display = 'block';
+        lunaLineEl.textContent = "and the stress? i heard it. feelings aren't tasks — i set that part down for you.";
+      }, toAdd.length * 220 + 1100);
+    }
+  }
+
+  dumpBtn.addEventListener('click', function () { dump(draftEl.value); });
+  draftEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); dump(draftEl.value); } });
+  startersEl.addEventListener('click', function (e) {
+    if (e.target && e.target.tagName === 'BUTTON') addThought(e.target.textContent);
+  });
+
+  /* ── mic (Web Speech API — appears only where supported) ────── */
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SR) {
+    micBtn.classList.add('on');
+    var rec = null, recActive = false;
+    function stopRec() {
+      recActive = false;
+      micBtn.classList.remove('rec');
+      micHint.style.display = 'none';
+      if (rec) { try { rec.stop(); } catch (e) {} }
+    }
+    micBtn.addEventListener('click', function () {
+      if (recActive) { stopRec(); return; }
+      try {
+        rec = new SR();
+        rec.lang = (navigator.language || 'en-US');
+        rec.interimResults = true;
+        rec.maxAlternatives = 1;
+        rec.onresult = function (ev) {
+          var finalText = '', interim = '';
+          for (var i = 0; i < ev.results.length; i++) {
+            if (ev.results[i].isFinal) finalText += ev.results[i][0].transcript;
+            else interim += ev.results[i][0].transcript;
+          }
+          if (interim) draftEl.value = interim.trim().slice(0, 200);
+          if (finalText.trim()) {
+            stopRec();
+            dump(finalText);
+          }
+        };
+        rec.onerror = function (ev) {
+          stopRec();
+          if (ev && (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')) {
+            micBtn.classList.remove('on'); // mic blocked — hide, typing still works
+          }
+        };
+        rec.onend = stopRec;
+        rec.start();
+        recActive = true;
+        micBtn.classList.add('rec');
+        micHint.style.display = 'block';
+        draftEl.placeholder = 'listening…';
+      } catch (e) {
+        stopRec();
+        micBtn.classList.remove('on');
+      }
+    });
+  }
+
+  /* ── email validation ───────────────────────────────────────── */
+  function emailValid(v) { return /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test((v || '').trim()); }
+  emailEl.addEventListener('input', function () {
+    joinBtn.classList.toggle('ready', emailValid(emailEl.value));
+    joinErr.textContent = '';
+  });
+
+  /* ── waitlist backend (Supabase, write-only public key) ─────── */
+  function api(path, opts, timeoutMs) {
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort(); }, timeoutMs || 10000);
+    opts = opts || {};
+    opts.signal = ctl.signal;
+    opts.headers = Object.assign({
+      'content-type': 'application/json',
+      'apikey': ANON,
+      'authorization': 'Bearer ' + ANON
+    }, opts.headers || {});
+    return fetch(SUPA + path, opts).finally(function () { clearTimeout(timer); });
+  }
+
+  function fetchCount() {
+    return api('/rest/v1/rpc/waitlist_count', { method: 'POST', body: '{}' }, 4000)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (n) { return typeof n === 'number' ? n : null; })
+      .catch(function () { return null; });
+  }
+
+  function submitOnce(email) {
+    var body = { email: email, source: 'landing' };
+    if (thoughts.length) {
+      body.thoughts = thoughts.slice(0, 20).map(function (t) { return { text: t.text.slice(0, 200), tag: t.tag }; });
+    }
+    return api('/rest/v1/waitlist', {
+      method: 'POST',
+      headers: { 'prefer': 'return=minimal' },
+      body: JSON.stringify(body)
+    });
+  }
+
+  function join(email) {
+    joinBtn.disabled = true;
+    joinBtn.textContent = 'Saving…';
+    joinErr.textContent = '';
+
+    var attempt = 0;
+    function go() {
+      attempt++;
+      submitOnce(email).then(function (r) {
+        if (r.ok) return done(false);
+        if (r.status === 409) return done(true); // already in — that's a win
+        return r.text().then(function (t) {
+          if (t && t.indexOf('23505') !== -1) return done(true);
+          throw new Error('http ' + r.status);
+        });
+      }).catch(function () {
+        if (attempt < 3) {
+          setTimeout(go, attempt * 900);
+        } else {
+          joinBtn.disabled = false;
+          joinBtn.textContent = 'Save my spot';
+          joinErr.textContent = "Hmm, that didn't go through — mind trying once more?";
+        }
+      });
+    }
+
+    function done(wasDuplicate) {
+      fetchCount().then(function (n) {
+        joined = true;
+        setLunaMood('happy');
+        spotNum.textContent = (typeof n === 'number' && n > 0) ? '#' + n : 'in line';
+        joinedSub.textContent = wasDuplicate
+          ? (thoughts.length
+              ? 'You were already on the list — spot safe. And these thoughts? Luna heard them.'
+              : 'You were already on the list — your spot is safe and sound.')
+          : (thoughts.length
+              ? "We saved your spot — and your thoughts. When Lumi opens the door, they'll be waiting, sorted."
+              : "We saved your spot. When Lumi opens the door, you're first through it.");
+        renderHeld();
+        signupEl.style.display = 'none';
+        joinedEl.style.display = 'block';
+        window.scrollTo({ top: 0 });
+        persist();
+      });
+    }
+    go();
+  }
+
+  joinForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (joinForm.website && joinForm.website.value) return; // honeypot
+    var email = emailEl.value.trim();
+    if (!emailValid(email)) {
+      joinErr.textContent = 'That email doesn’t look complete — mind checking it?';
+      emailEl.focus();
+      return;
+    }
+    join(email);
+  });
+
+  function renderHeld() {
+    if (!thoughts.length) { heldEl.style.display = 'none'; return; }
+    heldEl.style.display = 'block';
+    heldRows.textContent = '';
+    thoughts.forEach(function (t) {
+      var row = document.createElement('div'); row.className = 'row';
+      var dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = t.dot;
+      var txt = document.createElement('span'); txt.className = 'txt'; txt.textContent = t.text;
+      var tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = t.tag; tag.style.color = t.dot;
+      row.appendChild(dot); row.appendChild(txt); row.appendChild(tag);
+      heldRows.appendChild(row);
+    });
+  }
+
+  againBtn.addEventListener('click', function () {
+    joinedEl.style.display = 'none';
+    signupEl.style.display = 'block';
+    if (thoughts.length < MAX_DEMO) draftEl.focus();
+  });
+
+  /* ── persistence (refresh-proof) ────────────────────────────── */
+  function persist() {
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({
+        joined: joined,
+        spot: spotNum.textContent,
+        sub: joinedSub.textContent,
+        thoughts: thoughts.map(function (t) { return { text: t.text }; })
+      }));
+    } catch (e) { /* private browsing — fine */ }
+  }
+  function restore() {
+    try {
+      var raw = localStorage.getItem(LS_KEY);
+      if (!raw) return;
+      var s = JSON.parse(raw);
+      if (Array.isArray(s.thoughts)) {
+        s.thoughts.slice(0, 5).forEach(function (t) {
+          if (t && typeof t.text === 'string' && t.text.trim()) {
+            var meta = classify(t.text);
+            thoughts.push({ text: t.text.slice(0, 200), tag: meta.tag, dot: meta.dot, est: meta.est });
+          }
+        });
+        if (thoughts.length) {
+          setLunaMood('happy');
+          thoughts.forEach(function (t) { thoughtsEl.appendChild(sortedRow(t)); });
+          afterAdd();
+          if (thoughts.length >= MAX_DEMO) lockDemo();
+        }
+      }
+      if (s.joined) {
+        joined = true;
+        spotNum.textContent = s.spot || 'in line';
+        if (s.sub) joinedSub.textContent = s.sub;
+        renderHeld();
+        signupEl.style.display = 'none';
+        joinedEl.style.display = 'block';
+      }
+    } catch (e) { /* corrupted storage — start fresh */ }
+  }
+
+  /* ── boot ───────────────────────────────────────────────────── */
+  restore();
+  fetchCount().then(function (n) {
+    if (typeof n === 'number' && n >= 25) {
+      teaserEl.textContent = n + ' minds already in line';
+    }
+  });
+})();
+</script>
+</body>
+</html>

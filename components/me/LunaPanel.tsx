@@ -366,14 +366,16 @@ const badgeForState = (
       fg: colors.plum,
       border: 'rgba(196,160,224,0.25)',
     };
+  // Guilt-free wording (emotional-model spec §0): Luna is never
+  // "hurt" or "needing" the user — she's just here, gently.
   if (s === 'struggling')
     return {
-      text: '🌧️ Low energy · needs you',
+      text: '🌦 Quiet day · here with you',
       fg: colors.terra,
       border: 'rgba(212,144,106,0.2)',
     };
   return {
-    text: '🌘 Resting · waiting',
+    text: '🌘 Cozy · kept your spot warm',
     fg: colors.text3,
     border: 'rgba(100,90,80,0.15)',
   };

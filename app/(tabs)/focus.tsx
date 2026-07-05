@@ -418,7 +418,7 @@ function PickStep({
                   {TIER[suggested.importance].sigil}
                 </Text>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.suggestTitle} numberOfLines={1}>
+                  <Text style={styles.suggestTitle}>
                     {suggested.title}
                   </Text>
                   <Text style={styles.suggestSub}>
@@ -449,7 +449,7 @@ function PickStep({
                 {TIER[q.importance].sigil}
               </Text>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.listTitle} numberOfLines={1}>
+                <Text style={styles.listTitle}>
                   {q.title}
                 </Text>
                 <Text style={styles.listSub}>{TIER[q.importance].label}</Text>
@@ -546,6 +546,114 @@ function PickStep({
           <Text style={styles.monthFoot}>
             Dots mark days with tasks — tap a day to see them.
           </Text>
+
+          {/* ── The month, at a glance — fills the dead space below
+              the grid with things worth focusing ON. Pulse stats +
+              the next few scheduled tasks, each one tap from a
+              focus session. All from the visible month. */}
+          {(() => {
+            const todayIso = isoDate(today);
+            const inMonth = (iso: string | null | undefined) =>
+              !!iso &&
+              new Date(iso + 'T00:00:00').getMonth() === monthIdx &&
+              new Date(iso + 'T00:00:00').getFullYear() === monthYear;
+            const doneCount = quests.filter(
+              (q) => q.completed && inMonth(q.date),
+            ).length;
+            const upcoming = quests
+              .filter(
+                (q) =>
+                  !q.completed &&
+                  q.window !== 'someday' &&
+                  q.date &&
+                  q.date >= todayIso &&
+                  inMonth(q.date),
+              )
+              .sort((a, b) => {
+                const rank = { high: 3, medium: 2, low: 1 } as const;
+                return (
+                  a.date!.localeCompare(b.date!) ||
+                  rank[b.importance] - rank[a.importance]
+                );
+              });
+            const busyDays = new Set(upcoming.map((q) => q.date));
+            const lastDay = new Date(monthYear, monthIdx + 1, 0);
+            const isCurrentMonth =
+              today.getMonth() === monthIdx &&
+              today.getFullYear() === monthYear;
+            const daysLeft = isCurrentMonth
+              ? Math.max(0, lastDay.getDate() - today.getDate() + 1)
+              : 0;
+            const clearDays = Math.max(0, daysLeft - busyDays.size);
+            const dayNum = (iso: string) =>
+              parseInt(iso.slice(8, 10), 10);
+            return (
+              <View style={styles.monthPanel}>
+                <View style={styles.monthPulseRow}>
+                  <View style={styles.monthPulseCell}>
+                    <Text style={styles.monthPulseNum}>{doneCount}</Text>
+                    <Text style={styles.monthPulseLabel}>done</Text>
+                  </View>
+                  <View style={styles.monthPulseCell}>
+                    <Text style={[styles.monthPulseNum, { color: C.ember }]}>
+                      {upcoming.length}
+                    </Text>
+                    <Text style={styles.monthPulseLabel}>ahead</Text>
+                  </View>
+                  {isCurrentMonth && (
+                    <View style={styles.monthPulseCell}>
+                      <Text
+                        style={[styles.monthPulseNum, { color: C.lichen }]}
+                      >
+                        {clearDays}
+                      </Text>
+                      <Text style={styles.monthPulseLabel}>clear days</Text>
+                    </View>
+                  )}
+                </View>
+
+                <Text style={styles.monthComingLabel}>coming up</Text>
+                {upcoming.length === 0 ? (
+                  <Text style={styles.monthComingEmpty}>
+                    Nothing scheduled ahead this month — a clear runway.
+                  </Text>
+                ) : (
+                  upcoming.slice(0, 4).map((q) => (
+                    <Pressable
+                      key={q.id}
+                      style={styles.monthComingRow}
+                      onPress={() => pickQuest(q)}
+                    >
+                      <View style={styles.monthComingDate}>
+                        <Text style={styles.monthComingDateText}>
+                          {q.date === todayIso
+                            ? 'today'
+                            : `${MO[monthIdx].slice(0, 3)} ${dayNum(q.date!)}`}
+                        </Text>
+                      </View>
+                      <Text
+                        style={[
+                          styles.listSigil,
+                          { color: TIER[q.importance].color },
+                        ]}
+                      >
+                        {TIER[q.importance].sigil}
+                      </Text>
+                      <Text style={styles.monthComingTitle}>
+                        {q.title}
+                      </Text>
+                      <Text style={styles.rowChev}>›</Text>
+                    </Pressable>
+                  ))
+                )}
+                {upcoming.length > 4 && (
+                  <Text style={styles.monthComingMore}>
+                    +{upcoming.length - 4} more — tap their days above
+                  </Text>
+                )}
+              </View>
+            );
+          })()}
         </View>
       )}
     </ScrollView>
@@ -1429,6 +1537,85 @@ const styles = StyleSheet.create({
     color: C.mute,
     textAlign: 'center',
     marginTop: 16,
+  },
+  monthPanel: {
+    marginTop: 22,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: hexA('#ECE0CB', 0.08),
+    backgroundColor: hexA('#ECE0CB', 0.025),
+    padding: 16,
+  },
+  monthPulseRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: hexA('#ECE0CB', 0.07),
+  },
+  monthPulseCell: { alignItems: 'center' },
+  monthPulseNum: {
+    fontFamily: fonts.fraunces,
+    fontSize: 26,
+    color: C.bone,
+  },
+  monthPulseLabel: {
+    fontFamily: fonts.interSemi,
+    fontSize: 9.5,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    color: C.mute,
+    marginTop: 2,
+  },
+  monthComingLabel: {
+    fontFamily: fonts.interSemi,
+    fontSize: 9.5,
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+    color: C.boneDim,
+    marginTop: 14,
+    marginBottom: 4,
+  },
+  monthComingEmpty: {
+    fontFamily: fonts.fraunces,
+    fontSize: 12.5,
+    color: C.mute,
+    marginTop: 6,
+  },
+  monthComingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: hexA('#ECE0CB', 0.05),
+  },
+  monthComingDate: {
+    minWidth: 52,
+    borderWidth: 1,
+    borderColor: hexA('#E07A4F', 0.3),
+    borderRadius: 7,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+  },
+  monthComingDateText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 10,
+    color: C.ember,
+  },
+  monthComingTitle: {
+    flex: 1,
+    fontFamily: fonts.interMed,
+    fontSize: 13.5,
+    color: C.bone,
+  },
+  monthComingMore: {
+    fontFamily: fonts.fraunces,
+    fontSize: 11.5,
+    color: C.mute,
+    textAlign: 'center',
+    marginTop: 10,
   },
 
   // ── Duration step ──

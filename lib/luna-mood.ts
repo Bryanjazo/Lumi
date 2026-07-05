@@ -59,6 +59,20 @@ export const inferMoodFromText = (text: string): LunaMood | null => {
   return null;
 };
 
+/**
+ * Does this text read as the user EXPRESSING overwhelm — not just a
+ * low word, but "it's all too much"? This is the ONE trigger allowed
+ * to show Luna's sad/empathizing pose (emotional-model spec §1): she
+ * sits WITH the user ("that sounds like a lot — let's carry it
+ * together"), never AT them. Deliberately tighter than SAD_PATTERNS,
+ * which colors the chat avatar's tone; this gates a bigger moment.
+ */
+const OVERWHELM_PATTERNS =
+  /\b(overwhelm(ed|ing)?|drown(ing)?|too much|so much to do|falling apart|fell apart|can'?t keep up|cant keep up|behind on everything|everything(?:'s| is) (?:a mess|too much|piling|falling)|losing my mind|brain won'?t (?:stop|shut)|spiral(ing|ling)?|burnt? ?out)\b/i;
+
+export const textReadsOverwhelmed = (text: string): boolean =>
+  typeof text === 'string' && OVERWHELM_PATTERNS.test(text);
+
 // ─────────────────────────────────────────────────────────────────────
 // Ambient mood — what Luna shows on surfaces that don't have a
 // per-message tone signal (Home nook, Me room, Profile avatar,
@@ -67,13 +81,18 @@ export const inferMoodFromText = (text: string): LunaMood | null => {
 // Priority (first match wins):
 //   1. Within sleep window (past sleep anchor, before wake)  → 'sleep'
 //   2. All today's quests cleared                            → 'happy'
-//   3. Long streak (≥5 days)                                 → 'happy'
-//   4. Heavy overdue pile (≥5 items past their date)         → 'sad'
+//   3. Strong momentum today (3+ completions)                → 'happy'
+//   4. Long streak (≥5 days)                                 → 'happy'
 //   5. Default                                                → 'idle'
 //
-// These map naturally to the user's lived experience: late at night
-// the cat is asleep, after a clean sweep she's happy, when too much
-// has piled up she's commiserating.
+// NOTE (emotional-model spec §1): the ambient mood can NEVER be
+// 'sad'. An overdue pile, days of inactivity, or a broken streak
+// must not make Luna look hurt — that reads as "you failed me" and
+// feeds the exact avoidance loop that kills ADHD-app retention
+// ("I don't want to open it, it'll remind me I messed up"). The sad
+// pose is reserved for ONE moment: the user saying they're
+// overwhelmed (see textReadsOverwhelmed), where Luna empathizes
+// WITH them. Golden retriever, not Tamagotchi.
 // ─────────────────────────────────────────────────────────────────────
 
 const localToday = (): string => {
@@ -129,17 +148,10 @@ export const useAmbientLunaMood = (): LunaMood => {
     // 4. Long streak — Luna's been with them for a while.
     if (streak >= 5) return 'happy';
 
-    // 5. Overwhelm — several overdue items AND no real momentum today.
-    //    Threshold is 3 (was 5) — 5 was too patient; by then the user
-    //    has already felt the weight. The "no momentum" guard still
-    //    prevents the sad face for a user who's clearly chipping
-    //    away — even 1 completion bumps them out of sad.
-    const overdue = quests.filter(
-      (q) => !q.completed && q.date && q.date < today,
-    ).length;
-    if (overdue >= 3 && completedToday === 0) return 'sad';
-
-    // 6. Default ambient state.
+    // 5. Default ambient state. (The old rule 5 — overdue pile →
+    //    'sad' — is deliberately GONE. A backlog is handled by
+    //    Rescue Mode and the proactive-backlog card with warmth and
+    //    options, never by the cat looking hurt at the user.)
     return 'idle';
     // `quests` is referentially stable while no quest changes; the
     // useMemo dep keeps this O(n) scan from running every render.

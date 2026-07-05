@@ -75,6 +75,21 @@ export const signUp = async (
     options: { emailRedirectTo: getRedirectUrl() },
   });
   if (error) throw error;
+  // Existing-account detection: with confirmations ON, Supabase
+  // anti-enumeration returns a FAKE success for an email that
+  // already has an account — same shape, no email sent, and the
+  // user would sit on the verify screen waiting forever. The
+  // fingerprint is an obfuscated user with an EMPTY identities
+  // array. Surface the honest message instead.
+  if (
+    data.user &&
+    Array.isArray(data.user.identities) &&
+    data.user.identities.length === 0
+  ) {
+    throw new Error(
+      'An account with this email already exists — try signing in instead.',
+    );
+  }
   // No session AND we have a user → confirmation email was sent,
   // waiting for the click. No session AND no user → shouldn't
   // happen; treat as error.
@@ -96,6 +111,41 @@ export const resendConfirmation = async (email: string): Promise<void> => {
     options: { emailRedirectTo: getRedirectUrl() },
   });
   if (error) throw error;
+};
+
+// ── pending-confirmation credential stash ───────────────────────────
+// In-memory ONLY (never persisted): after sign-up, the verify-email
+// screen polls signIn with these so the moment the user clicks the
+// confirmation link — on any device, any browser — the app signs
+// itself in. Makes confirmation feel like "approved → you're in"
+// even when the deep link never reaches us (desktop mail clients,
+// missing redirect allow-list entries, etc.).
+let pendingCreds: { email: string; password: string } | null = null;
+export const stashPendingCredentials = (
+  email: string,
+  password: string,
+): void => {
+  pendingCreds = { email: email.trim().toLowerCase(), password };
+};
+export const clearPendingCredentials = (): void => {
+  pendingCreds = null;
+};
+/**
+ * One quiet sign-in attempt with the stashed credentials. Returns
+ * true when a session was established (email now confirmed). Silent
+ * on the expected failure (email not confirmed yet / creds missing).
+ */
+export const tryPendingSignIn = async (): Promise<boolean> => {
+  if (!pendingCreds || !isSupabaseConfigured) return false;
+  const { error } = await supabase.auth.signInWithPassword({
+    email: pendingCreds.email,
+    password: pendingCreds.password,
+  });
+  if (!error) {
+    pendingCreds = null;
+    return true;
+  }
+  return false;
 };
 
 export const signIn = async (

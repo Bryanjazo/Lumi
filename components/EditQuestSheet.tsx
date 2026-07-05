@@ -62,11 +62,23 @@ const MAX_NOTE = 500;
 interface Props {
   visible: boolean;
   onClose: () => void;
+  /** Destructive path — renders a two-tap "Delete this task" row at
+   *  the bottom of the sheet. Omit to hide deletion entirely. */
+  onDelete?: () => void;
   quest: Quest | null;
   onSave: (next: { title: string; note: string; comment: string }) => void;
 }
 
-export const EditQuestSheet = ({ visible, onClose, quest, onSave }: Props) => {
+export const EditQuestSheet = ({
+  visible,
+  onClose,
+  onDelete,
+  quest,
+  onSave,
+}: Props) => {
+  // Two-tap delete confirm — first tap arms, second commits. Re-arms
+  // closed every time the sheet opens for a (new) quest.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const accent = useAccent();
   const voice = useVoice();
 
@@ -87,6 +99,7 @@ export const EditQuestSheet = ({ visible, onClose, quest, onSave }: Props) => {
       setTitleFocused(false);
       setNoteFocused(false);
       setCommentFocused(false);
+      setConfirmingDelete(false);
     }
   }, [visible, quest]);
 
@@ -326,6 +339,40 @@ export const EditQuestSheet = ({ visible, onClose, quest, onSave }: Props) => {
                 </Text>
               </Pressable>
             </View>
+
+            {/* ── Delete — two-tap confirm, no system alert ── */}
+            {onDelete && (
+              <Pressable
+                onPress={() => {
+                  if (!confirmingDelete) {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setConfirmingDelete(true);
+                    return;
+                  }
+                  Haptics.notificationAsync(
+                    Haptics.NotificationFeedbackType.Warning,
+                  );
+                  onDelete();
+                  onClose();
+                }}
+                style={[
+                  styles.deleteRow,
+                  confirmingDelete && styles.deleteRowArmed,
+                ]}
+                hitSlop={4}
+              >
+                <Text
+                  style={[
+                    styles.deleteText,
+                    confirmingDelete && { color: '#E07A4F' },
+                  ]}
+                >
+                  {confirmingDelete
+                    ? 'Tap again to delete — this can’t be undone'
+                    : 'Delete this task'}
+                </Text>
+              </Pressable>
+            )}
           </SafeAreaView>
         </KeyboardAvoidingView>
       </View>
@@ -518,5 +565,21 @@ const styles = StyleSheet.create({
     fontFamily: fonts.interSemi,
     fontSize: 14,
     letterSpacing: 0.1,
+  },
+  deleteRow: {
+    marginTop: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 14,
+  },
+  deleteRowArmed: {
+    backgroundColor: 'rgba(224,122,79,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(224,122,79,0.4)',
+  },
+  deleteText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 13,
+    color: C.mute,
   },
 });

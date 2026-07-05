@@ -16,7 +16,7 @@
 //   it into the existing promise-returning `stopAndTranscribe`
 //   shape by storing a resolver ref and finishing the promise on
 //   the `end` event.
-// - `interimResults: false` so only the finalized transcript is
+// - `interimResults: true` — partials stream so capture surfaces
 //   delivered (cheaper and avoids partial flicker — the existing
 //   UI was built for "speak, then submit," not live transcription).
 // - The library uses a single shared recognizer; only one mic

@@ -1,0 +1,14 @@
+# GitGuardian config — see https://docs.gitguardian.com
+version: 2
+
+secret:
+  ignored-matches:
+    # Supabase ANON key — public by design (ships in the app binary
+    # and the website; every visitor's browser receives it). Its only
+    # power is what Row Level Security grants: the waitlist table is
+    # insert-only for anon, and every other table requires the
+    # authenticated user's own rows. The PRIVATE keys (service_role,
+    # Anthropic) live exclusively in Supabase server-side env, never
+    # in this repo.
+    - name: Supabase anon (publishable) key
+      match: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhudnV0eWxsZWJ3aWppc2x0b3R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMDMwNzksImV4cCI6MjA5Njg3OTA3OX0.mqM_4LTS0BHgzubABq5-v1Os2bb8kRWLqeeDNZJhb58

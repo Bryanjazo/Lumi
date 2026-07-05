@@ -46,7 +46,7 @@ import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { timeColors as C } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { lunaSource, useLunaSkin } from '../../lib/luna-source';
-import { useAmbientLunaMood } from '../../lib/luna-mood';
+import { useAmbientLunaMood, textReadsOverwhelmed } from '../../lib/luna-mood';
 import { useCompanionMode } from '../../lib/companion-mode';
 import { IMPORTANCE, Importance } from '../../constants/importance';
 import {
@@ -71,11 +71,24 @@ import { useTour, useTourTarget } from '../../components/SpotlightTour';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
 import {
   parseSmartCapture,
+  routeCapture,
+  tidyTranscript,
   difficultyFromImportance,
   pickWindowForDemand,
   type CaptureContext,
   type SmartTask,
 } from '../../lib/capture';
+import { personalizeTasks } from '../../lib/personalize';
+import { useAiMetricsStore } from '../../store/aiMetricsStore';
+import { awayStateFor, lastSeenDate, type AwayState } from '../../lib/away';
+import { classifyKind } from '../../constants/taskKinds';
+import {
+  findStale,
+  dominantStaleCluster,
+} from '../../lib/learning/avoidance';
+import { useRescueStore } from '../../store/rescueStore';
+import { RescueCard } from '../../components/RescueCard';
+import { WelcomeBackCard } from '../../components/WelcomeBackCard';
 import { useVoice } from '../../lib/voice';
 import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
@@ -95,7 +108,7 @@ import {
 } from '../../store/correctionsStore';
 import {
   llmUnderstand,
-  isAnthropicConfigured,
+  isLlmAvailable,
   type UnderstandContext,
   type UnderstoodTask,
 } from '../../lib/anthropic';
@@ -946,20 +959,46 @@ export default function Home() {
     }, durationMs);
   };
 
+  // ── Empathize moment (emotional-model spec §1) ───────────────────
+  // The ONE sanctioned use of the sad pose: the user just told us
+  // they're overwhelmed. Luna sits WITH them for a few seconds —
+  // "let's carry it together" — then returns to ambient. Never fired
+  // by missed tasks / inactivity / streaks.
+  const [empathizing, setEmpathizing] = useState(false);
+  const empathizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const triggerEmpathize = () => {
+    if (empathizeTimerRef.current) clearTimeout(empathizeTimerRef.current);
+    setEmpathizing(true);
+    empathizeTimerRef.current = setTimeout(() => {
+      setEmpathizing(false);
+      empathizeTimerRef.current = null;
+    }, 7_000);
+  };
+
   // Cleanup on unmount so a stale timeout can't try to setState
   // after the screen's torn down.
   useEffect(
     () => () => {
       if (celebrateTimerRef.current) clearTimeout(celebrateTimerRef.current);
       if (lickTimerRef.current) clearTimeout(lickTimerRef.current);
+      if (empathizeTimerRef.current) {
+        clearTimeout(empathizeTimerRef.current);
+      }
     },
     [],
   );
+  // Priority: the lick beat is a transient action; empathize beats
+  // celebration (sitting with the user matters more than confetti);
+  // then the 30s happy window; then ambient.
   const nookMood = licking
     ? 'lick'
-    : celebrating
-      ? 'happy'
-      : ambientMood;
+    : empathizing
+      ? 'sad'
+      : celebrating
+        ? 'happy'
+        : ambientMood;
 
   // ── Store ────────────────────────────────────────────────────────
   const xp = useUserStore((s) => s.xp);
@@ -989,6 +1028,10 @@ export default function Home() {
   const setQuestComment = useQuestStore((s) => s.setComment);
   const recordCorrection = useCorrectionsStore((s) => s.record);
   const recentCorrections = useCorrectionsStore((s) => s.recent);
+  // §2.5 metrics — route decisions + edit flags for the current preview.
+  const recordAiMetric = useAiMetricsStore((s) => s.record);
+  const updateAiMetric = useAiMetricsStore((s) => s.update);
+  const lastMetricIdRef = useRef<string | null>(null);
   const todayQuests = useMemo(() => selectTodayQuests(quests), [quests]);
 
   // ── Suggestions ──────────────────────────────────────────────────
@@ -1365,6 +1408,24 @@ export default function Home() {
       }, 1200);
     }
 
+    // Meaningful-win moments (emotional-model spec §4): the BIG
+    // emotional peak lands on "you did the avoided/hard thing", not
+    // on checkbox volume. A task carried 5+ days = avoidance finally
+    // broken — that gets NAMED. A Trial gets a nod. Routine
+    // completions keep the quiet warm beat above.
+    const daysCarried = q.createdAt
+      ? Math.floor(
+          (Date.now() - new Date(q.createdAt).getTime()) / 86_400_000,
+        )
+      : 0;
+    if (daysCarried >= 5) {
+      showToast(
+        `That one followed you for ${daysCarried} days — and you just did it ✨`,
+      );
+    } else if (q.importance === 'high') {
+      showToast('The big one. That took real fuel — well done.');
+    }
+
     // Surface an Undo so accidental taps can be reversed within 6s.
     // The XP guardrail in questStore means an undo doesn't subtract
     // XP — you keep the small win for trying.
@@ -1383,6 +1444,164 @@ export default function Home() {
     if (idx < 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSwap(idx);
+  };
+
+  // ── Away/return + Rescue Mode (emotional-model spec §2/§3) ───────
+  // Snapshot how long the user was away BEFORE stamping today as an
+  // open day — the stamp would otherwise erase the signal we're
+  // about to welcome them back with.
+  const registerOpen = useUserStore((s) => s.registerOpen);
+  const rescueDismissedDate = useUserStore((s) => s.rescueDismissedDate);
+  const dismissRescueForToday = useUserStore((s) => s.dismissRescue);
+  const setRescueExplain = useRescueStore((s) => s.setPendingExplain);
+  const [awaySnap, setAwaySnap] = useState<AwayState | null>(null);
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  useEffect(() => {
+    const prevOpen = registerOpen();
+    const prevActive = useUserStore.getState().lastActiveDate;
+    const snap = awayStateFor(lastSeenDate(prevActive, prevOpen));
+    if (snap.stage) setAwaySnap(snap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Open tasks that have slipped past their date (someday excluded —
+  // those are parked on purpose). Drives Rescue Mode + the proactive
+  // backlog card; NEVER rendered as a wall of red.
+  const overdueOpen = useMemo(() => {
+    const t = todayKey();
+    return quests.filter(
+      (q) => !q.completed && q.window !== 'someday' && q.date && q.date < t,
+    );
+  }, [quests]);
+
+  const rescueActive =
+    ((awaySnap?.daysAway ?? 0) >= 3 || overdueOpen.length >= 8) &&
+    rescueDismissedDate !== todayKey() &&
+    !totallyEmpty;
+
+  // 🌱 Just one thing — the smallest, most doable open task. Whims
+  // before Trials, shortest first: the point is a WIN, not the
+  // biggest rock. If today is empty, gently borrow the easiest
+  // thing that slipped.
+  const pendingSurfaceRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pendingSurfaceRef.current) return;
+    const q = candidates.find((c) => c.id === pendingSurfaceRef.current);
+    if (q) {
+      pendingSurfaceRef.current = null;
+      surfaceNow(q);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidates]);
+
+  const rescueOneThing = () => {
+    const openToday = todayQuests.filter(
+      (q) => !q.completed && q.window !== 'someday',
+    );
+    const pool = openToday.length > 0 ? openToday : overdueOpen;
+    dismissRescueForToday();
+    if (pool.length === 0) return;
+    const pick = [...pool].sort(
+      (a, b) =>
+        IMPORTANCE[a.importance].rank - IMPORTANCE[b.importance].rank ||
+        (a.durationMinutes ?? 30) - (b.durationMinutes ?? 30),
+    )[0];
+    if (pick.date !== todayKey()) {
+      setQuestDate(pick.id, todayKey());
+      pendingSurfaceRef.current = pick.id;
+    } else {
+      surfaceNow(pick);
+    }
+    showToast('Just this one — everything else can wait.');
+  };
+
+  // 🧹 Clean up my tasks — deterministic triage, nothing deleted:
+  //   · the 3 most important slipped tasks come to today
+  //   · anything stale for 2+ weeks tucks into someday (recoverable)
+  //   · the rest move to tomorrow
+  const rescueCleanUp = () => {
+    const t = todayKey();
+    const sorted = [...overdueOpen].sort(
+      (a, b) =>
+        IMPORTANCE[b.importance].rank - IMPORTANCE[a.importance].rank,
+    );
+    const keep = sorted.slice(0, 3);
+    let kept = 0;
+    let moved = 0;
+    let tucked = 0;
+    for (const q of keep) {
+      setQuestDate(q.id, t);
+      kept++;
+    }
+    const staleCutoff = new Date();
+    staleCutoff.setDate(staleCutoff.getDate() - 14);
+    const cutoffISO = `${staleCutoff.getFullYear()}-${String(staleCutoff.getMonth() + 1).padStart(2, '0')}-${String(staleCutoff.getDate()).padStart(2, '0')}`;
+    for (const q of sorted.slice(3)) {
+      if (q.date && q.date < cutoffISO) {
+        moveQuestWindow(q.id, 'someday');
+        tucked++;
+      } else {
+        setQuestDate(q.id, offsetDate(1));
+        moved++;
+      }
+    }
+    dismissRescueForToday();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const bits: string[] = [];
+    if (kept > 0) bits.push(`kept ${kept} for today`);
+    if (moved > 0) bits.push(`moved ${moved} to tomorrow`);
+    if (tucked > 0) bits.push(`tucked ${tucked} into someday`);
+    showToast(
+      bits.length > 0
+        ? `All sorted — ${bits.join(', ')}.`
+        : 'All sorted — your plate is clear.',
+    );
+  };
+
+  // 🎙 Let me explain — hand off to Untangle primed for "life
+  // happened". The user talks; the engine reschedules/keeps/drops.
+  const rescueExplain = () => {
+    dismissRescueForToday();
+    setRescueExplain(true);
+    router.push('/(tabs)/checkin');
+  };
+
+  // ── Proactive backlog (emotional-model spec §7) ──────────────────
+  // A couple of tasks slipped but it's not rescue-level: never a
+  // wall of red — one observation + an offer, once a day at most.
+  // Pattern-based (§5): if the slipped tasks cluster ("mostly phone
+  // calls"), say THAT, not a count of failures.
+  const backlogNudgeDismissedDate = useUserStore(
+    (s) => s.backlogNudgeDismissedDate,
+  );
+  const dismissBacklogNudge = useUserStore((s) => s.dismissBacklogNudge);
+  const backlogNudge = useMemo(() => {
+    if (rescueActive) return null;
+    if (backlogNudgeDismissedDate === todayKey()) return null;
+    if (overdueOpen.length < 2) return null;
+    const stale = findStale(quests, { minDays: 2 });
+    const cluster = dominantStaleCluster(stale);
+    const line = cluster
+      ? `A few things have followed you for a couple of days — mostly ${cluster.label}. They might not all be urgent anymore.`
+      : 'A few things have followed you for a couple of days. They might not all be urgent anymore.';
+    return { line };
+  }, [rescueActive, backlogNudgeDismissedDate, overdueOpen, quests]);
+
+  const backlogSnooze = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    for (const q of overdueOpen) setQuestDate(q.id, offsetDate(1));
+    dismissBacklogNudge();
+    showToast(
+      `Snoozed ${overdueOpen.length} to tomorrow — today just got lighter.`,
+    );
+  };
+  const backlogTuck = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    for (const q of overdueOpen) moveQuestWindow(q.id, 'someday');
+    dismissBacklogNudge();
+    showToast(
+      `Tucked ${overdueOpen.length} into someday — they'll wait quietly.`,
+    );
   };
 
   /** Tap the Undo chip on the post-complete toast. Flips the task
@@ -1427,7 +1646,9 @@ export default function Home() {
       }
     }
     if (isMissed) {
-      toastLine = `Brought back · still on today (missed earlier)`;
+      // "from earlier", not "missed earlier" — same fact, no blame
+      // (emotional-model spec §0).
+      toastLine = `Brought back · still on today (from earlier)`;
     }
 
     toggle(q.id);
@@ -1571,11 +1792,17 @@ export default function Home() {
       recentCorrections: summarizeCorrections(recentCorrections(6)),
       userName: userName.trim() || undefined,
     };
-    // Race the LLM against a 5s timeout so a slow / hung request
-    // doesn't leave the sorting card up forever.
+    // Race the LLM against a timeout so a hung request doesn't leave
+    // the sorting card up forever — but SCALE it with the dump size.
+    // A flat 5s killed every big dump: a 12-task comma-run generates
+    // ~1,500+ tokens of JSON, which simply takes longer than 5s, so
+    // the one input that most needs the LLM always fell back to the
+    // deterministic parser. The "Lumi is sorting…" card carries the
+    // wait. ~6s floor + 25ms/char, capped at 25s.
+    const timeoutMs = Math.min(25_000, 6_000 + rawText.length * 25);
     const llm = llmUnderstand(rawText, understandCtx).then((r) => r ?? null);
     const timeout = new Promise<null>((resolve) =>
-      setTimeout(() => resolve(null), 5000),
+      setTimeout(() => resolve(null), timeoutMs),
     );
     const result = await Promise.race([llm, timeout]);
     return result?.tasks ?? null;
@@ -1717,6 +1944,7 @@ export default function Home() {
     const newAt = atFromLLM ?? t.at;
     let newDate = dateFromLLM ?? t.date;
     let newWindow = t.window;
+    let rolledByPlacement = false;
     if (partFromLLM) {
       newWindow = partFromLLM;
     } else if (
@@ -1736,6 +1964,7 @@ export default function Home() {
         nowMin: now.getHours() * 60 + now.getMinutes(),
         wakeMin: anchors.wake,
         sleepMin: anchors.sleep,
+        anchors,
       };
       const pick = pickWindowForDemand(
         u.importance,
@@ -1750,6 +1979,7 @@ export default function Home() {
         const rolled = new Date(now);
         rolled.setDate(rolled.getDate() + 1);
         newDate = `${rolled.getFullYear()}-${String(rolled.getMonth() + 1).padStart(2, '0')}-${String(rolled.getDate()).padStart(2, '0')}`;
+        rolledByPlacement = true;
       }
     }
 
@@ -1785,6 +2015,7 @@ export default function Home() {
       // the regex parser can't). User can still override via the
       // length chips in the preview.
       durationMinutes: u.when?.durationMin ?? t.durationMinutes,
+      ...(rolledByPlacement ? { rolledToTomorrow: true } : {}),
       // Persist the LLM's freeform note ("bring the charger") so
       // the detail surfaces under the title on Home / Time / lists.
       ...(u.note ? { note: u.note } : {}),
@@ -1828,40 +2059,71 @@ export default function Home() {
       nowMin: now.getHours() * 60 + now.getMinutes(),
       wakeMin: anchors.wake,
       sleepMin: anchors.sleep,
+      anchors,
     };
 
     const detTasks = parseSmartCapture(text, ctx);
     if (detTasks.length === 0) return;
+
+    // The user just said they're overwhelmed — Luna sits with them
+    // (the ONE sanctioned sad pose, emotional-model spec §1).
+    if (textReadsOverwhelmed(text)) {
+      triggerEmpathize();
+      showToast("That sounds like a lot. Let's carry it together.");
+    }
 
     setEditingIdx(null);
     setCapText('');
     setCapOpen(false);
     Haptics.selectionAsync();
 
-    if (isAnthropicConfigured) {
+    // The routing gate (goal §2.1) — a clean single-task capture ships
+    // the deterministic result instantly: zero tokens, zero spinner.
+    // Multi-task / long / emotional captures earn the LLM.
+    const gate = routeCapture(text, detTasks);
+    if (isLlmAvailable() && gate.route === 'llm') {
       // Sorting flow — don't show the deterministic preview at all.
       // sortingRaw drives the "Lumi is sorting…" card up top; we
       // only set previewTasks once the LLM has returned (or the
-      // 5s timeout forces a fallback). This eliminates the wrong→
+      // timeout forces a fallback). This eliminates the wrong→
       // right re-render flash — the user sees "sorting" then the
       // correct "1 of N" list, never the deterministic 1-task guess
       // for a comma dump.
+      const metricId = recordAiMetric({
+        route: 'llm',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
+      lastMetricIdRef.current = metricId;
+      const startedAt = Date.now();
       setSortingRaw(text);
       setAiPending(true);
       void runLlmUnderstand(text).then((llmTasks) => {
         setSortingRaw(null);
         setAiPending(false);
         if (llmTasks && llmTasks.length > 0) {
+          updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
           setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
         } else {
           // LLM failed or timed out — fall back to deterministic
           // so the user still gets SOMETHING (better than nothing).
-          setPreviewTasks(detTasks);
+          updateAiMetric(metricId, {
+            route: 'llm_fallback',
+            latencyMs: Date.now() - startedAt,
+          });
+          setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
         }
       });
     } else {
-      // No LLM configured — deterministic is all we have.
-      setPreviewTasks(detTasks);
+      // Local path — gate said simple (or the LLM is unavailable).
+      lastMetricIdRef.current = recordAiMetric({
+        route: 'local',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
+      setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
   };
 
@@ -2107,6 +2369,11 @@ export default function Home() {
       raw: orig.raw ?? orig.title,
       delta,
     });
+    // Edit-rate is the quality dial for the routing gate (§2.5) —
+    // only meaningful edits count (empty deltas are skipped above).
+    if (Object.keys(delta).length > 0 && lastMetricIdRef.current) {
+      updateAiMetric(lastMetricIdRef.current, { edited: true });
+    }
   };
 
   const cancelEdit = () => {
@@ -2129,8 +2396,21 @@ export default function Home() {
    * happening still shows what Lumi heard.
    */
   const handleTranscribed = (text: string) => {
-    const final = text.trim();
+    let final = text.trim();
     if (!final) return;
+    // "Did you mean…?" pre-flight: deterministic tidy of the raw
+    // transcript. Suspicious (cut short / gibberish) → park the
+    // cleaned text in the pill for a one-tap confirm instead of
+    // parsing a guess. Merely-messy → continue with the tidied text
+    // (cleaner input = better parses, fewer LLM tokens).
+    const tidy = tidyTranscript(final);
+    if (tidy.suspicious) {
+      setCapText(tidy.tidied || final);
+      setCapOpen(false);
+      showToast('did you mean this? check it, then send ✦');
+      return;
+    }
+    if (tidy.changed) final = tidy.tidied;
     setCapText(final);
     const ctx: CaptureContext = {
       sharpWindow,
@@ -2144,8 +2424,13 @@ export default function Home() {
       nowMin: now.getHours() * 60 + now.getMinutes(),
       wakeMin: anchors.wake,
       sleepMin: anchors.sleep,
+      anchors,
     };
     const detTasks = parseSmartCapture(final, ctx);
+    if (textReadsOverwhelmed(final)) {
+      triggerEmpathize();
+      showToast("That sounds like a lot. Let's carry it together.");
+    }
     if (detTasks.length === 0) {
       // Deterministic parser couldn't extract anything — surface the
       // transcript in the expanded capture so the user can edit and
@@ -2160,20 +2445,42 @@ export default function Home() {
     // Same sorting → LLM → preview flow as the typed path. Never
     // show the deterministic guess up front; only render once the
     // LLM has resolved (or 5s timeout falls back).
-    if (isAnthropicConfigured) {
+    // Same routing gate as the typed path (goal §2.1) — voice
+    // transcripts of simple captures skip the LLM too.
+    const gate = routeCapture(final, detTasks);
+    if (isLlmAvailable() && gate.route === 'llm') {
+      const metricId = recordAiMetric({
+        route: 'llm',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
+      lastMetricIdRef.current = metricId;
+      const startedAt = Date.now();
       setSortingRaw(final);
       setAiPending(true);
       void runLlmUnderstand(final).then((llmTasks) => {
         setSortingRaw(null);
         setAiPending(false);
         if (llmTasks && llmTasks.length > 0) {
+          updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
           setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
         } else {
-          setPreviewTasks(detTasks);
+          updateAiMetric(metricId, {
+            route: 'llm_fallback',
+            latencyMs: Date.now() - startedAt,
+          });
+          setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
         }
       });
     } else {
-      setPreviewTasks(detTasks);
+      lastMetricIdRef.current = recordAiMetric({
+        route: 'local',
+        reason: gate.reason,
+        latencyMs: 0,
+        edited: false,
+      });
+      setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
   };
 
@@ -2190,8 +2497,15 @@ export default function Home() {
         // Defer one tick so React commits the text before parsing.
         setTimeout(() => {
           // Re-read latest text via state by using a fresh closure.
-          const final = text.trim();
+          let final = text.trim();
           if (!final) return;
+          const tidy = tidyTranscript(final);
+          if (tidy.suspicious) {
+            setCapText(tidy.tidied || final);
+            showToast('did you mean this? check it, then send ✦');
+            return;
+          }
+          if (tidy.changed) final = tidy.tidied;
           // Inline send: same logic as sendCapture but uses the
           // transcribed value directly (state may not have flushed).
           const ctx: CaptureContext = {
@@ -2204,12 +2518,13 @@ export default function Home() {
             nowMin: now.getHours() * 60 + now.getMinutes(),
             wakeMin: anchors.wake,
             sleepMin: anchors.sleep,
+            anchors,
           };
           const tasks = parseSmartCapture(final, ctx);
           if (tasks.length === 0) return;
           // Voice → preview (same as text path). User taps Looks
           // good to commit, or Tweak to edit before saving.
-          setPreviewTasks(tasks);
+          setPreviewTasks(personalizeTasks(tasks, recentCorrections(20)));
           setEditingIdx(null);
           setCapText('');
           setCapOpen(false);
@@ -2263,15 +2578,29 @@ export default function Home() {
         recur: opts.recur,
       });
     } else {
+      // One-time accept → same auto-slot cascade as capture: no
+      // pinned time means "next open :15 in the window", not "pile
+      // up at the window start".
+      const sugSlot =
+        opts.exactMinute ??
+        findWindowSlot({
+          window: opts.window,
+          dateISO: todayKey(),
+          durationMin: opts.durationMin,
+          quests: useQuestStore.getState().quests,
+          anchors,
+          effectiveWindows,
+          nowMin: now.getHours() * 60 + now.getMinutes(),
+        });
       addQuest({
         title: s.title,
         difficulty: 'medium',
         importance: s.importance,
         window: opts.window,
         durationMinutes: opts.durationMin,
-        ...(opts.exactMinute != null && {
-          scheduledHour: Math.floor(opts.exactMinute / 60),
-          scheduledMinute: opts.exactMinute % 60,
+        ...(sugSlot != null && {
+          scheduledHour: Math.floor(sugSlot / 60),
+          scheduledMinute: sugSlot % 60,
         }),
       });
     }
@@ -2560,8 +2889,33 @@ export default function Home() {
           </Text>
         </View>
 
+        {/* ── Welcome back (emotional-model spec §2) — after time
+            away, Lumi kept your spot warm. Never "you missed X". */}
+        {awaySnap?.stage && !rescueActive && !welcomeDismissed && (
+          <WelcomeBackCard
+            stage={awaySnap.stage}
+            line={awaySnap.line ?? ''}
+            scene={awaySnap.scene ?? ''}
+            lunaSkin={lunaSkin}
+            onDismiss={() => setWelcomeDismissed(true)}
+          />
+        )}
+
         {/* ═══ THE ONE THING ═══ */}
-        {allDone ? (
+        {rescueActive ? (
+          /* Rescue Mode (spec §3) — life happened; instead of a wall
+             of overdue, a warm reset with three doors. */
+          <RescueCard
+            lunaSkin={lunaSkin}
+            onOneThing={rescueOneThing}
+            onCleanUp={rescueCleanUp}
+            onExplain={rescueExplain}
+            onDismiss={() => {
+              Haptics.selectionAsync();
+              dismissRescueForToday();
+            }}
+          />
+        ) : allDone ? (
           /* Compact text card — Luna lives in her nook now (she used
              to be duplicated here at 96px, which made this card tall
              and put two cats on screen). The nook's mood already
@@ -2663,6 +3017,15 @@ export default function Home() {
                   >
                     {WINDOWS[hero.window].glyph}{' '}
                     {effectiveWindows[hero.window].label}
+                  </Text>
+                  <View style={styles.metaDot} />
+                  <Text
+                    style={[
+                      styles.heroKind,
+                      { color: classifyKind(hero.title).color },
+                    ]}
+                  >
+                    {classifyKind(hero.title).label}
                   </Text>
                   <View style={styles.metaDot} />
                   <Text style={styles.heroXp}>
@@ -2778,12 +3141,23 @@ export default function Home() {
             sortingRaw is set so we never render the (possibly
             deterministic) preview before the LLM has spoken. */}
         {!sortingRaw && previewTasks && previewTasks[0] && (
-          <View style={{ marginBottom: 16 }}>
+          <View style={{ marginTop: 14 }}>
             <LumiSuggestCard
+              // Remount per task — the card seeds duration / window /
+              // pin / repeat from the input ONCE on mount, so without
+              // a key the first task's choices leaked onto every
+              // later task in the queue (all "30m · Afternoon", and
+              // the walk's detected daily-morning repeat showed OFF).
+              key={`preview-${previewTasks.length}-${previewTasks[0].title}`}
               input={{
                 id: 'preview_0',
                 title: previewTasks[0].title,
-                subtitle: undefined,
+                // Never move a task to tomorrow silently (emotional-
+                // model rule): when placement rolled it, the card
+                // says so and points at the fix.
+                subtitle: previewTasks[0].rolledToTomorrow
+                  ? 'moved to tomorrow — your best hours for it are done today. Tweak it to keep it today.'
+                  : undefined,
                 note: previewTasks[0].note ?? undefined,
                 defaultWindow:
                   previewTasks[0].window === 'someday'
@@ -2842,9 +3216,12 @@ export default function Home() {
             before the user accepts. Bulk-aware: when multiple
             suggestions are pending, the "1 of N" badge shows up
             and each accept/dismiss reveals the next. */}
-        {heroSuggestion && !allDone && (
-          <View style={{ marginBottom: 16 }}>
+        {heroSuggestion && !allDone && !rescueActive && (
+          <View style={{ marginTop: 14 }}>
             <LumiSuggestCard
+              // Same remount-per-suggestion reasoning as the preview
+              // card above.
+              key={heroSuggestion.id}
               input={{
                 id: heroSuggestion.id,
                 title: heroSuggestion.title,
@@ -2878,7 +3255,7 @@ export default function Home() {
             it as the hero immediately. Long-press a row to edit;
             tapping "someday" on a someday row opens the move-back
             sheet. Delete intentionally lives on the hero card only. */}
-        {rest.length > 0 && (
+        {rest.length > 0 && !rescueActive && (
           <View style={styles.waitingCard}>
             <Pressable
               onPress={() => {
@@ -2905,6 +3282,14 @@ export default function Home() {
                 {rest.map((q) => (
                   <Pressable
                     key={q.id}
+                    // TAP opens the edit sheet — long-press-only was
+                    // undiscoverable for new users. The checkbox and
+                    // "now" pill are their own targets, so a plain
+                    // row tap has no competing meaning.
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      setEditingQuest(q);
+                    }}
                     onLongPress={() => {
                       Haptics.selectionAsync();
                       setEditingQuest(q);
@@ -2923,11 +3308,11 @@ export default function Home() {
                       ]}
                     />
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text numberOfLines={1} style={styles.waitingRowTitle}>
+                      <Text style={styles.waitingRowTitle}>
                         {q.title}
                       </Text>
                       {q.note && (
-                        <Text numberOfLines={1} style={styles.waitingNote}>
+                        <Text style={styles.waitingNote}>
                           {q.note}
                         </Text>
                       )}
@@ -2962,14 +3347,26 @@ export default function Home() {
                       hitSlop={6}
                       accessibilityRole="button"
                       accessibilityLabel={`Surface now: ${q.title}`}
-                      style={styles.nowPill}
+                      style={[
+                        styles.kindPillRow,
+                        {
+                          backgroundColor: `${classifyKind(q.title).color}1F`,
+                        },
+                      ]}
                     >
-                      <Text style={styles.nowPillText}>now</Text>
+                      <Text
+                        style={[
+                          styles.kindPillRowText,
+                          { color: classifyKind(q.title).color },
+                        ]}
+                      >
+                        {classifyKind(q.title).label}
+                      </Text>
                     </Pressable>
                   </Pressable>
                 ))}
                 <Text style={styles.waitingFooter}>
-                  they&apos;ll surface one at a time — no pile, promise
+                  tap a task to edit it — tap its tag to bring it up now
                 </Text>
               </>
             )}
@@ -2981,6 +3378,31 @@ export default function Home() {
             list. Check badge instead of the ✦ spark, a warm tally
             headline, quiet +xp per row, and its own promise line
             (undo, no judgment). Collapsed by default, same calm. */}
+        {/* ── Backlog, offered not shamed (spec §5/§7) — an
+            observation and two one-tap outs, never a red wall. */}
+        {backlogNudge && (
+          <View style={styles.backlogCard}>
+            <Text style={styles.backlogLine}>{backlogNudge.line}</Text>
+            <View style={styles.backlogRow}>
+              <Pressable onPress={backlogSnooze} style={styles.backlogBtn}>
+                <Text style={styles.backlogBtnText}>Snooze to tomorrow</Text>
+              </Pressable>
+              <Pressable onPress={backlogTuck} style={styles.backlogBtn}>
+                <Text style={styles.backlogBtnText}>Tuck into someday</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  dismissBacklogNudge();
+                }}
+                style={styles.backlogKeep}
+              >
+                <Text style={styles.backlogKeepText}>keep them</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
         {doneTodayList.length > 0 && (
           <View style={styles.doneTodayCard}>
             <Pressable
@@ -2996,7 +3418,7 @@ export default function Home() {
               <View style={styles.doneTodayBadge}>
                 <Text style={styles.doneTodayBadgeGlyph}>✓</Text>
               </View>
-              <Text numberOfLines={1} style={styles.doneTodayHeadTitle}>
+              <Text style={styles.doneTodayHeadTitle}>
                 {doneTodayList.length} done today —{' '}
                 {doneTodayList.length >= 5
                   ? 'a genuinely full day'
@@ -3022,7 +3444,7 @@ export default function Home() {
                         <Text style={styles.historyCheckGlyph}>✓</Text>
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.historyTitle} numberOfLines={1}>
+                        <Text style={styles.historyTitle}>
                           {q.title}
                         </Text>
                         <Text style={styles.historyMeta}>
@@ -3112,11 +3534,27 @@ export default function Home() {
               ✦
             </Text>
             <TextInput
-              value={capText}
+              // While recording, the live partial transcript streams
+              // into the pill (dusk-dimmed) so speaking never feels
+              // blind — the words appear as they're heard, then the
+              // final transcript submits through the same pipeline.
+              value={
+                voice.state === 'recording' && voice.partial
+                  ? voice.partial
+                  : capText
+              }
+              editable={voice.state !== 'recording'}
               onChangeText={setCapText}
-              placeholder="Dump a thought…"
+              placeholder={
+                voice.state === 'recording'
+                  ? 'listening…'
+                  : 'Dump a thought…'
+              }
               placeholderTextColor={C.mute}
-              style={styles.capturePillInput}
+              style={[
+                styles.capturePillInput,
+                voice.state === 'recording' && { color: C.dusk },
+              ]}
               multiline
               scrollEnabled
               returnKeyType="send"
@@ -3259,6 +3697,14 @@ export default function Home() {
         visible={editingQuest != null}
         onClose={() => setEditingQuest(null)}
         quest={editingQuest}
+        // Delete lives in the edit sheet (two-tap confirm inside) —
+        // the waiting rows themselves stay clean.
+        onDelete={() => {
+          if (!editingQuest) return;
+          useQuestStore.getState().remove(editingQuest.id);
+          setEditingQuest(null);
+          showToast('Deleted — gone for good.');
+        }}
         onSave={({ title, note, comment }) => {
           if (!editingQuest) return;
           if (title !== editingQuest.title) {
@@ -3350,7 +3796,7 @@ const makeStyles = (accent: Accent) =>
       backgroundColor: hexA(C.void2, 0.6),
       paddingHorizontal: 20,
       paddingVertical: 22,
-      marginBottom: 16,
+      marginTop: 14,
       alignItems: 'flex-start',
     },
     sortingHeaderRow: {
@@ -3728,7 +4174,10 @@ const makeStyles = (accent: Accent) =>
     },
 
     // ── Hero card ──
-    heroWrap: { marginBottom: 26 },
+    // Uniform card rhythm: every top-level Home card ends ~flush and
+    // the FOLLOWER brings the 14px gap. (Mixed owner margins kept
+    // producing 2px-vs-30px gaps as cards conditionally appeared.)
+    heroWrap: { marginBottom: 2 },
     heroCard: {
       borderRadius: 24,
       paddingHorizontal: 20,
@@ -3803,6 +4252,12 @@ const makeStyles = (accent: Accent) =>
     },
     // Window label in the meta row — matches the rest of the row's
     // 11.5pt weight + spacing so it reads as one continuous line.
+    heroKind: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11,
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+    },
     heroWindowMeta: {
       fontFamily: fonts.interSemi,
       fontSize: 11.5,
@@ -4422,12 +4877,52 @@ const makeStyles = (accent: Accent) =>
     },
 
     // ── "N more waiting — Lumi's holding them" (lumi-holding mock) ──
+    backlogCard: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.25),
+      backgroundColor: hexA(C.void2, 0.7),
+      padding: 14,
+      marginTop: 14,
+    },
+    backlogLine: {
+      fontFamily: fonts.frauncesMed,
+      fontSize: 14,
+      lineHeight: 20,
+      color: C.bone,
+    },
+    backlogRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 11,
+    },
+    backlogBtn: {
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.35),
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+    },
+    backlogBtnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 12,
+      color: C.dusk,
+    },
+    backlogKeep: { paddingHorizontal: 6, paddingVertical: 7 },
+    backlogKeepText: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.mute,
+      textDecorationLine: 'underline',
+    },
     waitingCard: {
       borderRadius: 18,
       borderWidth: 1,
       borderColor: C.hair,
       backgroundColor: hexA(C.void2, 0.7),
-      marginTop: 2,
+      marginTop: 14,
       overflow: 'hidden',
     },
     waitingHead: {
@@ -4469,7 +4964,34 @@ const makeStyles = (accent: Accent) =>
       backgroundColor: hexA(C.void, 0.4),
       flexShrink: 0,
     },
+    kindPillRow: {
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    kindPillRowText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+    },
+    waitingTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      minWidth: 0,
+    },
+    waitingKindDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 2.5,
+      flexShrink: 0,
+      opacity: 0.9,
+    },
     waitingRowTitle: {
+      // flex so the title truncates INSIDE the kind-dot row instead
+      // of pushing the dot / overflowing the card.
+      flex: 1,
       fontFamily: fonts.interMed,
       fontSize: 14.5,
       color: C.bone,

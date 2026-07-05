@@ -15,6 +15,7 @@ import { useQuestStore } from '../store/questStore';
 import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { useCorrectionsStore } from '../store/correctionsStore';
+import { useAiMetricsStore } from '../store/aiMetricsStore';
 import { useUserStore, DEFAULT_ANCHORS } from '../store/userStore';
 
 export const resetLocalUserData = (): void => {
@@ -24,6 +25,8 @@ export const resetLocalUserData = (): void => {
   // Learned LLM corrections are per-user preferences, not device
   // defaults.
   useCorrectionsStore.getState().reset();
+  // Routing/edit metrics describe the previous user's captures.
+  useAiMetricsStore.getState().reset();
   useUserStore.setState({
     // identity
     name: '',
@@ -35,6 +38,9 @@ export const resetLocalUserData = (): void => {
     xp: 0,
     streak: 0,
     lastActiveDate: null,
+    lastOpenedDate: null,
+    rescueDismissedDate: null,
+    backlogNudgeDismissedDate: null,
     shieldAvailable: true,
     shieldUsedThisWeek: false,
     shards: 0,
@@ -48,5 +54,11 @@ export const resetLocalUserData = (): void => {
     // legacy onboarding flag (per-user gate is onboardedUserIds)
     onboarded: false,
     onboardedAt: null,
+    // First-run guidance is PER USER, not per device — without these
+    // resets, a new account on a device that already saw the tour
+    // (tourSeen persisted true) onboarded fine but never got the
+    // spotlight tour or contextual hints.
+    tourSeen: false,
+    hintsSeen: [],
   });
 };
