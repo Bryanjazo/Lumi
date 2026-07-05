@@ -78,12 +78,15 @@ export default function Paywall() {
   const [selected, setSelected] = useState<'annual' | 'monthly'>('annual');
   const [purchasing, setPurchasing] = useState(false);
 
-  // Savings % — annual first-year vs paying monthly × 12. Drives
-  // the "Save N%" badge on the Yearly card.
+  // Savings % — annual RENEWAL vs paying monthly × 12, so the badge
+  // stays true every year the user is subscribed. Comparing against
+  // the $59.99 intro year said "save 67%" — accurate for year one
+  // only, and the kind of technically-true math that erodes trust
+  // (the first-year deal already sells itself in the price line).
   const annualSavePct = useMemo(() => {
     const monthlyYearly = PRICING.monthly.amountUSD * 12;
     return Math.round(
-      ((monthlyYearly - PRICING.annual.firstYearAmountUSD) / monthlyYearly) *
+      ((monthlyYearly - PRICING.annual.renewalAmountUSD) / monthlyYearly) *
         100,
     );
   }, []);
