@@ -2387,100 +2387,25 @@ export default function Home() {
   // just speaking their tasks into existence.
 
   /**
-   * Post-transcribe processing — shared by the two mic entry points:
-   * the standalone MicButton on the floating capture pill AND the old
-   * inline `handleMic` path that lives inside the expanded capture.
-   * Same behavior in both places: transcript → parseSmartCapture →
-   * previewTasks (user reviews before commit). Text is stashed in
-   * capText briefly so any UI that reads it while the parse is
-   * happening still shows what Lumi heard.
+   * Post-transcribe handling — shared by every mic entry point (the
+   * capture-pill mic and the dump modal's MicButton). Voice FILLS
+   * the capture field; the user presses send to parse. Runs the
+   * deterministic tidy first and nudges "did you mean" when the
+   * transcript looks off.
    */
   const handleTranscribed = (text: string) => {
-    let final = text.trim();
+    const final = text.trim();
     if (!final) return;
-    // "Did you mean…?" pre-flight: deterministic tidy of the raw
-    // transcript. Suspicious (cut short / gibberish) → park the
-    // cleaned text in the pill for a one-tap confirm instead of
-    // parsing a guess. Merely-messy → continue with the tidied text
-    // (cleaner input = better parses, fewer LLM tokens).
+    // Voice FILLS, the user FIRES (Bryan's rule): the transcript
+    // parks in the capture field — appended if they'd typed — and
+    // nothing parses until they press send. The deterministic tidy
+    // still runs first; a suspicious transcript gets the
+    // "did you mean" nudge on top of the parked text.
     const tidy = tidyTranscript(final);
+    const spoken = tidy.changed || tidy.suspicious ? tidy.tidied || final : final;
+    setCapText((prev) => (prev.trim() ? `${prev.trim()} ${spoken}` : spoken));
     if (tidy.suspicious) {
-      setCapText(tidy.tidied || final);
-      setCapOpen(false);
       showToast('did you mean this? check it, then send ✦');
-      return;
-    }
-    if (tidy.changed) final = tidy.tidied;
-    setCapText(final);
-    const ctx: CaptureContext = {
-      sharpWindow,
-      foggyWindow,
-      peakStart: digest.curve.peakStart,
-      peakEnd: digest.curve.peakEnd,
-      slumpStart: digest.curve.slumpStart,
-      slumpEnd: digest.curve.slumpEnd,
-      effectiveWindows,
-      now,
-      nowMin: now.getHours() * 60 + now.getMinutes(),
-      wakeMin: anchors.wake,
-      sleepMin: anchors.sleep,
-      anchors,
-    };
-    const detTasks = parseSmartCapture(final, ctx);
-    if (textReadsOverwhelmed(final)) {
-      triggerEmpathize();
-      showToast("That sounds like a lot. Let's carry it together.");
-    }
-    if (detTasks.length === 0) {
-      // Deterministic parser couldn't extract anything — surface the
-      // transcript in the expanded capture so the user can edit and
-      // resubmit. Beats swallowing the voice input silently.
-      setCapOpen(true);
-      return;
-    }
-    setEditingIdx(null);
-    setCapText('');
-    setCapOpen(false);
-    Haptics.selectionAsync();
-    // Same sorting → LLM → preview flow as the typed path. Never
-    // show the deterministic guess up front; only render once the
-    // LLM has resolved (or 5s timeout falls back).
-    // Same routing gate as the typed path (goal §2.1) — voice
-    // transcripts of simple captures skip the LLM too.
-    const gate = routeCapture(final, detTasks);
-    if (isLlmAvailable() && gate.route === 'llm') {
-      const metricId = recordAiMetric({
-        route: 'llm',
-        reason: gate.reason,
-        latencyMs: 0,
-        edited: false,
-      });
-      lastMetricIdRef.current = metricId;
-      const startedAt = Date.now();
-      setSortingRaw(final);
-      setAiPending(true);
-      void runLlmUnderstand(final).then((llmTasks) => {
-        setSortingRaw(null);
-        setAiPending(false);
-        if (llmTasks && llmTasks.length > 0) {
-          updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
-          setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
-        } else {
-          updateAiMetric(metricId, {
-            route: 'llm_fallback',
-            latencyMs: Date.now() - startedAt,
-          });
-          setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
-        }
-      });
-    } else {
-      lastMetricIdRef.current = recordAiMetric({
-        route: 'local',
-        reason: gate.reason,
-        latencyMs: 0,
-        edited: false,
-      });
-      setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
     }
   };
 
@@ -2491,45 +2416,8 @@ export default function Home() {
     } else if (voice.state === 'recording') {
       const text = await voice.stopAndTranscribe();
       if (text && text.trim()) {
-        // Surface the transcript so the user can see what Lumi heard,
-        // then auto-submit through the smart-capture pipeline.
-        setCapText(text);
-        // Defer one tick so React commits the text before parsing.
-        setTimeout(() => {
-          // Re-read latest text via state by using a fresh closure.
-          let final = text.trim();
-          if (!final) return;
-          const tidy = tidyTranscript(final);
-          if (tidy.suspicious) {
-            setCapText(tidy.tidied || final);
-            showToast('did you mean this? check it, then send ✦');
-            return;
-          }
-          if (tidy.changed) final = tidy.tidied;
-          // Inline send: same logic as sendCapture but uses the
-          // transcribed value directly (state may not have flushed).
-          const ctx: CaptureContext = {
-            sharpWindow,
-            foggyWindow,
-            peakStart: digest.curve.peakStart,
-            peakEnd: digest.curve.peakEnd,
-            effectiveWindows,
-            now,
-            nowMin: now.getHours() * 60 + now.getMinutes(),
-            wakeMin: anchors.wake,
-            sleepMin: anchors.sleep,
-            anchors,
-          };
-          const tasks = parseSmartCapture(final, ctx);
-          if (tasks.length === 0) return;
-          // Voice → preview (same as text path). User taps Looks
-          // good to commit, or Tweak to edit before saving.
-          setPreviewTasks(personalizeTasks(tasks, recentCorrections(20)));
-          setEditingIdx(null);
-          setCapText('');
-          setCapOpen(false);
-          Haptics.selectionAsync();
-        }, 30);
+        // Park it — the user reviews and presses send themselves.
+        handleTranscribed(text);
       }
     }
   };
