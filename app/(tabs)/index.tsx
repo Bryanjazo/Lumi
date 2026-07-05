@@ -1072,6 +1072,11 @@ export default function Home() {
   // suspicious voice transcript until the user edits or sends
   // (a vanishing toast was too easy to miss).
   const [dymHint, setDymHint] = useState(false);
+  // The clarify LLM's whole-sentence repair, shown IN the card with
+  // a "use this" action — it must be visible and explicit, never a
+  // silent swap of what the user typed (they couldn't tell what
+  // changed).
+  const [dymSuggestion, setDymSuggestion] = useState<string | null>(null);
   // Send-time soft stop bookkeeping: if we already held a suspicious
   // text once and the user sends it again unchanged, we respect the
   // intent and let it through.
@@ -2082,18 +2087,25 @@ export default function Home() {
     if (typedTidy.suspicious && dymHeldRef.current !== text) {
       const parked = typedTidy.changed ? typedTidy.tidied : text;
       dymHeldRef.current = parked;
+      // Deterministic fixes (date-word near-misses) apply directly —
+      // they're surgical and safe. The LLM's whole-sentence repair
+      // shows in the card instead, so the user SEES the suggestion
+      // and chooses it ("use this") rather than discovering their
+      // text quietly rewritten.
       if (typedTidy.changed) setCapText(parked);
       setDymHint(true);
+      setDymSuggestion(null);
       if (isLlmAvailable() && access.hasPremium) {
         void llmClarify(parked).then((fixed) => {
           if (!fixed || fixed === parked) return;
-          dymHeldRef.current = fixed;
-          setCapText((cur) => (cur === parked ? fixed : cur));
+          dymHeldRef.current = fixed; // either way, next send passes
+          setDymSuggestion(fixed);
         });
       }
       return;
     }
     setDymHint(false);
+    setDymSuggestion(null);
     setPillInputH(0);
 
     const ctx: CaptureContext = {
@@ -2396,12 +2408,13 @@ export default function Home() {
     setCapText(parked);
     if (tidy.suspicious) {
       setDymHint(true);
+      setDymSuggestion(null);
       if (isLlmAvailable() && access.hasPremium) {
         void llmClarify(spoken).then((fixed) => {
           if (!fixed || fixed === spoken) return;
           const upgraded = prevText ? `${prevText} ${fixed}` : fixed;
-          // Only upgrade if the user hasn't touched the text since.
-          setCapText((cur) => (cur === parked ? upgraded : cur));
+          // Visible suggestion in the card — never a silent rewrite.
+          setDymSuggestion(upgraded);
         });
       }
     }
@@ -3592,13 +3605,40 @@ export default function Home() {
             )}
           {dymHint && (
             <View style={styles.dymHint}>
-              <Text style={styles.dymHintText}>
-                did you mean this? check it, then send ✦
-              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dymHintText}>
+                  {dymSuggestion
+                    ? 'did you mean —'
+                    : 'did you mean this? check it, then send ✦'}
+                </Text>
+                {dymSuggestion && (
+                  <Text style={styles.dymSuggestionText}>
+                    “{dymSuggestion}”
+                  </Text>
+                )}
+              </View>
+              {dymSuggestion && (
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setCapText(dymSuggestion);
+                    dymHeldRef.current = dymSuggestion;
+                    setDymSuggestion(null);
+                    // Card stays up so the copy still reads "check
+                    // it, then send" — one tap left.
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.dymHintClear, { color: accent.fg }]}>
+                    use this
+                  </Text>
+                </Pressable>
+              )}
               <Pressable
                 onPress={() => {
                   Haptics.selectionAsync();
                   setDymHint(false);
+                  setDymSuggestion(null);
                   setCapText('');
                   setPillInputH(0);
                 }}
@@ -3628,7 +3668,10 @@ export default function Home() {
               onChangeText={(t) => {
                 setCapText(t);
                 if (!t) setPillInputH(0);
-                if (dymHint) setDymHint(false);
+                if (dymHint) {
+                  setDymHint(false);
+                  setDymSuggestion(null);
+                }
               }}
               placeholder={
                 voice.state === 'recording'
@@ -4534,6 +4577,13 @@ const makeStyles = (accent: Accent) =>
       paddingHorizontal: 14,
       paddingVertical: 9,
       marginBottom: 8,
+    },
+    dymSuggestionText: {
+      fontFamily: fonts.inter,
+      fontSize: 13,
+      color: C.bone,
+      marginTop: 3,
+      lineHeight: 18,
     },
     dymHintText: {
       flex: 1,
