@@ -50,6 +50,33 @@ export const PRICING = {
   },
 } as const;
 
+/** One source for every outward URL — the manage-subscription screen
+ *  shipped pointing terms/privacy at lumi.app (a domain we don't
+ *  own) while the paywall used lumitasks.app. Never again. */
+export const LEGAL_URLS = {
+  terms: 'https://lumitasks.app/terms',
+  privacy: 'https://lumitasks.app/privacy',
+} as const;
+
+export const STORE_URLS = {
+  appleSubscriptions: 'https://apps.apple.com/account/subscriptions',
+  googleSubscriptions: 'https://play.google.com/store/account/subscriptions',
+} as const;
+
+/** The free-vs-pro comparison table — ONE copy. It had already
+ *  drifted: paywall gained the Hey Lumi row, manage-subscription
+ *  didn't. Free values must describe what the server actually
+ *  enforces (weekly AI caps), not aspirational limits. */
+export const COMPARE_ROWS = [
+  { label: 'AI-sorted captures', free: '10 / week', pro: 'Unlimited' },
+  { label: 'AI sorting & re-plan', free: 'Basic', pro: 'Smart' },
+  { label: '“Did you mean?” fixes', free: 'Rules', pro: 'AI-powered' },
+  { label: '“Hey Lumi” hands-free', free: '—', pro: 'Wake word' },
+  { label: 'Weekly reflection', free: 'Snippet', pro: 'Full story' },
+  { label: 'Calendar sync', free: '1 calendar', pro: 'Multi-cal' },
+  { label: "Luna's worlds & skins", free: 'Starter', pro: 'All' },
+] as const;
+
 export interface AccessStatus {
   /**
    * True when the user has unlocked premium *extras* (active

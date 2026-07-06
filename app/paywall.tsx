@@ -33,7 +33,7 @@ import { fonts } from '../constants/fonts';
 import { timeColors as C } from '../constants/colors';
 import { lunaSource, useLunaSkin } from '../lib/luna-source';
 import { useSession } from '../lib/auth';
-import { useAccessStatus, PRICING } from '../lib/subscription';
+import { useAccessStatus, COMPARE_ROWS, LEGAL_URLS, STORE_URLS, PRICING } from '../lib/subscription';
 import { useUserStore } from '../store/userStore';
 import { purchaseTier, restorePurchases } from '../lib/revenuecat';
 
@@ -57,17 +57,6 @@ const CheckIcon = ({ color, size = 13 }: { color: string; size?: number }) => (
 );
 
 // Free / Pro comparison rows — taken straight from the mockup.
-// Pure copy; nothing here is dynamic. Free values match the actual
-// app caps (e.g. 3 captures/day for free) so this isn't aspirational.
-const COMPARE_ROWS = [
-  { label: 'Daily brain-dumps', free: '3 / day', pro: 'Unlimited' },
-  { label: 'AI sorting & re-plan', free: 'Basic', pro: 'Smart' },
-  { label: '“Did you mean?” fixes', free: 'Rules', pro: 'AI-powered' },
-  { label: '“Hey Lumi” hands-free', free: '—', pro: 'Wake word' },
-  { label: 'Weekly reflection', free: 'Snippet', pro: 'Full story' },
-  { label: 'Calendar sync', free: '1 calendar', pro: 'Multi-cal' },
-  { label: "Luna's worlds & skins", free: 'Starter', pro: 'All' },
-];
 
 export default function Paywall() {
   const router = useRouter();
@@ -414,7 +403,7 @@ export default function Paywall() {
           {access.hasActiveSubscription && (
             <Pressable
               onPress={() =>
-                Linking.openURL('https://apps.apple.com/account/subscriptions')
+                Linking.openURL(STORE_URLS.appleSubscriptions)
               }
               style={styles.manageRow}
             >
@@ -453,11 +442,11 @@ export default function Paywall() {
 
           {/* ── Terms / Privacy ── */}
           <View style={styles.legalRow}>
-            <Pressable onPress={openLink('https://lumitasks.app/terms')} hitSlop={8}>
+            <Pressable onPress={openLink(LEGAL_URLS.terms)} hitSlop={8}>
               <Text style={styles.legalLink}>Terms</Text>
             </Pressable>
             <Pressable
-              onPress={openLink('https://lumitasks.app/privacy')}
+              onPress={openLink(LEGAL_URLS.privacy)}
               hitSlop={8}
             >
               <Text style={styles.legalLink}>Privacy</Text>

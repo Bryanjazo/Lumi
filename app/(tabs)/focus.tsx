@@ -1700,7 +1700,9 @@ const styles = StyleSheet.create({
   presetCount: {
     fontFamily: fonts.fraunces,
     fontSize: 36,
-    lineHeight: 36,
+    // Same italic-overhang clipping as customCount — see below.
+    lineHeight: 42,
+    paddingRight: 8,
   },
   presetCountUnit: {
     fontFamily: fonts.inter,
@@ -1774,7 +1776,11 @@ const styles = StyleSheet.create({
     fontFamily: fonts.fraunces,
     fontSize: 44,
     color: C.ember,
-    lineHeight: 44,
+    // Fraunces italic overhangs its glyph box — without breathing
+    // room RN clips the right edge of the last digit ("30" → "3𝟢|").
+    lineHeight: 52,
+    paddingRight: 10,
+    paddingLeft: 2,
   },
   customCountUnit: {
     fontFamily: fonts.inter,

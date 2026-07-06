@@ -14,7 +14,7 @@
 // When in doubt, default to 'idle' + 'default' (original tan cat).
 
 import { useUserStore } from '../store/userStore';
-import { isPaidThrough } from './subscription';
+import { isPaidThrough, PRICING } from './subscription';
 
 export type LunaMood = 'idle' | 'happy' | 'sad' | 'sleep' | 'walk' | 'lick';
 
@@ -141,7 +141,8 @@ export const useLunaSkin = (): string => {
     isPaidThrough(status, periodEnd) ||
     (status === 'trial' &&
       trialStartedAt != null &&
-      Date.now() - new Date(trialStartedAt).getTime() < 7 * 86_400_000);
+      Date.now() - new Date(trialStartedAt).getTime() <
+        PRICING.trialDays * 86_400_000);
   if (!hasPremium && avatar !== 'default' && avatar !== 'cream') {
     return 'default';
   }

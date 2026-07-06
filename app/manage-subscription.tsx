@@ -32,7 +32,7 @@ import Svg, { Path } from 'react-native-svg';
 import { fonts } from '../constants/fonts';
 import { useUserStore } from '../store/userStore';
 import { useSession } from '../lib/auth';
-import { useAccessStatus, PRICING } from '../lib/subscription';
+import { useAccessStatus, COMPARE_ROWS, LEGAL_URLS, PRICING } from '../lib/subscription';
 import { lunaSource, useLunaSkin } from '../lib/luna-source';
 import {
   purchaseTier,
@@ -86,13 +86,6 @@ const CheckIcon = ({ color, size = 11 }: { color: string; size?: number }) => (
   </Svg>
 );
 
-const COMPARE_ROWS = [
-  { label: 'Daily brain-dumps', free: '3 / day', pro: 'Unlimited' },
-  { label: 'AI sorting & re-plan', free: 'Basic', pro: 'Smart' },
-  { label: 'Weekly reflection', free: 'Snippet', pro: 'Full story' },
-  { label: 'Calendar sync', free: '1 calendar', pro: 'Multi-cal' },
-  { label: "Luna's worlds & skins", free: 'Starter', pro: 'All' },
-];
 
 export default function ManageSubscriptionScreen() {
   const router = useRouter();
@@ -461,11 +454,11 @@ export default function ManageSubscriptionScreen() {
           </Pressable>
 
           <View style={styles.legalRow}>
-            <Pressable onPress={openLink('https://lumi.app/terms')} hitSlop={8}>
+            <Pressable onPress={openLink(LEGAL_URLS.terms)} hitSlop={8}>
               <Text style={styles.legalLink}>Terms</Text>
             </Pressable>
             <Pressable
-              onPress={openLink('https://lumi.app/privacy')}
+              onPress={openLink(LEGAL_URLS.privacy)}
               hitSlop={8}
             >
               <Text style={styles.legalLink}>Privacy</Text>

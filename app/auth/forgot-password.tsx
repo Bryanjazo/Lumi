@@ -127,7 +127,7 @@ export default function ForgotPasswordScreen() {
                     setEmail(v);
                     if (error) setError('');
                   }}
-                  placeholder="you@example.com"
+                  placeholder="name@email.com"
                   keyboardType="email-address"
                   error={error}
                   autoComplete="email"

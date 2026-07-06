@@ -22,6 +22,7 @@
 import { Platform, Linking } from 'react-native';
 import { useUserStore, type SubscriptionTier } from '../store/userStore';
 import { supabase } from './supabase';
+import { STORE_URLS } from './subscription';
 
 // ─────────────────────────────────────────────────────────────────────
 // Minimal local types for the SDK surface we use.
@@ -405,12 +406,12 @@ export const onCustomerInfoUpdate = (): (() => void) => {
 
 export const openManageSubscription = async (): Promise<void> => {
   if (Platform.OS === 'ios') {
-    await Linking.openURL('https://apps.apple.com/account/subscriptions');
+    await Linking.openURL(STORE_URLS.appleSubscriptions);
     return;
   }
   if (Platform.OS === 'android') {
     await Linking.openURL(
-      'https://play.google.com/store/account/subscriptions',
+      STORE_URLS.googleSubscriptions,
     );
     return;
   }

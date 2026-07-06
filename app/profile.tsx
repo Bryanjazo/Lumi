@@ -54,7 +54,7 @@ import { useQuestStore } from '../store/questStore';
 import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { signOut, useSession, changeEmail, deleteAccount } from '../lib/auth';
-import { useAccessStatus } from '../lib/subscription';
+import { useAccessStatus, STORE_URLS } from '../lib/subscription';
 import { requestHeyLumiPermission } from '../lib/heyLumi';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
 import { languageLabel } from '../lib/languages';
@@ -1317,8 +1317,8 @@ export default function AccountScreen() {
   const manageSubscription = () => {
     const url =
       Platform.OS === 'ios'
-        ? 'https://apps.apple.com/account/subscriptions'
-        : 'https://play.google.com/store/account/subscriptions';
+        ? STORE_URLS.appleSubscriptions
+        : STORE_URLS.googleSubscriptions;
     Linking.openURL(url).catch(() => {
       Alert.alert('Subscription', 'Open your app store to manage your plan.');
     });
