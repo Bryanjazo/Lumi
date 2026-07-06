@@ -180,6 +180,10 @@ interface UserState {
    * only listens while this is on AND the user has Pro.
    */
   heyLumiEnabled: boolean;
+  /** Server-granted flag (users.is_tester) — internal/TestFlight
+   *  testers whose raw captures upload for parser tuning. Never
+   *  settable from the client UI. */
+  isTester: boolean;
   shieldAvailable: boolean;
   shieldUsedThisWeek: boolean;
   onboarded: boolean;
@@ -316,6 +320,7 @@ interface UserState {
   /** Backlog nudge answered — quiet until tomorrow. */
   dismissBacklogNudge: () => void;
   setHeyLumiEnabled: (v: boolean) => void;
+  setIsTester: (v: boolean) => void;
   consumeShield: () => void;
   rechargeShield: () => void;
   completeOnboarding: () => void;
@@ -419,6 +424,7 @@ export const useUserStore = create<UserState>()(
       rescueDismissedDate: null,
       backlogNudgeDismissedDate: null,
       heyLumiEnabled: false,
+      isTester: false,
       shieldAvailable: true,
       shieldUsedThisWeek: false,
       onboarded: false,
@@ -501,6 +507,8 @@ export const useUserStore = create<UserState>()(
         set({ backlogNudgeDismissedDate: today() }),
 
       setHeyLumiEnabled: (v) => set({ heyLumiEnabled: v }),
+
+      setIsTester: (v) => set({ isTester: v }),
 
       consumeShield: () =>
         set({ shieldAvailable: false, shieldUsedThisWeek: true }),
@@ -655,6 +663,7 @@ export const useUserStore = create<UserState>()(
           rescueDismissedDate: null,
           backlogNudgeDismissedDate: null,
           heyLumiEnabled: false,
+          isTester: false,
           shieldAvailable: true,
           shieldUsedThisWeek: false,
           onboarded: false,

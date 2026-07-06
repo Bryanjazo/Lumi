@@ -264,6 +264,7 @@ export const pullAll = async (userId: string): Promise<void> => {
       shieldAvailable: userRow.shield_available ?? true,
       shieldUsedThisWeek: userRow.shield_used_this_week ?? false,
       onboarded: userRow.onboarded ?? localState.onboarded,
+      isTester: userRow.is_tester === true,
       offlineMode: userRow.offline_mode ?? false,
       subscriptionStatus: nextSubStatus,
       subscriptionTier: nextSubTier,

@@ -1,3 +1,5 @@
+import { syncParseMetrics } from '../lib/telemetry';
+import { AppState } from 'react-native';
 import { useEffect, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -48,6 +50,20 @@ import { UpgradePromptSheet } from '../components/UpgradePromptSheet';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 
 export default function RootLayout() {
+  // Parse-quality telemetry (tier 1, zero text): push pending
+  // aiMetrics rows shortly after launch and on each return to
+  // foreground. Silent, batched, offline-mode aware.
+  useEffect(() => {
+    const t = setTimeout(() => void syncParseMetrics(), 6000);
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') void syncParseMetrics();
+    });
+    return () => {
+      clearTimeout(t);
+      sub.remove();
+    };
+  }, []);
+
   const [fontsReady] = useFonts({
     DMSans_400Regular,
     DMSans_400Regular_Italic,

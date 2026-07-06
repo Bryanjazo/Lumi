@@ -46,6 +46,7 @@ export const resetLocalUserData = (): void => {
     rescueDismissedDate: null,
     backlogNudgeDismissedDate: null,
     heyLumiEnabled: false,
+    isTester: false,
     shieldAvailable: true,
     shieldUsedThisWeek: false,
     shards: 0,

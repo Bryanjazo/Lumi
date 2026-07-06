@@ -27,13 +27,16 @@ export interface CaptureMetric {
   /** 'local' = gate kept it deterministic (0 tokens). 'llm' = model
    * answered. 'llm_fallback' = tried the model, shipped deterministic
    * (timeout / error / breaker). */
-  route: 'local' | 'llm' | 'llm_fallback';
+  route: 'local' | 'llm' | 'llm_fallback' | 'dym';
   /** Gate reason ('clean-single', 'multi', 'emotional', …). */
   reason: string;
   /** Model latency in ms — 0 for local. */
   latencyMs: number;
   /** Did the user tweak the preview afterward? */
   edited: boolean;
+  /** Uploaded to parse_metrics (telemetry tier 1). Re-synced when
+   *  `edited` flips after the first upload (upsert on the server). */
+  synced?: boolean;
 }
 
 interface AiMetricsState {
@@ -85,8 +88,11 @@ export interface AiMetricsSummary {
 }
 
 export const summarizeAiMetrics = (
-  metrics: CaptureMetric[],
+  raw: CaptureMetric[],
 ): AiMetricsSummary => {
+  // dym rows are card-interaction events, not captures — they'd
+  // pollute the skip/edit rates.
+  const metrics = raw.filter((m) => m.route !== 'dym');
   const total = metrics.length;
   const local = metrics.filter((m) => m.route === 'local');
   const llm = metrics.filter((m) => m.route === 'llm');

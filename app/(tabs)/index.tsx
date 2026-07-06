@@ -81,6 +81,11 @@ import {
 } from '../../lib/capture';
 import { personalizeTasks } from '../../lib/personalize';
 import { useAiMetricsStore } from '../../store/aiMetricsStore';
+import {
+  syncParseMetrics,
+  markMetricEdited,
+  logCaptureRaw,
+} from '../../lib/telemetry';
 import { awayStateFor, lastSeenDate, type AwayState } from '../../lib/away';
 import { classifyKind } from '../../constants/taskKinds';
 import {
@@ -2142,7 +2147,9 @@ export default function Home() {
         setAiPending(false);
         if (llmTasks && llmTasks.length > 0) {
           updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
-          setPreviewTasks(smartTasksFromLlm(llmTasks, detTasks));
+          const merged = smartTasksFromLlm(llmTasks, detTasks);
+          setPreviewTasks(merged);
+          logCaptureRaw(text, merged, 'llm', gate.reason);
         } else {
           // LLM failed or timed out — fall back to deterministic
           // so the user still gets SOMETHING (better than nothing).
@@ -2162,7 +2169,14 @@ export default function Home() {
         latencyMs: 0,
         edited: false,
       });
-      setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
+      const localTasks = personalizeTasks(detTasks, recentCorrections(20));
+      setPreviewTasks(localTasks);
+      logCaptureRaw(
+        text,
+        localTasks,
+        'local',
+        skipLlm ? 'multi-spellfixed' : gate.reason,
+      );
     }
     return true;
   };
@@ -2186,6 +2200,7 @@ export default function Home() {
       if (typedTidy.changed) setCapText(parked);
       setDymHint(true);
       setDymSuggestion(null);
+      recordAiMetric({ route: 'dym', reason: 'shown', latencyMs: 0, edited: false });
       if (isLlmAvailable() && access.hasPremium) {
         void llmClarify(parked).then((fixed) => {
           if (!fixed || fixed === parked) return;
@@ -2218,13 +2233,24 @@ export default function Home() {
       Haptics.selectionAsync();
       setSortingRaw(text);
       setAiPending(true);
+      const spellStarted = Date.now();
       void llmClarify(text).then((fixed) => {
         setSortingRaw(null);
         setAiPending(false);
+        recordAiMetric({
+          route: 'llm',
+          reason: 'spell-format',
+          latencyMs: Date.now() - spellStarted,
+          edited: false,
+        });
         const finalText = fixed && fixed.trim() ? fixed.trim() : text;
         if (!parseAndPreview(finalText, true)) {
           // Nothing task-shaped — put their words back, lose nothing.
           setCapText(text);
+        } else if (finalText !== text) {
+          logCaptureRaw(text, null, 'llm', 'spell-format', {
+            fixed: finalText,
+          });
         }
       });
       return;
@@ -2417,7 +2443,7 @@ export default function Home() {
     // Edit-rate is the quality dial for the routing gate (§2.5) —
     // only meaningful edits count (empty deltas are skipped above).
     if (Object.keys(delta).length > 0 && lastMetricIdRef.current) {
-      updateAiMetric(lastMetricIdRef.current, { edited: true });
+      markMetricEdited(lastMetricIdRef.current);
     }
   };
 
@@ -3674,6 +3700,12 @@ export default function Home() {
                     setCapText(dymSuggestion);
                     dymHeldRef.current = dymSuggestion;
                     setDymSuggestion(null);
+                    recordAiMetric({
+                      route: 'dym',
+                      reason: 'used',
+                      latencyMs: 0,
+                      edited: false,
+                    });
                     // Card stays up so the copy still reads "check
                     // it, then send" — one tap left.
                   }}
@@ -3689,6 +3721,12 @@ export default function Home() {
                   Haptics.selectionAsync();
                   setDymHint(false);
                   setDymSuggestion(null);
+                  recordAiMetric({
+                    route: 'dym',
+                    reason: 'scrapped',
+                    latencyMs: 0,
+                    edited: false,
+                  });
                   setCapText('');
                   setPillInputH(0);
                 }}
