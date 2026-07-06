@@ -191,7 +191,7 @@ function PickStep({
   companion: ReturnType<typeof useCompanionMode>;
 }) {
   const [date, setDate] = useState<Date>(today);
-  const [view, setView] = useState<'day' | 'month'>('day');
+  const [view, setView] = useState<'day' | 'week' | 'month'>('day');
   const [query, setQuery] = useState('');
   const quests = useQuestStore((s) => s.quests);
 
@@ -221,6 +221,13 @@ function PickStep({
     if (!trimmed) return base;
     return base.filter((q) => q.title.toLowerCase().includes(trimmed));
   }, [dayQuests, suggested, query]);
+
+  // Week rows — 7 day cards, same semantics as Time's week view
+  // (today glows, past dims, tap = zoom to that day).
+  const weekDays = useMemo(() => {
+    const start = addDays(date, -date.getDay());
+    return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  }, [date]);
 
   // Month grid — day cells with quest dots.
   const monthYear = date.getFullYear();
@@ -278,7 +285,7 @@ function PickStep({
       {/* Day / Month toggle + prev/next */}
       <View style={styles.toggleRow}>
         <View style={styles.viewToggle}>
-          {(['day', 'month'] as const).map((v) => {
+          {(['day', 'week', 'month'] as const).map((v) => {
             const on = view === v;
             return (
               <Pressable
@@ -304,7 +311,7 @@ function PickStep({
             );
           })}
         </View>
-        {view === 'day' && (
+        {view !== 'month' && (
           <View style={styles.dayNavRow}>
             {/* "Today" jump — only appears when the picker is on
                a day other than today. Ember-tinted so it reads as
@@ -323,14 +330,14 @@ function PickStep({
               </Pressable>
             )}
             <Pressable
-              onPress={() => setDate(addDays(date, -1))}
+              onPress={() => setDate(addDays(date, view === 'week' ? -7 : -1))}
               style={styles.dayNavBtn}
               hitSlop={6}
             >
               <Text style={styles.dayNavGlyph}>‹</Text>
             </Pressable>
             <Pressable
-              onPress={() => setDate(addDays(date, 1))}
+              onPress={() => setDate(addDays(date, view === 'week' ? 7 : 1))}
               style={styles.dayNavBtn}
               hitSlop={6}
             >
@@ -468,6 +475,88 @@ function PickStep({
             </View>
           )}
         </>
+      ) : view === 'week' ? (
+        <View>
+          <Text style={styles.monthTitle}>
+            {MO[weekDays[0].getMonth()].slice(0, 3)} {weekDays[0].getDate()} –{' '}
+            {MO[weekDays[6].getMonth()].slice(0, 3)} {weekDays[6].getDate()}
+          </Text>
+          {weekDays.map((d) => {
+            const isToday = sameDay(d, today);
+            const past =
+              !isToday && d.getTime() < new Date(today).setHours(0, 0, 0, 0);
+            const cellIso = isoDate(d);
+            const cellQuests = quests.filter(
+              (q) => q.date === cellIso && !q.completed,
+            );
+            const top =
+              cellQuests.find((q) => q.importance === 'high') ??
+              cellQuests.find((q) => q.importance === 'medium') ??
+              cellQuests[0];
+            return (
+              <Pressable
+                key={cellIso}
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setDate(d);
+                  setView('day');
+                }}
+                style={[
+                  styles.weekRow,
+                  isToday && styles.weekRowToday,
+                  past && { opacity: 0.55 },
+                ]}
+              >
+                <View style={styles.weekRowDateCol}>
+                  <Text
+                    style={[
+                      styles.weekRowDay,
+                      isToday && { color: C.ember },
+                    ]}
+                  >
+                    {WD[d.getDay()]}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.weekRowNum,
+                      isToday && { color: C.ember },
+                    ]}
+                  >
+                    {d.getDate()}
+                  </Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  {top ? (
+                    <>
+                      <Text style={styles.weekRowTitle} numberOfLines={1}>
+                        {top.title}
+                      </Text>
+                      <Text style={styles.weekRowSub}>
+                        {cellQuests.length} task
+                        {cellQuests.length > 1 ? 's' : ''}
+                        {cellQuests.length > 1 ? ' · tap to pick' : ''}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.weekRowQuiet}>quiet day</Text>
+                  )}
+                </View>
+                <View style={styles.weekRowPips}>
+                  {cellQuests.slice(0, 4).map((q) => (
+                    <View
+                      key={q.id}
+                      style={[
+                        styles.weekRowPip,
+                        { backgroundColor: TIER[q.importance].color },
+                      ]}
+                    />
+                  ))}
+                </View>
+                <Text style={styles.rowChev}>›</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       ) : (
         <View>
           <Text style={styles.monthTitle}>
@@ -1477,6 +1566,64 @@ const styles = StyleSheet.create({
   },
 
   // Month view
+  weekRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: C.void2,
+    borderWidth: 1,
+    borderColor: C.hair,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  weekRowToday: {
+    borderColor: hexA(C.ember, 0.45),
+    backgroundColor: hexA(C.ember, 0.07),
+  },
+  weekRowDateCol: {
+    width: 44,
+    alignItems: 'center',
+  },
+  weekRowDay: {
+    fontFamily: fonts.interSemi,
+    fontSize: 10,
+    letterSpacing: 1,
+    color: C.mute,
+    textTransform: 'uppercase',
+  },
+  weekRowNum: {
+    fontFamily: fonts.fraunces,
+    fontSize: 20,
+    color: C.bone,
+    marginTop: 1,
+  },
+  weekRowTitle: {
+    fontFamily: fonts.interMed,
+    fontSize: 14,
+    color: C.bone,
+  },
+  weekRowSub: {
+    fontFamily: fonts.inter,
+    fontSize: 11,
+    color: C.mute,
+    marginTop: 2,
+  },
+  weekRowQuiet: {
+    fontFamily: fonts.fraunces,
+    fontSize: 13,
+    color: C.mute,
+  },
+  weekRowPips: {
+    flexDirection: 'row',
+    gap: 3,
+  },
+  weekRowPip: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
   monthTitle: {
     fontFamily: fonts.fraunces,
     fontSize: 19,
