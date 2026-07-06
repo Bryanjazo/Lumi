@@ -1030,6 +1030,13 @@ export default function Home() {
   // evening-window end. Captured at 10:15 PM with a 11:45 PM bedtime
   // and saying "before bed" → land tonight, not tomorrow morning.
   const anchors = useUserStore((s) => s.anchors);
+  const captureLang = useUserStore((s) => s.captureLang);
+  // The deterministic grammar, spell dictionary, and did-you-mean
+  // heuristics are ENGLISH. For any other capture language they must
+  // stand down: the LLM understands ~every language natively, so
+  // non-English routes there (Pro); free falls back to a raw-title
+  // task — a floor, never a garbled parse.
+  const isEnglishCapture = (captureLang || 'en-US').startsWith('en');
   const heyLumiEnabled = useUserStore((s) => s.heyLumiEnabled);
   const setHeyLumiEnabled = useUserStore((s) => s.setHeyLumiEnabled);
   const hintsSeen = useUserStore((s) => s.hintsSeen);
@@ -2122,9 +2129,11 @@ export default function Home() {
     // the deterministic result instantly: zero tokens, zero spinner.
     // Multi-task / long / emotional captures earn the LLM — EXCEPT a
     // spell-fixed multi (see doc above).
-    const gate = routeCapture(text, detTasks);
+    const gate = isEnglishCapture
+      ? routeCapture(text, detTasks)
+      : ({ route: 'llm', reason: 'non-english' } as const);
     const skipLlm = spellFixed && gate.reason === 'multi';
-    if (isLlmAvailable() && gate.route === 'llm' && !skipLlm) {
+    if (isLlmAvailable() && (gate.route === 'llm' || !isEnglishCapture) && !skipLlm) {
       // Sorting flow — don't show the deterministic preview at all.
       // sortingRaw drives the "Lumi is sorting…" card up top; we
       // only set previewTasks once the LLM has returned (or the
@@ -2189,7 +2198,7 @@ export default function Home() {
     // did-you-mean card + background clarify. Sending the same text
     // again means "I meant it" — it goes through.
     const typedTidy = tidyTranscript(text);
-    if (typedTidy.suspicious && dymHeldRef.current !== text) {
+    if (isEnglishCapture && typedTidy.suspicious && dymHeldRef.current !== text) {
       const parked = typedTidy.changed ? typedTidy.tidied : text;
       dymHeldRef.current = parked;
       // Deterministic fixes (date-word near-misses) apply directly —
@@ -2222,6 +2231,7 @@ export default function Home() {
     // builds the tasks from the clean string. Free tier skips this
     // (their captures parse exactly as before).
     if (
+      isEnglishCapture &&
       isLlmAvailable() &&
       access.hasPremium &&
       text.length <= 300 &&
@@ -2477,12 +2487,15 @@ export default function Home() {
     // routes through the deterministic engine (usually local), so
     // the expensive understand pass never runs for garble.
     const tidy = tidyTranscript(final);
-    const spoken =
-      tidy.changed || tidy.suspicious ? tidy.tidied || final : final;
+    const spoken = isEnglishCapture
+      ? tidy.changed || tidy.suspicious
+        ? tidy.tidied || final
+        : final
+      : final;
     const prevText = capText.trim();
     const parked = prevText ? `${prevText} ${spoken}` : spoken;
     setCapText(parked);
-    if (tidy.suspicious) {
+    if (isEnglishCapture && tidy.suspicious) {
       setDymHint(true);
       setDymSuggestion(null);
       if (isLlmAvailable() && access.hasPremium) {
@@ -2583,7 +2596,9 @@ export default function Home() {
     const detTasks = parseSmartCapture(text, ctx);
     if (detTasks.length === 0) return [];
     if (textReadsOverwhelmed(text)) triggerEmpathize();
-    const gate = routeCapture(text, detTasks);
+    const gate = isEnglishCapture
+      ? routeCapture(text, detTasks)
+      : ({ route: 'llm', reason: 'non-english' } as const);
     if (isLlmAvailable() && gate.route === 'llm') {
       const metricId = recordAiMetric({
         route: 'llm',

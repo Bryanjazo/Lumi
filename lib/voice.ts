@@ -23,6 +23,7 @@
 //   should be active at a time, which matches how the UI works.
 
 import { useEffect, useRef, useState } from 'react';
+import { useUserStore } from '../store/userStore';
 
 // Lazy load expo-speech-recognition so the app still boots in Expo
 // Go (where the native module isn't bundled). On a dev client /
@@ -199,7 +200,10 @@ export const useVoice = (): VoiceController => {
 
   const nativeStart = () => {
     ExpoSpeechRecognitionModule!.start({
-      lang: 'en-US',
+      // The Settings → "Capture language" pick — was hardcoded to
+      // en-US, which made the setting decorative. iOS/Android both
+      // transcribe all listed locales on device.
+      lang: useUserStore.getState().captureLang || 'en-US',
       // Stream partials so Capture can show what the user is
       // saying as they speak (live transcription in the field).
       interimResults: true,

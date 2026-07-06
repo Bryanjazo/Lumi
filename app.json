@@ -12,7 +12,7 @@
       "bundleIdentifier": "app.lumi.ios",
       "appleTeamId": "LX2URYLQQ7",
       "usesAppleSignIn": true,
-      "buildNumber": "53",
+      "buildNumber": "54",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Lumi uses your microphone to capture your voice — for speaking tasks into the capture bar, and (only if you turn it on) to hear the “Hey Lumi” wake phrase while the app is open on screen.",
         "NSSpeechRecognitionUsageDescription": "Lumi transcribes your voice to text on this device so your words become tasks. Audio is processed by iOS on-device and never uploaded.",

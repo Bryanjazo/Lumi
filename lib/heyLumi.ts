@@ -42,6 +42,7 @@ import { AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { setForeignVoiceSession } from './voice';
 import { matchWake } from './heyLumiWake';
+import { useUserStore } from '../store/userStore';
 import type { SmartTask } from './capture';
 
 // Same lazy-require dance as lib/voice.ts — Expo Go has no native
@@ -281,7 +282,9 @@ export const useHeyLumi = (opts: HeyLumiOpts): HeyLumiController => {
       setForeignVoiceSession(true);
       modeRef.current = mode;
       ExpoSpeechRecognitionModule.start({
-        lang: 'en-US',
+        // Same locale as the pill mic — "hey Lumi" is a proper noun
+        // and survives non-English recognizers.
+        lang: useUserStore.getState().captureLang || 'en-US',
         interimResults: true,
         continuous: true,
         requiresOnDeviceRecognition: false,

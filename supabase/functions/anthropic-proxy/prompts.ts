@@ -345,6 +345,13 @@ ADHD-specific edge cases (READ CAREFULLY — these come up constantly):
 - REPETITION: "I really really really need to do X" → importance: high (the
   repetition is signal; they've been carrying this).
 
+LANGUAGE: the capture may be in ANY language. Write title and note in
+the USER'S language (the language they wrote in) — never translate
+their words to English. Field NAMES and enum VALUES (importance,
+energyDemand, part, recur.every, recur.day) stay the canonical English
+tokens exactly as specified; dates stay ISO. "llamar a mamá mañana" →
+{"tasks":[{"title":"Llamar a mamá","when":{"date":"<tomorrow>"}}]}.
+
 OUTPUT FORMAT (COST-CRITICAL — follow EXACTLY):
 - Return RAW MINIFIED JSON on ONE line: {"tasks":[...]} — no markdown fences, no prose before or after, no spaces after ":" or ",", no newlines, no indentation.
 - OMIT every field that sits at its default instead of writing it:
@@ -496,7 +503,7 @@ Edge cases:
 
 Return ONLY the JSON object.`,
   // llmClarify — the tiny repair pass
-  clarify: `You repair speech-to-text and typing mistakes in a short task capture. Return ONLY JSON: {"fixed":"..."}.
+  clarify: `You repair speech-to-text and typing mistakes in a short task capture. Return ONLY JSON: {"fixed":"..."}. Reply in the SAME language as the input — never translate.
 Rules:
 - Recover what the user MEANT: mishears ("call emori tomato" → "call Emory tomorrow"), split words ("to morrow"), typos, dropped words.
 - Keep names and words you cannot confidently fix exactly as given.
