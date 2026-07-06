@@ -2089,6 +2089,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.fraunces,
     fontStyle: 'italic',
     fontSize: 30,
+    paddingHorizontal: 6, // Fraunces italic overhang
     letterSpacing: -0.3,
   },
   anchorBoundsHint: {

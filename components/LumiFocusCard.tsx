@@ -935,7 +935,11 @@ const styles = StyleSheet.create({
     fontSize: 52,
     color: C.ember,
     letterSpacing: -1,
-    lineHeight: 52,
+    // Fraunces italic overhangs its glyph box — lineHeight == fontSize
+    // with no padding clips the last digit's right edge.
+    lineHeight: 60,
+    paddingRight: 12,
+    paddingLeft: 2,
   },
   pickerCountUnit: {
     fontFamily: fonts.inter,

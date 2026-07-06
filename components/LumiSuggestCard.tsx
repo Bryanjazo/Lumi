@@ -935,6 +935,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.fraunces,
     fontStyle: 'italic',
     fontSize: 28,
+    paddingHorizontal: 6, // Fraunces italic overhang
     color: C.ember,
     letterSpacing: -0.5,
     marginBottom: 10,

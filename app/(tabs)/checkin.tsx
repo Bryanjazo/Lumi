@@ -1861,7 +1861,8 @@ const styles = StyleSheet.create({
     fontSize: 30,
     color: C.bone,
     letterSpacing: -0.7,
-    lineHeight: 32,
+    lineHeight: 36,
+    paddingRight: 6, // Fraunces italic overhang
   },
   subtitle: {
     fontFamily: fonts.inter,

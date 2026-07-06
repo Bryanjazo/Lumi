@@ -564,6 +564,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.fraunces,
     fontStyle: 'italic',
     fontSize: 28,
+    paddingRight: 6, // Fraunces italic overhang
     color: C.bone,
     letterSpacing: -0.5,
   },
@@ -621,6 +622,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.fraunces,
     fontStyle: 'italic',
     fontSize: 28,
+    paddingHorizontal: 6, // Fraunces italic overhang
     letterSpacing: -0.4,
   },
   timeHint: {
