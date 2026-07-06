@@ -178,6 +178,38 @@ interface PickedTask {
   xpReward: number;
 }
 
+// Week-load helpers — EXACT mirrors of Time's (tier-weighted load,
+// load word, pips) so the two week views read identically.
+const TIER_W: Record<'high' | 'medium' | 'low', number> = {
+  high: 3,
+  medium: 2,
+  low: 1,
+};
+const loadOfQuests = (qs: Quest[]): number =>
+  qs.reduce((s, q) => s + TIER_W[q.importance], 0);
+const loadWord = (l: number): string =>
+  l === 0 ? 'open' : l <= 3 ? 'light' : l <= 6 ? 'full' : 'heavy';
+
+const Pips = ({ load }: { load: number }) => {
+  const n = load === 0 ? 0 : load <= 3 ? 1 : load <= 6 ? 2 : 3;
+  const col = n === 3 ? C.ember : n === 2 ? C.honey : C.lichen;
+  return (
+    <View style={{ flexDirection: 'row', gap: 3, alignItems: 'center' }}>
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: 3,
+            backgroundColor: i < n ? hexA(col, 0.9) : hexA(C.bone, 0.1),
+          }}
+        />
+      ))}
+    </View>
+  );
+};
+
 // ═════════════════════════════════════════════════════════════════════
 // STEP 1 — Pick a task
 // ═════════════════════════════════════════════════════════════════════
@@ -489,73 +521,94 @@ function PickStep({
             const cellQuests = quests.filter(
               (q) => q.date === cellIso && !q.completed,
             );
-            const top =
-              cellQuests.find((q) => q.importance === 'high') ??
-              cellQuests.find((q) => q.importance === 'medium') ??
-              cellQuests[0];
+            const load = loadOfQuests(cellQuests);
             return (
-              <Pressable
+              <View
                 key={cellIso}
-                onPress={() => {
-                  Haptics.selectionAsync();
-                  setDate(d);
-                  setView('day');
-                }}
                 style={[
-                  styles.weekRow,
-                  isToday && styles.weekRowToday,
+                  styles.weekCard,
+                  isToday && styles.weekCardToday,
                   past && { opacity: 0.55 },
                 ]}
               >
-                <View style={styles.weekRowDateCol}>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setDate(d);
+                    setView('day');
+                  }}
+                  style={styles.weekCardHead}
+                  hitSlop={4}
+                >
                   <Text
                     style={[
-                      styles.weekRowDay,
-                      isToday && { color: C.ember },
+                      styles.weekCardDate,
+                      { color: isToday ? C.glow : C.bone },
                     ]}
                   >
-                    {WD[d.getDay()]}
+                    {WD[d.getDay()]} {d.getDate()}
                   </Text>
-                  <Text
-                    style={[
-                      styles.weekRowNum,
-                      isToday && { color: C.ember },
-                    ]}
-                  >
-                    {d.getDate()}
-                  </Text>
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  {top ? (
-                    <>
-                      <Text style={styles.weekRowTitle} numberOfLines={1}>
-                        {top.title}
-                      </Text>
-                      <Text style={styles.weekRowSub}>
-                        {cellQuests.length} task
-                        {cellQuests.length > 1 ? 's' : ''}
-                        {cellQuests.length > 1 ? ' · tap to pick' : ''}
-                      </Text>
-                    </>
-                  ) : (
-                    <Text style={styles.weekRowQuiet}>quiet day</Text>
+                  {isToday && (
+                    <View style={styles.weekTodayTag}>
+                      <Text style={styles.weekTodayTagText}>today</Text>
+                    </View>
                   )}
-                </View>
-                <View style={styles.weekRowPips}>
-                  {cellQuests.slice(0, 4).map((q) => (
-                    <View
-                      key={q.id}
-                      style={[
-                        styles.weekRowPip,
-                        { backgroundColor: TIER[q.importance].color },
-                      ]}
-                    />
-                  ))}
-                </View>
-                <Text style={styles.rowChev}>›</Text>
-              </Pressable>
+                  <View style={{ flex: 1 }} />
+                  <Text
+                    style={[
+                      styles.weekLoadWord,
+                      { color: load > 6 ? C.ember : C.mute },
+                    ]}
+                  >
+                    {loadWord(load)}
+                  </Text>
+                  <Pips load={load} />
+                </Pressable>
+                {cellQuests.length === 0 ? (
+                  <Text style={styles.weekCardEmpty}>
+                    just your routine — open
+                  </Text>
+                ) : (
+                  <View style={styles.weekChipsWrap}>
+                    {cellQuests.map((q) => (
+                      <Pressable
+                        key={q.id}
+                        onPress={() => pickQuest(q)}
+                        style={[
+                          styles.weekChip,
+                          {
+                            borderColor: hexA(TIER[q.importance].color, 0.4),
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.weekChipSigil,
+                            { color: TIER[q.importance].color },
+                          ]}
+                        >
+                          {TIER[q.importance].sigil}
+                        </Text>
+                        <Text numberOfLines={2} style={styles.weekChipTitle}>
+                          {q.title}
+                        </Text>
+                        <Text style={styles.weekChipTime}>
+                          {q.scheduledHour != null
+                            ? `${((q.scheduledHour + 11) % 12) + 1}${
+                                q.scheduledHour < 12 ? 'a' : 'p'
+                              }`
+                            : q.window}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+              </View>
             );
           })}
+          <Text style={styles.weekCaption}>
+            tap a task to focus on it · tap a day to zoom in
+          </Text>
         </View>
       ) : (
         <View>
@@ -1566,63 +1619,102 @@ const styles = StyleSheet.create({
   },
 
   // Month view
-  weekRow: {
+  weekCard: {
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: hexA(C.bone, 0.025),
+    borderWidth: 1.5,
+    borderColor: hexA(C.hair, 0.9),
+    marginBottom: 8,
+    // Quiet weeks still fill the viewport instead of 7 thin strips
+    // floating over a black void.
+    minHeight: 76,
+  },
+  weekCardToday: {
+    backgroundColor: hexA(C.ember, 0.05),
+    borderColor: hexA(C.ember, 0.35),
+  },
+  weekCardHead: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: C.void2,
-    borderWidth: 1,
-    borderColor: C.hair,
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 8,
+    gap: 9,
   },
-  weekRowToday: {
-    borderColor: hexA(C.ember, 0.45),
-    backgroundColor: hexA(C.ember, 0.07),
-  },
-  weekRowDateCol: {
-    width: 44,
-    alignItems: 'center',
-  },
-  weekRowDay: {
-    fontFamily: fonts.interSemi,
-    fontSize: 10,
-    letterSpacing: 1,
-    color: C.mute,
-    textTransform: 'uppercase',
-  },
-  weekRowNum: {
+  weekCardDate: {
     fontFamily: fonts.fraunces,
-    fontSize: 20,
-    color: C.bone,
-    marginTop: 1,
+    fontStyle: 'italic',
+    fontSize: 16,
+    letterSpacing: -0.2,
   },
-  weekRowTitle: {
-    fontFamily: fonts.interMed,
-    fontSize: 14,
-    color: C.bone,
+  weekTodayTag: {
+    borderWidth: 1,
+    borderColor: hexA(C.ember, 0.45),
+    borderRadius: 100,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
   },
-  weekRowSub: {
+  weekTodayTagText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 8.5,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    color: C.ember,
+  },
+  weekLoadWord: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 11,
+  },
+  weekCardEmpty: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 11.5,
+    color: C.dusk,
+    marginTop: 6,
+  },
+  weekChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 9,
+  },
+  weekChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 100,
+    backgroundColor: hexA(C.surface, 0.9),
+    borderWidth: 1,
+    maxWidth: '100%',
+  },
+  weekChipSigil: {
     fontFamily: fonts.inter,
+    fontSize: 8,
+    letterSpacing: -1,
+  },
+  weekChipTitle: {
+    fontFamily: fonts.inter,
+    fontSize: 11.5,
+    color: C.bone,
+    letterSpacing: -0.1,
+    flexShrink: 1,
+  },
+  weekChipTime: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 10.5,
+    color: C.mute,
+  },
+  weekCaption: {
+    textAlign: 'center',
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
     fontSize: 11,
     color: C.mute,
-    marginTop: 2,
-  },
-  weekRowQuiet: {
-    fontFamily: fonts.fraunces,
-    fontSize: 13,
-    color: C.mute,
-  },
-  weekRowPips: {
-    flexDirection: 'row',
-    gap: 3,
-  },
-  weekRowPip: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    marginTop: 6,
+    marginBottom: 4,
   },
   monthTitle: {
     fontFamily: fonts.fraunces,
