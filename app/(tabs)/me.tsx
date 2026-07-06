@@ -1658,26 +1658,14 @@ export default function MeTab() {
               hidden in Minimal + Focused per spec §3. Shards live
               on the unlocks row now (where they're spent). */}
           <View style={styles.cornerCard}>
-            {companion.showXp && (
-              // Worlds & unlocks isn't ready to ship — the row stays
-              // as a quiet teaser (shards keep accruing meanwhile)
-              // instead of opening the placeholder shop.
-              <View style={styles.comingSoonRow} pointerEvents="none">
-                <HubRow
-                  first
-                  glyph="◉"
-                  color="#7FA06A"
-                  label={`${petName}'s worlds & unlocks`}
-                  sub={`◈ ${shards} shards saved · coming soon…`}
-                  open={false}
-                  chevronOnly
-                  onToggle={() => {}}
-                />
-              </View>
-            )}
+            {/* Worlds & unlocks: HIDDEN for v1 (launch sweep — a
+                visible dead row with an accruing currency reads as
+                broken, and App Review 2.1 dislikes placeholder UI).
+                Shards keep accruing silently in the store; restore
+                the teaser + UnlocksShop when the shop ships. */}
 
             <HubRow
-              first={!companion.showXp}
+              first
               glyph="◷"
               color="#8EA0B4"
               label="Your rhythm"
