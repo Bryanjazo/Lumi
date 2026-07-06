@@ -127,7 +127,10 @@ export default function Paywall() {
       Alert.alert('Purchases unavailable', msg);
       return;
     }
-    Alert.alert('Purchase failed', outcome.message);
+    Alert.alert(
+      'That didn’t go through',
+      `${outcome.message}\n\nNothing was charged — give it another try in a moment.`,
+    );
   };
 
   const handleRestore = async () => {
@@ -158,7 +161,10 @@ export default function Paywall() {
       );
       return;
     }
-    Alert.alert('Restore failed', outcome.message);
+    Alert.alert(
+      'Couldn’t restore just now',
+      `${outcome.message}\n\nMake sure you’re signed in with the Apple ID you subscribed with, then try again.`,
+    );
   };
 
   const openLink = (url: string) => () => {

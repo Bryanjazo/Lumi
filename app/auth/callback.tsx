@@ -9,7 +9,7 @@
 // land while the listener does its work; the root gate then routes
 // to onboarding/tabs the moment the session appears.
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -37,16 +37,27 @@ export default function AuthCallbackScreen() {
   // sign-in instead of an eternal spinner. (Effect re-arms whenever
   // session/loading settle; a session arriving cancels it via the
   // effect above unmounting this screen.)
+  const [stale, setStale] = useState(false);
   useEffect(() => {
     if (loading || session) return;
-    const t = setTimeout(() => router.replace('/auth/sign-in'), 6000);
-    return () => clearTimeout(t);
+    // Tell them WHY before moving them — a silent 6s redirect reads
+    // as a glitch on a slow connection.
+    const warn = setTimeout(() => setStale(true), 3200);
+    const t = setTimeout(() => router.replace('/auth/sign-in'), 6500);
+    return () => {
+      clearTimeout(warn);
+      clearTimeout(t);
+    };
   }, [session, loading, router]);
 
   return (
     <View style={styles.wrap}>
       <ActivityIndicator color={C.ember} />
-      <Text style={styles.line}>Setting up your space…</Text>
+      <Text style={styles.line}>
+        {stale
+          ? 'That link looks expired or already used — taking you to sign in…'
+          : 'Setting up your space…'}
+      </Text>
     </View>
   );
 }

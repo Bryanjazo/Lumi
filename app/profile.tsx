@@ -1259,7 +1259,10 @@ export default function AccountScreen() {
         message: JSON.stringify(blob, null, 2),
       });
     } catch (e) {
-      Alert.alert('Export failed', e instanceof Error ? e.message : 'Try again.');
+      Alert.alert(
+        'Couldn’t export just now',
+        'Your data is safe — check your connection and give it another try.',
+      );
     }
   };
 
