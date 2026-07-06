@@ -10,6 +10,7 @@
 import { Component, type ReactNode } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { fonts } from '../constants/fonts';
+import { reportError } from '../lib/errorReport';
 
 const C = {
   void: '#120E0C',
@@ -38,13 +39,14 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: { componentStack?: string }) {
-    // Always log — production users won't see this, but TestFlight +
-    // dev console will, so we can triage what crashed.
+    // Console for dev/TestFlight, client_errors for production —
+    // render crashes are no longer invisible after ship.
     console.warn(
       '[ErrorBoundary] caught',
       error.message,
       info.componentStack ?? '(no stack)',
     );
+    reportError(error, 'boundary', true);
   }
 
   private reset = () => {

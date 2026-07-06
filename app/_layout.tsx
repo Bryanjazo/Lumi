@@ -1,4 +1,5 @@
 import { syncParseMetrics } from '../lib/telemetry';
+import { installErrorReporting } from '../lib/errorReport';
 import { AppState } from 'react-native';
 import { useEffect, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
@@ -54,6 +55,7 @@ export default function RootLayout() {
   // aiMetrics rows shortly after launch and on each return to
   // foreground. Silent, batched, offline-mode aware.
   useEffect(() => {
+    installErrorReporting();
     const t = setTimeout(() => void syncParseMetrics(), 6000);
     const sub = AppState.addEventListener('change', (s) => {
       if (s === 'active') void syncParseMetrics();
