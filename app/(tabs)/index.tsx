@@ -2235,6 +2235,12 @@ export default function Home() {
     setDymSuggestion(null);
     setPillInputH(0);
 
+    // Parse the TIDIED text — "ok ok ok dishes" was reaching the
+    // parser with the stutter intact because tidy only gated the
+    // did-you-mean card.
+    const parseText =
+      isEnglishCapture && typedTidy.changed ? typedTidy.tidied : text;
+
     // ── Spell-format pass (Pro, goal: "LLM formats it, our smart
     // parser picks it up"). Text isn't suspicious, but it contains
     // words the ~10k common-word list doesn't know ("lanch",
@@ -2246,17 +2252,17 @@ export default function Home() {
       isEnglishCapture &&
       isLlmAvailable() &&
       access.hasPremium &&
-      text.length <= 300 &&
-      countUnknownWords(text) > 0
+      parseText.length <= 300 &&
+      countUnknownWords(parseText) > 0
     ) {
       setEditingIdx(null);
       setCapText('');
       setCapOpen(false);
       Haptics.selectionAsync();
-      setSortingRaw(text);
+      setSortingRaw(parseText);
       setAiPending(true);
       const spellStarted = Date.now();
-      void llmClarify(text).then((fixed) => {
+      void llmClarify(parseText).then((fixed) => {
         setSortingRaw(null);
         setAiPending(false);
         recordAiMetric({
@@ -2265,7 +2271,7 @@ export default function Home() {
           latencyMs: Date.now() - spellStarted,
           edited: false,
         });
-        const finalText = fixed && fixed.trim() ? fixed.trim() : text;
+        const finalText = fixed && fixed.trim() ? fixed.trim() : parseText;
         if (!parseAndPreview(finalText, true)) {
           // Nothing task-shaped — put their words back, lose nothing.
           setCapText(text);
@@ -2278,7 +2284,7 @@ export default function Home() {
       return;
     }
 
-    if (!parseAndPreview(text)) return; // vent-only etc — keep the pill text
+    if (!parseAndPreview(parseText)) return; // vent-only etc — keep the pill
 
     setEditingIdx(null);
     setCapText('');

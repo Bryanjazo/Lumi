@@ -378,6 +378,77 @@ export const CORPUS: CorpusCase[] = [
     expect: [{ dateOffset: 4 }],
     guard: true,
   },
+
+  // ═══ Worst-case typing (goal: understand you at your worst) ═══
+  {
+    name: 'worst: vent lead peels, tasks survive',
+    input: 'cant sleep too much to do tmrw rent gym call mom ugh',
+    expect: [
+      { title: 'Rent gym', dateOffset: 1 },
+      { title: 'Call mom' },
+    ],
+    guard: true,
+  },
+  {
+    name: 'worst: so tired is not a task',
+    input: 'so tired. gym maybe. eat something real.',
+    expect: [{ title: 'Gym' }, { title: 'Eat something real' }],
+    guard: true,
+  },
+  {
+    name: 'worst: i know is not a task, taxes dedupes',
+    input: 'taxes. i know. i know. taxes.',
+    expect: [{ title: 'Taxes', importance: 'high' }],
+    guard: true,
+  },
+  {
+    name: 'worst: also splits chore nouns, ?? and idk vanish',
+    input: 'call insurance guy?? maybe idk also groceries',
+    expect: [{ title: 'Call insurance guy' }, { title: 'Groceries' }],
+    guard: true,
+  },
+  {
+    name: 'worst: smth normalizes, about-note guard holds',
+    input: 'need to do smth about the car',
+    expect: [{ title: 'Do something about the car' }],
+    guard: true,
+  },
+  {
+    name: 'worst: guilt timestamp strips',
+    input: 'supposed to call dad back like 3 days ago',
+    expect: [{ title: 'Call dad back' }],
+    guard: true,
+  },
+  {
+    name: 'worst: leading and strips after period split',
+    input: 'clean kitchen. and trash',
+    expect: [{ title: 'Clean kitchen' }, { title: 'Trash' }],
+    guard: true,
+  },
+  {
+    name: 'worst: note drops date + screwed tail',
+    input: 'email prof about the extension assignment due monday im screwed',
+    expect: [
+      {
+        title: 'Email prof',
+        note: 'About the extension assignment',
+        importance: 'high',
+      },
+    ],
+    guard: true,
+  },
+  {
+    name: 'worst: were-out tail strips',
+    input: 'buy dog food were completely out also vet appt sometime',
+    expect: [{ title: 'Buy dog food' }, { title: 'Vet appointment sometime' }],
+    guard: true,
+  },
+  {
+    name: 'worst: why cant i is vent, dentist is real',
+    input: 'why cant i just do things. anyway. dentist.',
+    expect: [{ title: 'Dentist' }],
+    guard: true,
+  },
   {
     name: 'noon',
     input: 'lunch with sam at noon',

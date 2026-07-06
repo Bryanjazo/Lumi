@@ -299,8 +299,36 @@ const TRAILING_HEDGES = [
 // stressing me out"). The feeling is real but it isn't a task title.
 // VENT_TAILS strips a trailing stress clause off a fragment;
 // VENT_ONLY drops fragments that are PURE vent — no action inside.
+// Worst-case typing normalization — the shorthand people use when
+// they're fried. Runs at parse entry so every layer downstream sees
+// clean words. "??" runs collapse (they're emphasis, not syntax).
+const TYPING_NORMALIZE: Array<[RegExp, string]> = [
+  [/\bsmth\b/gi, 'something'],
+  [/\bsth\b/gi, 'something'],
+  [/\bappts?\b/gi, 'appointment'],
+  [/\bb4\b/gi, 'before'],
+  [/\bbday\b/gi, 'birthday'],
+  [/\bw\/(?=\s|\w)/gi, 'with '],
+  [/\bgotta\b/gi, 'need to'],
+  [/\bidk,?\s+/gi, ''],
+  [/\s+idk\b/gi, ''],
+  [/[?!]{2,}/g, ''],
+];
+
+export const normalizeTyping = (text: string): string => {
+  let t = text;
+  for (const [re, to] of TYPING_NORMALIZE) t = t.replace(re, to);
+  return t.replace(/\s{2,}/g, ' ').trim();
+};
+
+// Leading vent clause — "cant sleep too much to do tmrw rent gym" —
+// the despair preamble strips so the actual tasks surface. Looped:
+// stacked vents ("ok. cant sleep. too much to do.") all peel off.
+const VENT_LEADS =
+  /^(?:ok(?:ay)?[,.!\s]+)*(?:(?:i\s+)?can'?t sleep|brain won'?t shut up|everything is (?:piling up|too much|falling apart)|(?:i'?m|im) drowning(?: in \w+)?|i have no idea where to start|no idea where to start|my head(?:'?s| is) (?:spinning|a mess|full)|(?:way\s+)?too much to do|so much to do)[,.!\s]*/i;
+
 const VENT_TAILS =
-  /[,\s]*\b(?:(?:it'?s|this is|which is|that'?s)\s+)?(?:really\s+)?(?:stress(?:ing|es)?\s+me(?:\s+out)?|freaking\s+me\s+out|driving\s+me\s+(?:crazy|nuts|insane)|killing\s+me|i'?m\s+(?:so\s+)?(?:stressed|overwhelmed|anxious)(?:\s+about\s+(?:it|this))?)\s*$/i;
+  /[,\s]*\b(?:(?:it'?s|this is|which is|that'?s)\s+)?(?:really\s+)?(?:stress(?:ing|es)?\s+me(?:\s+out)?|freaking\s+me\s+out|driving\s+me\s+(?:crazy|nuts|insane)|killing\s+me|i'?m\s+(?:so\s+)?(?:stressed|overwhelmed|anxious|screwed)(?:\s+about\s+(?:it|this))?|im screwed|kill me|fml|i hate this|wish me luck|(?:and\s+)?i haven'?t (?:even\s+)?started(?:\s+it)?|(?:we'?re|were|i'?m|im)\s+(?:completely\s+|all\s+)?out(?:\s+of\s+\w+)?)\s*$/i;
 
 const VENT_ONLY = [
   // NOTE the \s+ between "brain" and "is" — the alternation `(?:'?s| is)`
@@ -310,6 +338,10 @@ const VENT_ONLY = [
   /^(?:ok(?:ay)?|ugh|whew|man|god|jeez|honestly|anyway|so yeah|yeah)$/i,
   /^never do$/i,
   /^(?:i'?m|im) (?:so )?(?:stressed|overwhelmed|tired|anxious|behind)(?: out)?$/i,
+  /^(?:so |too |just )?(?:tired|exhausted|drained|dead|done)[.!]*$/i,
+  /^i know[.!]*$/i,
+  /^why (?:can'?t|cant|won'?t|wont) i\b.*$/i,
+  /^anyway[.!]*$/i,
   /^it'?s stressing me(?: out)?$/i,
   /^(?:so\s+)?(?:yeah\s+)?wish me luck$/i,
 ];
@@ -1439,8 +1471,16 @@ const CLAUSE_DATEISH =
 // alone if it's vent (so it can be dropped), a status statement, has
 // its own verb, carries a date, or is long enough to be its own
 // thought. Otherwise it's a noun continuation of the previous clause.
+// Verbless clauses that are still unmistakably their own task —
+// the nouns people fire off when everything's piling up.
+const CHORE_NOUN_RE =
+  /^(?:the |my |a )?(?:groceries|grocery run|laundry|dishes|gym|trash|recycling|meds|medication|gas|errands?|cleaning|workout|homework|taxes|rent|bills?|emails?|dinner|lunch|breakfast|dentist|vet|pharmacy|haircut|oil change|car wash|dry cleaning)(?:\s+\w+){0,2}[.!]*$/i;
+
 const standsAlone = (clause: string): boolean => {
   if (VENT_ONLY.some((re) => re.test(clause))) return true;
+  if (clause.split(/\s+/).length <= 3 && CHORE_NOUN_RE.test(clause)) {
+    return true;
+  }
   if (STATUS_RULES.some((r) => r.re.test(clause))) return true;
   if (VERB_RE.test(clause)) return true;
   if (CLAUSE_DATEISH.test(clause)) return true;
@@ -1632,6 +1672,32 @@ export const routeCapture = (
   if (EMOTIONAL_RE.test(t)) return { route: 'llm', reason: 'emotional' };
   const parsed = detTasks[0];
   if (!parsed) return { route: 'llm', reason: 'no-parse' };
+
+  // Worst-case shapes the deterministic floor handles poorly:
+  // ≥2 date words = several scheduled things mashed together
+  // ("rent due friday moms bday saturday"); a verbless noun pile
+  // ("rent gym mom karen email") has no splittable structure. Both
+  // earn the LLM (Pro) — free still ships the deterministic floor.
+  const dateHits = t.match(
+    /\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend)\b/gi,
+  );
+  if (dateHits && new Set(dateHits.map((d) => d.toLowerCase())).size >= 2) {
+    return { route: 'llm', reason: 'multi-dates' };
+  }
+  const sigWords = t
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3);
+  const head = t.trim().split(/\s+/).slice(0, 2).join(' ');
+  const headIsIntent =
+    VERB_RE.test(head) ||
+    /^(?:i|we|need|have|want|going|gonna|must|should|trying|hoping|remember|don'?t)\b/i.test(
+      head,
+    );
+  if (sigWords.length >= 4 && !headIsIntent) {
+    return { route: 'llm', reason: 'noun-pile' };
+  }
   // A rambly leftover title means cleaning failed — let the LLM try.
   if ((parsed.confidence?.title ?? 0.9) < 0.7) {
     return { route: 'llm', reason: 'messy-title' };
@@ -1688,6 +1754,26 @@ const stripTokens = (raw: string, tokens: string[]): string => {
     .replace(/,\s*(?=,)/g, '')
     .replace(/^[,\s]+|[,\s]+$/g, '')
     .trim();
+  // Worst-case hygiene: trailing interjections ("call mom ugh"),
+  // leading conjunction debris (". and trash"), guilt timestamps
+  // ("like 3 days ago"), "supposed to" preambles.
+  for (let peel = 0; peel < 3; peel++) {
+    const next = out
+      .replace(
+        /[,\s]+(?:ugh+|argh+|ffs|smh|sigh|lol|omg|meh|bleh|welp|ya know|you know|i guess)[.!\s]*$/i,
+        '',
+      )
+      .trim();
+    if (next === out) break;
+    out = next;
+  }
+  out = out
+    .replace(/\s+(?:is|are|was|were)$/i, '')
+    .replace(/^(?:and|or|but|also)\s+/i, '')
+    .replace(/\s+(?:like\s+)?\d+\s+(?:days?|weeks?)\s+ago\b/i, '')
+    .replace(/^supposed to\s+/i, '')
+    .trim();
+
   return out;
 };
 
@@ -1918,7 +2004,7 @@ export const parseSmartCapture = (
   text: string,
   ctx: CaptureContext,
 ): SmartTask[] => {
-  const fragments = splitFragments(text);
+  const fragments = splitFragments(normalizeTyping(text));
   const tasks: SmartTask[] = [];
   let droppedVent = false;
 
@@ -1926,9 +2012,15 @@ export const parseSmartCapture = (
     // Vent stripping: cut a trailing stress clause ("…it's stressing
     // me out"), then drop fragments that are PURE vent — the feeling
     // is real, it just isn't a task.
-    const raw = applySelfCorrection(frag.trim())
-      .replace(VENT_TAILS, '')
-      .trim();
+    let rawFrag = applySelfCorrection(frag.trim());
+    // Peel stacked vent leads ("cant sleep too much to do rent gym"
+    // → "rent gym") before the tail strip.
+    for (let peel = 0; peel < 3; peel++) {
+      const next = rawFrag.replace(VENT_LEADS, '').trim();
+      if (next === rawFrag) break;
+      rawFrag = next;
+    }
+    const raw = rawFrag.replace(VENT_TAILS, '').trim();
     if (raw.length < 2) continue;
     if (VENT_ONLY.some((re) => re.test(raw))) {
       droppedVent = true;
@@ -1940,7 +2032,15 @@ export const parseSmartCapture = (
     const time = parseTimeAndDate(lc, ctx);
     // Deadline presence is an importance signal (goal §1.3) — things
     // with a "by when" carry stakes.
-    const impScore = scoreImportance(lc, time.deadline ? 1 : 0);
+    // Past-due guilt ("supposed to", "should've", "3 days ago") is a
+    // HIGH signal — they're already carrying it (LLM lens 7 parity).
+    const guilt =
+      /\b(?:supposed to|should(?:'?ve| have)|\d+\s+(?:days?|weeks?)\s+ago|keep forgetting|still haven'?t)\b/i.test(
+        lc,
+      )
+        ? 1
+        : 0;
+    const impScore = scoreImportance(lc, (time.deadline ? 1 : 0) + guilt);
     const importance = impScore.tier;
     // Status statements become imperatives BEFORE title cleaning
     // ("laundry is piling up" → "Do laundry", goal §1.4).
@@ -1960,6 +2060,7 @@ export const parseSmartCapture = (
     if (
       aboutM &&
       aboutM[1].trim().split(/\s+/).length >= 2 &&
+      !/\b(?:something|anything|stuff|things|it)$/i.test(aboutM[1].trim()) &&
       !/\b(think(?:ing)?|worry(?:ing)?|talk|chat|wonder(?:ing)?|forget|care|complain(?:ing)?)$/i.test(
         aboutM[1].trim(),
       )
@@ -1968,7 +2069,13 @@ export const parseSmartCapture = (
       const kw = aboutM[2].toLowerCase();
       const prefix =
         kw === 're:' ? 'Re:' : kw === 'regarding' ? 'Regarding' : 'About';
-      noteText = `${prefix} ${aboutM[3].trim()}`.slice(0, 120);
+      // The note must not re-carry parsed dates or trailing vents
+      // ("about the extension due monday im screwed").
+      let notePayload = stripTokens(aboutM[3].trim(), time.matched)
+        .replace(VENT_TAILS, '')
+        .replace(/[,\s]+(?:ugh+|im screwed|i'?m screwed)[.!\s]*$/i, '')
+        .trim();
+      noteText = notePayload ? `${prefix} ${notePayload}`.slice(0, 120) : undefined;
     }
     const title = cleanTitle(stripTokens(titleSource, time.matched));
     // Anything under 3 chars after cleaning is split debris, not a
@@ -2209,7 +2316,16 @@ export const parseSmartCapture = (
     });
   }
 
-  return tasks;
+  // Worst-case typing repeats itself ("taxes. i know. i know.
+  // taxes.") — identical normalized titles collapse to the first.
+  const seenTitles = new Set<string>();
+  const deduped = tasks.filter((t) => {
+    const key = t.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+    if (seenTitles.has(key)) return false;
+    seenTitles.add(key);
+    return true;
+  });
+  return deduped;
 };
 
 // ═════════════════════════════════════════════════════════════════════

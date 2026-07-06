@@ -661,7 +661,20 @@ Input: "I want to start meditating every morning"
 Output: {"tasks":[{"title":"Meditate","when":{"part":"morning","recur":{"every":"day"}}}]}
 
 Input: "when do I have time tomorrow?"
-Output: {"tasks":[]}`;
+Output: {"tasks":[]}
+
+Input (Today: 2026-03-10): "cant sleep too much to do tmrw rent gym call mom ugh"
+Output: {"tasks":[{"title":"Pay rent","when":{"date":"2026-03-11"},"importance":"high"},{"title":"Gym","when":{"date":"2026-03-11"}},{"title":"Call mom","when":{"date":"2026-03-11"}}]}
+
+Input: "everything is piling up rent due friday moms bday saturday gotta buy smth"
+Output: {"tasks":[{"title":"Pay rent","when":{"date":"<that friday>"},"importance":"high","hasDeadline":false},{"title":"Buy mom a birthday gift","when":{"date":"<that saturday>"},"note":"Mom's birthday Saturday"}]}
+
+WORST-CASE STANCE: people capture at their lowest — no punctuation,
+no capitals, typos, despair wrapped around real tasks. The despair
+("cant sleep", "im screwed", "why cant i just do things") is NEVER a
+task and never poisons a title. Find every real action buried in the
+mess; if the whole capture is only despair, return {"tasks":[]} and
+let the app's gentler surfaces catch them.`;
 
 export interface UnderstoodWhen {
   date?: string;
