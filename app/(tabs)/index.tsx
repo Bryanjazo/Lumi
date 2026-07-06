@@ -1835,6 +1835,10 @@ export default function Home() {
         sleep: fmtAnchor(anchors.sleep),
       },
       struggles: struggles.slice(0, 3),
+      todayTasks: todayQuests
+        .filter((q) => !q.completed)
+        .slice(0, 12)
+        .map((q) => `${q.title} (${q.window})`),
       recentCorrections: summarizeCorrections(recentCorrections(6)),
       userName: userName.trim() || undefined,
     };
@@ -1865,8 +1869,8 @@ export default function Home() {
   ): SmartTask[] => {
     const stub = (t: UnderstoodTask): SmartTask => ({
       title: t.title,
-      importance: 'medium',
-      energyDemand: 'medium',
+      importance: t.importance ?? 'medium',
+      energyDemand: t.energyDemand ?? 'medium',
       timeMode: 'windowed',
       at: null,
       date: null,
@@ -1914,6 +1918,10 @@ export default function Home() {
         sleep: fmtAnchor(anchors.sleep),
       },
       struggles: struggles.slice(0, 3),
+      todayTasks: todayQuests
+        .filter((q) => !q.completed)
+        .slice(0, 12)
+        .map((q) => `${q.title} (${q.window})`),
       recentCorrections: summarizeCorrections(recentCorrections(6)),
       userName: userName.trim() || undefined,
     };
@@ -2166,7 +2174,9 @@ export default function Home() {
             route: 'llm_fallback',
             latencyMs: Date.now() - startedAt,
           });
-          setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20)));
+          setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20), {
+        strongWindow: digest.pattern?.strong ?? null,
+      }));
         }
       });
     } else {
@@ -2178,7 +2188,9 @@ export default function Home() {
         latencyMs: 0,
         edited: false,
       });
-      const localTasks = personalizeTasks(detTasks, recentCorrections(20));
+      const localTasks = personalizeTasks(detTasks, recentCorrections(20), {
+        strongWindow: digest.pattern?.strong ?? null,
+      });
       setPreviewTasks(localTasks);
       logCaptureRaw(
         text,
@@ -2625,7 +2637,9 @@ export default function Home() {
         edited: false,
       });
     }
-    return personalizeTasks(detTasks, recentCorrections(20));
+    return personalizeTasks(detTasks, recentCorrections(20), {
+        strongWindow: digest.pattern?.strong ?? null,
+      });
   };
 
   const heyLumi = useHeyLumi({

@@ -35,6 +35,10 @@ export interface Correction {
     importance?: { from: Importance; to: Importance };
     durationMinutes?: { from: number | undefined; to: number };
     date?: { from: string; to: string };
+    /** Clock-time move (minutes since midnight; null = unpinned). */
+    at?: { from: number | null; to: number | null };
+    /** Recurrence change, stringified ("weekly on Mon" / "none"). */
+    recur?: { from: string; to: string };
   };
 }
 
@@ -93,6 +97,16 @@ export const summarizeCorrections = (corrections: Correction[]): string[] => {
       parts.push(
         `set importance ${c.delta.importance.from} → ${c.delta.importance.to}`,
       );
+    }
+    if (c.delta.at !== undefined && c.delta.at) {
+      const f = (v: number | null) =>
+        v == null
+          ? 'unpinned'
+          : `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`;
+      parts.push(`moved time ${f(c.delta.at.from)} → ${f(c.delta.at.to)}`);
+    }
+    if (c.delta.recur) {
+      parts.push(`repeat ${c.delta.recur.from} → ${c.delta.recur.to}`);
     }
     if (c.delta.durationMinutes) {
       const from = c.delta.durationMinutes.from ?? '?';

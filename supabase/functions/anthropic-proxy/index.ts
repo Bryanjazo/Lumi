@@ -50,6 +50,16 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 const KIND_MODEL: Partial<Record<AiKind, string>> = {
   clarify: "claude-haiku-4-5-20251001",
 };
+
+// Per-kind temperature — extraction wants near-deterministic output
+// (consistent JSON shape run to run); untangle is a conversation and
+// keeps some warmth. Default was 1.0 (the API default) for BOTH,
+// which is maximum randomness for a JSON extractor.
+const KIND_TEMPERATURE: Record<string, number> = {
+  title_clean: 0.2,
+  clarify: 0.1,
+  untangle: 0.7,
+};
 // Model allowlist (security audit §3) — the client may only pick from
 // models we've priced for. Anything else silently falls back to the
 // default instead of being passed through to Anthropic.
@@ -254,6 +264,7 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         model: body.model,
         max_tokens: body.max_tokens,
+        temperature: KIND_TEMPERATURE[body.kind] ?? 0.5,
         // PROMPT CACHING: the system prompt is server-pinned and
         // byte-identical for every call of a kind, so it's a perfect
         // cache prefix — reads bill at 10% of input price (writes

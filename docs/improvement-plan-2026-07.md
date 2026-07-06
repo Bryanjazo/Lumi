@@ -1,5 +1,11 @@
 # Lumi · Engine Improvement Plan — July 2026
 
+> STATUS (Jul 6): A1–A10 + B1–B7 + B9 (timeout) SHIPPED and verified —
+> corpus 147/147, live benchmark 42/42 (incl. multilingual).
+> Remaining: A11 time ranges (schema), A12 confidence follow-ups,
+> A13 multilingual date vocab, B8 Haiku-for-simple (A/B-gated),
+> B10 streaming responses. See git log for implementation details.
+
 Findings from the pre-release deep audit (deterministic parser + LLM
 pipeline). Each item: what a user says/sees today, what should happen,
 size (S/M/L), impact. Nothing here is implemented yet — this is the

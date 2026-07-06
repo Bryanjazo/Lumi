@@ -118,10 +118,39 @@ export const personalizeTask = (
 
 /** Batch form — the deterministic capture path runs every parsed task
  * through memory before preview. */
+/**
+ * A10 — learning warm-start. The follow-through engine already knows
+ * the user's STRONG window (where things actually get finished); it
+ * powered recap copy but never touched parsing. Now: a high-
+ * importance task whose window was GUESSED (low time confidence, no
+ * explicit time/recur) starts in the strong window. Corrections
+ * still run after and win — explicit memory beats inferred pattern.
+ * Zero tokens; the data was already computed.
+ */
+const warmStart = (
+  t: SmartTask,
+  strongWindow: SmartTask['window'] | null | undefined,
+): SmartTask => {
+  if (
+    !strongWindow ||
+    strongWindow === 'someday' ||
+    t.timeMode !== 'windowed' ||
+    t.at != null ||
+    t.recur != null ||
+    t.importance !== 'high' ||
+    t.window === strongWindow ||
+    (t.confidence?.time ?? 0) >= 0.6
+  ) {
+    return t;
+  }
+  return { ...t, window: strongWindow };
+};
+
 export const personalizeTasks = (
   tasks: SmartTask[],
   corrections: Correction[],
+  opts?: { strongWindow?: SmartTask['window'] | null },
 ): SmartTask[] =>
-  corrections.length === 0
-    ? tasks
-    : tasks.map((t) => personalizeTask(t, corrections));
+  tasks.map((t) =>
+    personalizeTask(warmStart(t, opts?.strongWindow), corrections),
+  );

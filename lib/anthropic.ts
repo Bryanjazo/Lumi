@@ -241,10 +241,23 @@ Rules:
 - NEVER add, remove, or reorder tasks. NEVER invent details, times, or dates that aren't implied by the mistake itself.
 - Keep the user's casual voice. No punctuation beautification beyond what meaning requires.`;
 
+// Same dedupe idea as understandCache — repeated sends of the same
+// garble (double-tap, edit-and-retry) must not bill Haiku twice.
+let clarifyCache: { raw: string; fixed: string | null; at: number } | null =
+  null;
+const CLARIFY_CACHE_MS = 5 * 60_000;
+
 export const llmClarify = async (raw: string): Promise<string | null> => {
   if (!isAnthropicConfigured) return null;
   const trimmed = raw.trim();
   if (!trimmed || trimmed.length > 300) return null;
+  if (
+    clarifyCache &&
+    clarifyCache.raw === trimmed &&
+    Date.now() - clarifyCache.at < CLARIFY_CACHE_MS
+  ) {
+    return clarifyCache.fixed;
+  }
   try {
     const text = await Promise.race([
       callMessages({
@@ -259,7 +272,9 @@ export const llmClarify = async (raw: string): Promise<string | null> => {
     const parsed = extractJson<{ fixed?: unknown }>(text);
     if (typeof parsed.fixed !== 'string') return null;
     const fixed = parsed.fixed.trim().slice(0, 300);
-    return fixed.length > 0 ? fixed : null;
+    const out = fixed.length > 0 ? fixed : null;
+    clarifyCache = { raw: trimmed, fixed: out, at: Date.now() };
+    return out;
   } catch {
     return null; // deterministic tidy already parked a usable version
   }
@@ -712,6 +727,14 @@ export interface UnderstandContext {
    */
   userName?: string;
   /**
+   * Titles (+ window) of the tasks ALREADY on today's plan — lets
+   * the model spot duplicates and weigh placement against real load
+   * (a 10th task lands differently than a 2nd). Cap ~12; dynamic
+   * (uncached) input but short.
+   */
+  todayTasks?: string[];
+
+  /**
    * One-line summaries of the user's recent Tweak corrections — what
    * they CHANGED on past LLM guesses. Compounds over time so the
    * model mirrors learned preferences ("user always moves 'gym' to
@@ -758,6 +781,15 @@ const buildContextBlock = (ctx: UnderstandContext): string => {
   if (ctx.userName && ctx.userName.trim().length > 0) {
     parts.push(`User's name: ${safeCtx(ctx.userName, 40)}`);
   }
+  if (ctx.todayTasks && ctx.todayTasks.length > 0) {
+    parts.push(
+      `Already on today's plan (${ctx.todayTasks.length} task${
+        ctx.todayTasks.length === 1 ? '' : 's'
+      }) — if the capture repeats one of these, still return it (the app dedupes), but use the load to judge placement:\n${ctx.todayTasks
+        .map((t) => `  - ${safeCtx(t, 70)}`)
+        .join('\n')}`,
+    );
+  }
   if (ctx.recentCorrections && ctx.recentCorrections.length > 0) {
     parts.push(
       `Recent corrections (this user's actual preferences — MIRROR these patterns when they apply):\n${ctx.recentCorrections
@@ -798,24 +830,35 @@ export const llmUnderstand = async (
   }
   try {
     const ctxBlock = buildContextBlock(ctx);
-    const text = await callMessages({
-      kind: 'title_clean',
-      // Was 600 — too tight for long brain-dumps. Each task's JSON
-      // is ~100-150 tokens (title + importance + energyDemand +
-      // when + note + hasDeadline). A 13-task comma-dump needs
-      // ~1600+ tokens; at 600 the response truncated mid-object,
-      // the JSON parse failed, and llmUnderstand returned null.
-      // 3000 supports ~20 tasks comfortably — well above what a
-      // realistic single-capture dump ever contains.
-      maxTokens: 3000,
-      messages: [
-        {
-          role: 'user',
-          content: `${ctxBlock}\n\nUser wrote: ${raw}`,
-        },
-      ],
-    });
-    const parsed = extractJson<UnderstoodResponse>(text);
+    const content = `${ctxBlock}\n\nUser wrote: ${raw}`;
+    // B9 — a hung upstream must not pin the "Lumi is sorting…" card
+    // forever; 15s is far beyond p99 (~2s measured) so this only
+    // fires on genuine hangs, and callers fall back deterministic.
+    const callOnce = (suffix = ''): Promise<string> =>
+      Promise.race([
+        callMessages({
+          kind: 'title_clean',
+          maxTokens: 3000,
+          messages: [{ role: 'user', content: content + suffix }],
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('understand timeout')), 15000),
+        ),
+      ]);
+    let text = await callOnce();
+    let parsed: UnderstoodResponse;
+    try {
+      parsed = extractJson<UnderstoodResponse>(text);
+    } catch {
+      // B3 — the captures that most need the LLM (long dumps) are the
+      // likeliest to come back malformed. One strict retry, paid only
+      // on the failure path, recovers them before the deterministic
+      // fallback.
+      text = await callOnce(
+        '\n\nIMPORTANT: Return ONLY the valid minified JSON object {"tasks":[...]} — no prose, no markdown fences.',
+      );
+      parsed = extractJson<UnderstoodResponse>(text);
+    }
     if (!parsed || !Array.isArray(parsed.tasks)) return null;
     // Sanitize each task — coerce shape so a misbehaving model
     // doesn't blow up the caller. Drop tasks without a title.

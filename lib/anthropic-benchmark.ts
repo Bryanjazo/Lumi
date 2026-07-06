@@ -676,6 +676,57 @@ export const UNDERSTAND_CASES: UnderstandCase[] = [
     notes:
       'Stress framing ("so stressed about the presentation") signals HIGH importance on the associated task. Groceries stays medium.',
   },
+  // ═══ B6 expansion — multilingual + edge coverage ═══
+  {
+    name: 'spanish-comma-list',
+    category: 'edge',
+    raw: 'llamar a mamá mañana, comprar leche, terminar el informe',
+    expect: {
+      taskCountMin: 3,
+      taskCountMax: 3,
+      tasks: [{ titleIncludes: ['mamá'] }, { titleIncludes: ['leche'] }],
+    },
+    notes: 'Titles must stay in Spanish; mañana resolves to a date.',
+  },
+  {
+    name: 'french-oh-et-aussi',
+    category: 'edge',
+    raw: "appeler le dentiste demain et aussi acheter du pain oh et aussi finir le rapport",
+    expect: { taskCountMin: 3, taskCountMax: 3 },
+    notes: 'French run-on with "oh et aussi" inserts.',
+  },
+  {
+    name: 'japanese-two-tasks',
+    category: 'edge',
+    raw: '明日母に電話して、牛乳を買う',
+    expect: { taskCountMin: 2, taskCountMax: 2 },
+    notes: 'Japanese comma list, 明日 resolves to tomorrow.',
+  },
+  {
+    name: 'day-of-month',
+    category: 'edge',
+    raw: 'pay rent on the 15th',
+    expect: {
+      taskCount: 1,
+      tasks: [{ titleIncludes: ['rent'], titleExcludes: ['15th'] }],
+    },
+    notes: 'Bare ordinal date must resolve and leave the title.',
+  },
+  {
+    name: 'emoji-heavy',
+    category: 'edge',
+    raw: '💪 gym at 6 😩 then groceries 🛒 and call mom ❤️',
+    expect: { taskCountMin: 3, taskCountMax: 3 },
+    notes: 'Emoji are decoration, not tasks — and never in titles.',
+  },
+  {
+    name: 'long-dump-twelve',
+    category: 'edge',
+    raw: 'ok huge day tomorrow: finish the deck, email sarah about the numbers, call the vet, pick up meds, gas, groceries, pay the water bill, book flights for august, reply to dan, clean the kitchen, take out recycling, and schedule the dentist',
+    expect: { taskCountMin: 11, taskCountMax: 12 },
+    notes:
+      'Nothing dropped from a 12-item dump; the old 600-token cap used to truncate these.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────
@@ -798,6 +849,7 @@ const STANDARD_PILE: UntanglePileSeed[] = [
     window: 'someday',
     status: 'later',
   },
+
 ];
 
 export const UNTANGLE_CASES: UntangleCase[] = [
