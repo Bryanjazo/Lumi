@@ -518,7 +518,7 @@ const EFFORT_RE =
 const QUICK_RE =
   /\b(call|text|email|message|reply|grab|buy|pick up|order|swing by|drop off|send|water|feed)\b/;
 const LOW_RE =
-  /\b(someday|maybe|eventually|sometime|could|might|read|watch|browse|article|video|movie|podcast|skim|look at)\b/;
+  /\b(someday|maybe|eventually|sometime|could|might|read|watch|browse|article|video|movie|podcast|skim|look at|no rush|no hurry|whenever|optional|low priority|not urgent)\b/;
 
 const scoreImportance = (
   lc: string,
@@ -563,8 +563,14 @@ const parseRecur = (lc: string): RecurRule | null => {
       return { every: '2week', day: DAY_RECUR_KEY[dow], part: 'midday' };
     }
   }
-  if (/\bevery\s+other\s+week\b/.test(lc)) {
+  if (/\bevery\s+other\s+week\b|\bbiweekly\b|\bfortnightly\b/.test(lc)) {
     return { every: '2week', part: 'midday' };
+  }
+  // "twice/three times a week" — the recur model can't hold N-per-
+  // week yet, so land on weekly (visible in the preview, one tap to
+  // adjust) instead of silently making a one-off.
+  if (/\b(?:twice|two times|three times|\d+\s*x)\s+(?:a|per)\s+week\b/.test(lc)) {
+    return { every: 'week', part: 'midday' };
   }
   if (/\bevery\s+other\s+day\b/.test(lc)) {
     return { every: 'day', interval: 2, part: 'midday' };
@@ -659,6 +665,8 @@ interface ParsedTime {
    * "due friday", "by eod") rather than a start ("on thursday").
    */
   deadline?: boolean;
+  /** Explicit inline length ("for 30 min", "1-hour call"). */
+  durationMin?: number;
 }
 
 // Shorthand → canonical phrase (goal §1.1). Detection runs on the
@@ -682,6 +690,18 @@ const TIME_SYNONYMS: Array<[RegExp, string]> = [
     /\bnxt\s+(week|month|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/g,
     'next $1',
   ],
+  // "a couple/few/several hours" → numeric so every downstream
+  // relative-time pattern just works. Unit-anchored so quantities in
+  // titles ("grab a few beers") stay untouched.
+  [
+    /\ba couple(?: of)?\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?)\b/g,
+    '2 $1',
+  ],
+  [
+    /\b(?:a few|several)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?)\b/g,
+    '3 $1',
+  ],
+  [/\bthis coming\s+/g, 'this '],
   [/\btonite\b/g, 'tonight'],
   [/\bwknds?\b/g, 'weekend'],
   [/\beod\b/g, 'end of day'],
@@ -859,6 +879,30 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
   // Day of week — only the FIRST match (avoid grabbing the recurrence
   // "every monday" twice). Skip if "every <day>" already parsed.
   // "this friday" = the coming one; "next friday" = the one after,
+  // ── "a week from friday" / "two weeks from monday" ──
+  const weekFrom = lc.match(
+    /\b(a|one|two|three|four|\d+)\s+weeks?\s+from\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/,
+  );
+  if (weekFrom && !date) {
+    const dow = DAY_FULL[weekFrom[2]];
+    if (dow != null) {
+      const nRaw = weekFrom[1];
+      const n =
+        nRaw === 'a' || nRaw === 'one'
+          ? 1
+          : nRaw === 'two'
+            ? 2
+            : nRaw === 'three'
+              ? 3
+              : nRaw === 'four'
+                ? 4
+                : parseInt(nRaw, 10) || 1;
+      date = nextDayOfWeek(ctx.now, dow);
+      date.setDate(date.getDate() + 7 * n);
+      matched.push(weekFrom[0]);
+    }
+  }
+
   // when the plain next occurrence still falls in THIS calendar week.
   if (!/\bevery\s+\w+/.test(lc)) {
     const dowMatch = lc.match(
@@ -904,11 +948,56 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
     matched.push('in half an hour');
   }
 
-  // ── Explicit clock time ──
-  // "at 2", "at 2pm", "2pm", "14:00", "2:30 pm"
   let bareHour: number | undefined;
   let bareNoAmPm: boolean | undefined;
   let bareMinute: number | undefined;
+
+  // ── "half past 2" / "quarter to 3" / "quarter past 9" ──
+  if (at == null) {
+    const hq = lc.match(/\b(?:at\s+)?(half|quarter)\s+(past|to)\s+(\d{1,2})\b/);
+    if (hq) {
+      let h = parseInt(hq[3], 10) % 24;
+      let m = hq[1] === 'half' ? 30 : hq[2] === 'past' ? 15 : 45;
+      if (hq[1] === 'quarter' && hq[2] === 'to') h = (h + 23) % 24;
+      if (hq[1] === 'half' && hq[2] === 'to') {
+        h = (h + 23) % 24; // "half to 3" (rare) = 2:30
+      }
+      // Everyday-speech default: small bare hours mean PM.
+      if (h >= 1 && h <= 6 && !/\b(morning|am|breakfast|wake)\b/.test(lc)) {
+        h += 12;
+      }
+      at = h * 60 + m;
+      matched.push(hq[0]);
+    }
+  }
+
+  // ── Fuzzy clock: "around 3", "about 4pm", "3ish" — the intent is a
+  // time, just soft. Parse it; confidence stays lower via bareNoAmPm.
+  if (at == null) {
+    const fz =
+      lc.match(/\b(?:around|about|~)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/) ??
+      lc.match(/\b(\d{1,2})\s*ish\b/);
+    if (fz) {
+      let h = parseInt(fz[1], 10);
+      const m = fz[2] ? parseInt(fz[2], 10) : 0;
+      const ap = fz[3];
+      if (h >= 0 && h <= 23 && m >= 0 && m < 60) {
+        if (ap === 'pm' && h < 12) h += 12;
+        else if (ap === 'am' && h === 12) h = 0;
+        else if (!ap && h >= 1 && h <= 6 && !/\b(morning|am|breakfast|wake)\b/.test(lc)) {
+          h += 12;
+        }
+        bareHour = h % 24;
+        bareMinute = m;
+        bareNoAmPm = !ap;
+        at = (h % 24) * 60 + m;
+        matched.push(fz[0]);
+      }
+    }
+  }
+
+  // ── Explicit clock time ──
+  // "at 2", "at 2pm", "2pm", "14:00", "2:30 pm"
   if (at == null) {
     const timeMatch = lc.match(
       /\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|a|p)?\b/,
@@ -1038,6 +1127,46 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
     );
   }
 
+  // ── Inline durations (A7): "for 30 minutes", "1-hour call",
+  // "quick 15 min sync", "hour-long", "half-hour". EXPLICIT lengths
+  // only — never guessed from task type (that stays the kind
+  // default). Skips "in 30 minutes" (that's a start time, matched
+  // above).
+  let durationMin: number | undefined;
+  const durFor =
+    lc.match(/\bfor\s+(\d{1,3})\s*(?:minutes?|mins?)\b/) ??
+    lc.match(/\bfor\s+(\d{1,2})\s*(?:hours?|hrs?)\b/);
+  if (durFor) {
+    const n = parseInt(durFor[1], 10);
+    durationMin = /hour|hr/.test(durFor[0]) ? n * 60 : n;
+    matched.push(durFor[0]);
+  } else if (/\bfor\s+half\s+an?\s+hour\b/.test(lc)) {
+    durationMin = 30;
+    matched.push('for half an hour', 'for half a hour');
+  } else if (/\bfor\s+an?\s+hour\b/.test(lc)) {
+    durationMin = 60;
+    matched.push('for an hour', 'for a hour');
+  } else {
+    // Adjective forms — guard against "in 15 minutes" (start time).
+    const adj =
+      lc.match(/\b(\d{1,3})[- ](?:minute|min)\b/) ??
+      lc.match(/\b(\d{1,2})[- ]hour\b/);
+    if (adj && !new RegExp(`\\bin\\s+${adj[1]}\\b`).test(lc)) {
+      const n = parseInt(adj[1], 10);
+      durationMin = /hour/.test(adj[0]) ? n * 60 : n;
+      matched.push(adj[0]);
+    } else if (/\bhour[- ]long\b/.test(lc)) {
+      durationMin = 60;
+      matched.push('hour-long', 'hour long');
+    } else if (/\bhalf[- ]hour\b/.test(lc)) {
+      durationMin = 30;
+      matched.push('half-hour', 'half hour');
+    }
+  }
+  if (durationMin != null) {
+    durationMin = Math.max(5, Math.min(720, durationMin));
+  }
+
   return {
     date,
     at,
@@ -1047,6 +1176,7 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
     bareNoAmPm,
     bareMinute,
     deadline,
+    ...(durationMin != null ? { durationMin } : {}),
   };
 };
 
@@ -1406,7 +1536,13 @@ const splitFragments = (text: string): string[] => {
   // "buy milk, no wait, oat milk" stays one fragment (one task, one
   // deterministic fix, zero tokens) instead of three.
   const fused = text.replace(CORRECTION_GLUE, ' $1 ');
-  const parts = fused.replace(/\n+/g, '. ').split(SPLIT_SEP);
+  // Bullet / numbered-list markers are hard separators, and their
+  // symbols must never leak into titles ("1) Email sarah").
+  const debulleted = fused
+    .replace(/(?:^|\n)\s*(?:[-•*·▪◦]|\d{1,2}[.)])\s+/g, '\n')
+    .replace(/\s+\d{1,2}\)\s+/g, '. ')
+    .replace(/\s*[•▪◦]\s*/g, '. ');
+  const parts = debulleted.replace(/\n+/g, '. ').split(SPLIT_SEP);
   const frags: string[] = [];
   let current = (parts[0] ?? '').trim();
   for (let i = 1; i < parts.length; i += 2) {
@@ -1525,7 +1661,10 @@ const stripTokens = (raw: string, tokens: string[]): string => {
     // DATE word ("this weekend"), and stripping it here ran before
     // the token loop, orphaning the qualifier ("groceries this
     // weekend" → "Groceries this").
-    .replace(/\b(?:weekdays?|weekends|weekly|daily|monthly)\b/gi, '');
+    .replace(
+      /\b(?:weekdays?|weekends|weekly|daily|monthly|biweekly|fortnightly|(?:twice|two times|three times)\s+(?:a|per)\s+week)\b/gi,
+      '',
+    );
   for (const tok of tokens) {
     const escaped = escapeRe(tok.trim());
     if (!escaped) continue;
@@ -1805,7 +1944,33 @@ export const parseSmartCapture = (
     const importance = impScore.tier;
     // Status statements become imperatives BEFORE title cleaning
     // ("laundry is piling up" → "Do laundry", goal §1.4).
-    const title = cleanTitle(stripTokens(applyStatusTemplate(raw), time.matched));
+    //
+    // A8 — "call mom about the doctor" splits the TOPIC into the
+    // note, exactly like the LLM's title rule, so free/offline
+    // captures get the same clean-title + context treatment. Guards:
+    // action part needs ≥2 words (kills "think about X"), verbs that
+    // TAKE about-objects stay whole, "about <number>" is a fuzzy
+    // time (parsed above), and atomic noun-phrase tasks keep their
+    // topic.
+    let noteText: string | undefined;
+    let titleSource = applyStatusTemplate(raw);
+    const aboutM = titleSource.match(
+      /^(.+?\S)\s+(about|regarding|re:)\s+(?!\d)(.{3,})$/i,
+    );
+    if (
+      aboutM &&
+      aboutM[1].trim().split(/\s+/).length >= 2 &&
+      !/\b(think(?:ing)?|worry(?:ing)?|talk|chat|wonder(?:ing)?|forget|care|complain(?:ing)?)$/i.test(
+        aboutM[1].trim(),
+      )
+    ) {
+      titleSource = aboutM[1];
+      const kw = aboutM[2].toLowerCase();
+      const prefix =
+        kw === 're:' ? 'Re:' : kw === 'regarding' ? 'Regarding' : 'About';
+      noteText = `${prefix} ${aboutM[3].trim()}`.slice(0, 120);
+    }
+    const title = cleanTitle(stripTokens(titleSource, time.matched));
     // Anything under 3 chars after cleaning is split debris, not a
     // task ("ok", "so", a stray word).
     if (!title || title.length < 3) continue;
@@ -1999,9 +2164,12 @@ export const parseSmartCapture = (
       needsFollowup,
       kind: kind.key,
       ...(rolledFlag ? { rolledToTomorrow: true } : {}),
-      ...(kind.defaultMinutes != null
-        ? { durationMinutes: kind.defaultMinutes }
-        : {}),
+      ...(noteText ? { note: noteText } : {}),
+      ...(time.durationMin != null
+        ? { durationMinutes: time.durationMin }
+        : kind.defaultMinutes != null
+          ? { durationMinutes: kind.defaultMinutes }
+          : {}),
       confidence: {
         title: titleConfidence,
         time: timeConfidence,
