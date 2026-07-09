@@ -403,10 +403,12 @@ const Room = ({
   const happy = v >= 0.5;
   const sleeping = v < 0.25;
   const excited = v >= 0.85 || S.joy > 0.2;
-  const joyAmp = 1 + S.joy * 2.5;
+  // Damped from 2.5/2.6 — the tap reaction read as violent bouncing
+  // rather than a happy wiggle (owner feedback, Jul 9).
+  const joyAmp = 1 + S.joy * 1.1;
   const lunaBob =
     (excited
-      ? Math.sin(S.t * (0.12 + S.joy * 0.08)) * 2.6
+      ? Math.sin(S.t * (0.1 + S.joy * 0.05)) * 1.8
       : happy
         ? Math.sin(S.t * 0.08) * 1.8
         : sleeping

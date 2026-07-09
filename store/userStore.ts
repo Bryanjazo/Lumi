@@ -658,10 +658,29 @@ export const useUserStore = create<UserState>()(
       setOfflineMode: (on) => set({ offlineMode: on }),
       addShard: () => set((s) => ({ shards: s.shards + 1 })),
       setSubscription: ({ status, tier, currentPeriodEnd }) =>
-        set({
-          subscriptionStatus: status,
-          subscriptionTier: tier ?? null,
-          subscriptionCurrentPeriodEnd: currentPeriodEnd ?? null,
+        set((s) => {
+          // Downgrade hygiene: losing premium un-equips a Pro skin in
+          // the STORE (read-time enforcement already hid it in the
+          // UI, but the stale value leaked back through pickers and
+          // kept "selecting" a skin the user no longer has).
+          const losesPremium =
+            status !== 'active' &&
+            status !== 'trial' &&
+            !(
+              (status === 'cancelled' || status === 'past_due') &&
+              currentPeriodEnd != null &&
+              new Date(currentPeriodEnd).getTime() > Date.now()
+            );
+          const starter =
+            s.avatar === 'default' ||
+            s.avatar === 'original' ||
+            s.avatar === 'cream';
+          return {
+            subscriptionStatus: status,
+            subscriptionTier: tier ?? null,
+            subscriptionCurrentPeriodEnd: currentPeriodEnd ?? null,
+            ...(losesPremium && !starter ? { avatar: 'default' } : {}),
+          };
         }),
 
       startTrial: () =>

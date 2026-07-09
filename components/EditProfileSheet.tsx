@@ -18,6 +18,7 @@ import { fonts } from '../constants/fonts';
 import { useUserStore } from '../store/userStore';
 import { useAccent } from '../lib/theme';
 import { skins, type Skin } from '../constants/skins';
+import { useAccessStatus } from '../lib/subscription';
 import { type LunaMood } from '../lib/luna-source';
 import { skinPreview } from '../lib/skin-preview';
 
@@ -76,12 +77,22 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
   const accent = useAccent();
   const currentName = useUserStore((s) => s.name);
   const currentAvatar = useUserStore((s) => s.avatar);
+  // Starter/Pro split — the grid ran the LEGACY XP-unlock model, so
+  // a Pro subscriber with low XP saw every skin locked ("500 XP").
+  const access = useAccessStatus(null);
+  const STARTER = new Set(['default', 'original', 'cream']);
   const xp = useUserStore((s) => s.xp);
   const setName = useUserStore((s) => s.setName);
   const setAvatar = useUserStore((s) => s.setAvatar);
 
   const [draftName, setDraftName] = useState(currentName);
-  const [draftAvatar, setDraftAvatar] = useState(currentAvatar);
+  const [draftAvatar, setDraftAvatar] = useState(
+    // A lapsed subscription must not keep a Pro skin selected here —
+    // but a paying user keeps whatever they picked.
+    access.hasPremium || STARTER.has(currentAvatar)
+      ? currentAvatar
+      : 'default',
+  );
 
   // Re-seed drafts whenever the sheet opens so a cancel → reopen
   // shows the current persisted value, not the last unsaved edit.
@@ -123,8 +134,9 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
       label: s.name,
       primary: s.primary,
       secondary: s.secondary,
-      unlocked: xp >= s.xpToUnlock,
-      unlockHint: xp >= s.xpToUnlock ? undefined : `${s.xpToUnlock} XP`,
+      unlocked: STARTER.has(s.id) || access.hasPremium,
+      unlockHint:
+        STARTER.has(s.id) || access.hasPremium ? undefined : '✦ Pro',
     })),
   ];
 
@@ -205,8 +217,8 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
               {/* Avatar */}
               <Text style={[styles.sectionLabel, { marginTop: 22 }]}>Avatar</Text>
               <Text style={styles.sectionHint}>
-                Skins unlock as you level up. Tap any unlocked one to set it
-                app-wide.
+                Starter skins are yours forever — every color comes with
+                Pro. Tap one to set it app-wide.
               </Text>
               <View style={styles.avatarGrid}>
                 {options.map((opt) => {
