@@ -31,7 +31,18 @@ import { fonts } from '../constants/fonts';
 import { timeColors as TC } from '../constants/colors';
 import { useQuotaPromptStore, type QuotaKind } from '../store/quotaPromptStore';
 import { useUserStore } from '../store/userStore';
+import { supabase } from '../lib/supabase';
 import { PRICING } from '../lib/subscription';
+
+// Mirrors supabase ai_weekly_cap() — keep in sync when caps change.
+const FREE_WEEKLY_CAP: Record<string, number> = {
+  title_clean: 10,
+  capture: 10,
+  untangle: 5,
+  brain_dump: 3,
+  followup: 5,
+  weekly_report: 2,
+};
 
 const labelForKind = (kind: QuotaKind | null): string => {
   switch (kind) {
@@ -141,7 +152,7 @@ export const UpgradePromptSheet = () => {
     ? `You've used your ${feature} for this week.`
     : trialAlreadyUsed
       ? `You've used your free ${feature} for the week.`
-      : `You've used your 5 free ${feature} this week.`;
+      : `You've used your ${FREE_WEEKLY_CAP[kind ?? ''] ?? ''} free ${feature} for this week.`;
 
   const headlineBody = onTrial
     ? "Even Pro has a fair-use ceiling, but it resets soon. The quick sorts below still work in the meantime."
@@ -167,7 +178,16 @@ export const UpgradePromptSheet = () => {
       return;
     }
     // Free user, never trialed → start the 7-day taste right here.
+    // BOTH sides, like trial-choice.tsx: the local flag flips the UI,
+    // but has_ai_quota's premium path reads trial_started_at on the
+    // SERVER — without the RPC the very next AI call 429s again and
+    // the app's "you're on trial" is a lie. (Found in the growth
+    // audit: this silently killed the highest-intent conversion.)
     startTrial();
+    void supabase.rpc('start_trial').then(
+      () => {},
+      () => {}, // offline — server sync reconciles on next pull
+    );
     close();
   };
 

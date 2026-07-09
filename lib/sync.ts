@@ -71,7 +71,24 @@ const pushUser = async (userId: string) => {
 
 // ── push: quests ────────────────────────────────────────────────────────
 const pushQuests = async (userId: string) => {
-  const quests = useQuestStore.getState().quests;
+  const store = useQuestStore.getState();
+  // Flush deletion tombstones FIRST — even when the local list is
+  // empty (deleting the last task must still reach the cloud, or it
+  // resurrects on reinstall).
+  const tombstones = store.deletedIds.filter((id) => UUID_V4_RE.test(id));
+  if (tombstones.length > 0) {
+    const { error: delErr } = await supabase
+      .from('quests')
+      .delete()
+      .in('id', tombstones)
+      .eq('user_id', userId);
+    if (!delErr) {
+      useQuestStore.getState().clearDeletedIds(tombstones);
+    } else {
+      console.warn('[sync] deleteQuests', delErr.message);
+    }
+  }
+  const quests = store.quests;
   if (quests.length === 0) return;
   // Skip legacy non-UUID ids (the old `q_<ts>_<rand>` format from
   // pre-1019 builds). The cloud column is `uuid`; sending strings
@@ -291,10 +308,14 @@ export const pullAll = async (userId: string): Promise<void> => {
   // Quests — merge by id, cloud version wins on conflict.
   if (q.data) {
     const local = useQuestStore.getState().quests;
+    // A row deleted on this device must not ride back in on the pull
+    // before its tombstone has flushed.
+    const tombstoned = new Set(useQuestStore.getState().deletedIds);
     const byId = new Map<string, Quest>();
     for (const lq of local) byId.set(lq.id, lq);
     const effective = getEffectiveWindows();
     for (const r of q.data) {
+      if (tombstoned.has(r.id)) continue;
       const win: WindowKey =
         r.window ??
         (r.scheduled_hour != null

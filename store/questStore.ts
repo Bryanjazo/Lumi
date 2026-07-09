@@ -136,6 +136,14 @@ interface QuestState {
   setComment: (id: string, comment: string) => void;
   remove: (id: string) => void;
   /**
+   * Ids deleted locally but not yet deleted on the server. Without
+   * this, a delete never reached the cloud and the task RESURRECTED
+   * on reinstall/second device (pull merges cloud rows back in).
+   * sync.ts flushes these and calls clearDeletedIds on success.
+   */
+  deletedIds: string[];
+  clearDeletedIds: (ids: string[]) => void;
+  /**
    * Persist the calendar event id map returned by lib/calendar.ts
    * after a successful upsert across all selected calendars. Pass
    * an empty map / null to clear (deletion / disconnect).
@@ -223,6 +231,7 @@ export const useQuestStore = create<QuestState>()(
   persist(
     (set, get) => ({
       quests: [],
+      deletedIds: [],
       addQuest: (q) => {
         const xpReward = q.xpReward ?? xpForQuest(q.difficulty);
         const importance =
@@ -278,7 +287,7 @@ export const useQuestStore = create<QuestState>()(
       },
       addMany: (list) => {
         const created: Quest[] = list.map((q, i) => ({
-          id: `${newId()}_${i}`,
+          id: newId(),
           title: q.title,
           difficulty: q.difficulty,
           importance: q.importance ?? importanceFromDifficulty(q.difficulty),
@@ -433,9 +442,20 @@ export const useQuestStore = create<QuestState>()(
       },
       remove: (id) => {
         const prev = get().quests.find((q) => q.id === id);
-        set((s) => ({ quests: s.quests.filter((q) => q.id !== id) }));
+        set((s) => ({
+          quests: s.quests.filter((q) => q.id !== id),
+          // Tombstone (UUID rows only — legacy ids never synced up).
+          deletedIds: UUID_V4_RE.test(id)
+            ? [...s.deletedIds.filter((d) => d !== id), id].slice(-300)
+            : s.deletedIds,
+        }));
         if (prev) mirrorDelete(prev);
       },
+
+      clearDeletedIds: (ids) =>
+        set((s) => ({
+          deletedIds: s.deletedIds.filter((d) => !ids.includes(d)),
+        })),
       setCalendarEventIds: (id, eventIds) =>
         set((s) => ({
           quests: s.quests.map((q) =>

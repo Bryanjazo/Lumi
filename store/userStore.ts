@@ -477,6 +477,20 @@ export const useUserStore = create<UserState>()(
           set({ streak: 1, lastActiveDate: t });
           return;
         }
+        // Weekly shield recharge — rechargeShield() existed but was
+        // never called, so the streak shield silently died after ONE
+        // use for the life of the account (one bad week burned it
+        // forever — the exact ADHD-poison the design forbids). A new
+        // Sunday-start week hands it back.
+        const weekStartOf = (iso: string) => {
+          const [y, m, d] = iso.split('-').map(Number);
+          const dt = new Date(y, m - 1, d);
+          dt.setDate(dt.getDate() - dt.getDay());
+          return `${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`;
+        };
+        if (weekStartOf(last) !== weekStartOf(t)) {
+          set({ shieldAvailable: true, shieldUsedThisWeek: false });
+        }
         const diff = dayDiff(last, t);
         if (diff === 1) {
           set({ streak: get().streak + 1, lastActiveDate: t });
