@@ -61,6 +61,7 @@ import { useAccent, accentFor, type Accent } from '../../lib/theme';
 import { useDeleteConfirm } from '../../components/TaskDeleteWrap';
 import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
 import { useUserStore } from '../../store/userStore';
+import { useFocusSession } from '../../lib/focusSession';
 import { MicIcon } from '../../components/MicIcon';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 import { useKeyboardHeight } from '../../lib/useKeyboard';
@@ -611,7 +612,12 @@ const ProposalCard = ({
   onAdjust: () => void;
   accent: Accent;
 }) => {
-  const valid = items.filter((p) => pileById.has(p.taskId));
+  // 'create' items carry taskId "" by contract — they must render
+  // (a create-only proposal used to show NO card at all, and mixed
+  // proposals applied hidden creates the user never saw).
+  const valid = items.filter(
+    (p) => p.action === 'create' || pileById.has(p.taskId),
+  );
   if (valid.length === 0) return null;
   return (
     <View style={styles.proposalCard}>
@@ -1136,18 +1142,36 @@ export default function Untangle() {
             : null,
       });
     let applied = 0;
+    // The prompt says "never duplicate a task in a proposal" — this
+    // is the client backstop (finding: duplicate complete ids paid
+    // XP twice then un-completed the task).
+    const seenIds = new Set<string>();
     for (const p of items) {
       // 'complete' — the user told Lumi it's already done. Same data
       // fan-out as Home's completeQuest (XP + shard + streak) so a
       // check-off through conversation counts exactly like a tap.
       if (p.action === 'complete') {
-        const q = pileById.get(p.taskId);
-        if (!q || q.completed) continue;
-        const next = toggleQuest(q.id);
-        if (next) {
-          addXp(q.xpReward);
+        // LIVE read — the closure's pileById is frozen at proposal
+        // time. Stale reads let a double-tap (or a task completed on
+        // Home meanwhile) UN-complete the task while paying XP again.
+        const live = useQuestStore
+          .getState()
+          .quests.find((x) => x.id === p.taskId);
+        if (!live || live.completed) continue;
+        if (seenIds.has(p.taskId)) continue; // duplicate id in one proposal
+        seenIds.add(p.taskId);
+        const next = toggleQuest(live.id);
+        // Pay ONLY when the flip landed in the done direction.
+        if (next && next.completed) {
+          addXp(live.xpReward);
           addShard();
           registerActivity();
+          // Same as Home's completeQuest: a focus session running on
+          // this quest ends now, or the Island pill lingers.
+          const fs = useFocusSession.getState();
+          if (fs.current?.questId === live.id) {
+            void fs.end({ reason: 'cancelled' });
+          }
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           applied += 1;
         }
@@ -1227,8 +1251,15 @@ export default function Untangle() {
         applied += 1;
         continue;
       }
-      const q = pileById.get(p.taskId);
+      // #4 honesty: validate against the LIVE store, not the frozen
+      // pile snapshot — a task deleted after the proposal rendered
+      // must not count as an applied move.
+      const q = useQuestStore.getState().quests.find(
+        (x) => x.id === p.taskId,
+      );
       if (!q) continue;
+      if (seenIds.has(p.taskId)) continue;
+      seenIds.add(p.taskId);
       if (p.action === 'schedule') {
         if (!p.window || p.window === 'someday') continue;
         // Schedule onto the selected day if it's not already there.
@@ -1247,15 +1278,30 @@ export default function Untangle() {
         applied += 1;
       } else if (p.action === 'reschedule') {
         if (!p.date) continue;
+        // Round-trip validation — the sanitizer regex admits
+        // "2026-13-45", which setDate would write verbatim.
+        if (localYmd(localDateFromISO(p.date)) !== p.date) continue;
         setDate(p.taskId, p.date);
         if (p.at) {
           const [hStr, mStr] = p.at.split(':');
           const h = parseInt(hStr, 10);
           const m = parseInt(mStr, 10);
-          if (Number.isFinite(h) && Number.isFinite(m)) {
+          // Bounds like the create branch — "25:99" must not write
+          // scheduledHour 25 into the store + calendar mirror.
+          if (
+            Number.isFinite(h) &&
+            Number.isFinite(m) &&
+            h >= 0 &&
+            h <= 23 &&
+            m >= 0 &&
+            m <= 59
+          ) {
             anchor(p.taskId, h, m);
           }
         }
+        // A parked task pulled onto a real day must leave 'someday'
+        // or it stays invisible in "Later" (moveBackToDate rule).
+        if (q.window === 'someday') moveWindow(p.taskId, 'morning');
         applied += 1;
       } else if (p.action === 'defer') {
         moveWindow(p.taskId, 'someday');
@@ -1264,6 +1310,8 @@ export default function Untangle() {
         setDate(p.taskId, selectedDate);
         if (p.window && p.window !== 'someday') {
           moveWindow(p.taskId, p.window as WindowKey);
+        } else if (q.window === 'someday') {
+          moveWindow(p.taskId, 'morning'); // lift out of Later
         }
         applied += 1;
       }
@@ -1279,10 +1327,12 @@ export default function Untangle() {
     setBusy(true);
     setTimeout(() => {
       setBusy(false);
-      setMsgs((m) => [
-        ...m,
-        { id: `l-${Date.now()}`, from: 'lumi', text: say, actions },
-      ]);
+      setMsgs((m) =>
+        [
+          ...m,
+          { id: `l-${Date.now()}`, from: 'lumi' as const, text: say, actions },
+        ].slice(-100), // marathon vents must not grow unbounded
+      );
     }, 650);
   };
 
@@ -1401,6 +1451,10 @@ export default function Untangle() {
       return;
     }
 
+    // Concurrent sends raced: message B's thread was built from the
+    // same base as A's, erasing A's turn (finding #7). One turn at a
+    // time; the send button quietly waits while Lumi is typing.
+    if (busy) return;
     // Append the user turn to the LLM thread and call.
     const nextThread: UntangleThreadMsg[] = [
       ...thread,
@@ -1428,10 +1482,17 @@ export default function Untangle() {
             text: res.say,
             ...(res.proactive ? { proactive: res.proactive } : {}),
             ...(res.proposal.length > 0
-              ? {
+              ? (() => {
+                  // Latch: a fast double-tap on Approve ran
+                  // applyProposal twice against the same items
+                  // (finding #1) — the card dismissal is async.
+                  let approvedOnce = false;
+                  return {
                   proposal: {
                     items: res.proposal,
                     onApprove: () => {
+                      if (approvedOnce) return;
+                      approvedOnce = true;
                       const applied = applyProposal(res.proposal);
                       // Dismiss the card on this message.
                       setMsgs((m2) =>
@@ -1461,7 +1522,8 @@ export default function Untangle() {
                       );
                     },
                   },
-                }
+                };
+                })()
               : {}),
           },
         ]);

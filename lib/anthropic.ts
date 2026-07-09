@@ -909,7 +909,7 @@ export const llmUnderstand = async (
           if (typeof t.when.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.when.date)) {
             w.date = t.when.date;
           }
-          if (typeof t.when.time === 'string' && /^\d{1,2}:\d{2}$/.test(t.when.time)) {
+          if (typeof t.when.time === 'string' && /^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(t.when.time)) {
             w.time = t.when.time;
           }
           if (
@@ -1269,7 +1269,7 @@ export const llmUntangle = async (
             if (typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date)) {
               item.date = p.date;
             }
-            if (typeof p.at === 'string' && /^\d{1,2}:\d{2}$/.test(p.at)) {
+            if (typeof p.at === 'string' && /^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(p.at)) {
               item.at = p.at;
             }
             if (typeof p.why === 'string' && p.why.length > 0) {
