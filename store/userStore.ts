@@ -179,6 +179,12 @@ interface UserState {
    * "hey lumi" opens the hands-free capture sheet. Opt-in — the mic
    * only listens while this is on AND the user has Pro.
    */
+  /** Active days THIS calendar month — the streak-reset reframe
+   *  ("back again · 12 days this month"). Unlike streak it only ever
+   *  grows within a month, so a broken chain never zeroes the story. */
+  activeDaysThisMonth: number;
+  /** YYYY-MM the counter belongs to. */
+  activeMonthKey: string | null;
   heyLumiEnabled: boolean;
   /** Server-granted flag (users.is_tester) — internal/TestFlight
    *  testers whose raw captures upload for parser tuning. Never
@@ -424,6 +430,8 @@ export const useUserStore = create<UserState>()(
       rescueDismissedDate: null,
       backlogNudgeDismissedDate: null,
       heyLumiEnabled: false,
+      activeDaysThisMonth: 0,
+      activeMonthKey: null,
       isTester: false,
       shieldAvailable: true,
       shieldUsedThisWeek: false,
@@ -473,8 +481,15 @@ export const useUserStore = create<UserState>()(
         const last = get().lastActiveDate;
         const t = today();
         if (last === t) return;
+        // Month counter — every NEW active day counts, streak intact
+        // or not. "Coming back is the whole win."
+        const monthKey = t.slice(0, 7);
+        const monthPatch =
+          get().activeMonthKey === monthKey
+            ? { activeDaysThisMonth: get().activeDaysThisMonth + 1 }
+            : { activeDaysThisMonth: 1, activeMonthKey: monthKey };
         if (!last) {
-          set({ streak: 1, lastActiveDate: t });
+          set({ streak: 1, lastActiveDate: t, ...monthPatch });
           return;
         }
         // Weekly shield recharge — rechargeShield() existed but was
@@ -493,7 +508,7 @@ export const useUserStore = create<UserState>()(
         }
         const diff = dayDiff(last, t);
         if (diff === 1) {
-          set({ streak: get().streak + 1, lastActiveDate: t });
+          set({ streak: get().streak + 1, lastActiveDate: t, ...monthPatch });
         } else if (diff > 1) {
           if (get().shieldAvailable && !get().shieldUsedThisWeek) {
             set({
@@ -501,9 +516,10 @@ export const useUserStore = create<UserState>()(
               shieldAvailable: false,
               shieldUsedThisWeek: true,
               lastActiveDate: t,
+              ...monthPatch,
             });
           } else {
-            set({ streak: 1, lastActiveDate: t });
+            set({ streak: 1, lastActiveDate: t, ...monthPatch });
           }
         }
       },
@@ -677,6 +693,8 @@ export const useUserStore = create<UserState>()(
           rescueDismissedDate: null,
           backlogNudgeDismissedDate: null,
           heyLumiEnabled: false,
+          activeDaysThisMonth: 0,
+          activeMonthKey: null,
           isTester: false,
           shieldAvailable: true,
           shieldUsedThisWeek: false,

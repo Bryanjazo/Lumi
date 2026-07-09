@@ -652,7 +652,10 @@ export default function RecapScreen() {
 
         {/* ── 8 · SHARE / CLOSE (story share = Pro) ── */}
         <Section delay={0.4} style={{ paddingHorizontal: 28, paddingTop: 56 }}>
-          {pro && (
+          {/* The share card renders for EVERYONE — it's the app's only
+              organic-growth surface and free users are most of launch.
+              Pro keeps the extras: the narrative story line and the
+              strong-window insight. */}
           <>
           {/* The capturable Lumi Story card — collapsable={false} so
               captureRef always has a real native view to snapshot. */}
@@ -679,7 +682,11 @@ export default function RecapScreen() {
                 Lumi · {weekLabel}
               </Text>
             </View>
-            <Text style={styles.shareStory}>{storyText}</Text>
+            <Text style={styles.shareStory}>
+              {pro
+                ? storyText
+                : `${done > 0 ? `${done} things, done gently.` : 'A quiet week — still counts.'} Luna kept me company.`}
+            </Text>
             <View style={styles.shareStatsRow}>
               <View>
                 <Text style={styles.shareStatNum}>{done}</Text>
@@ -693,7 +700,7 @@ export default function RecapScreen() {
                   <Text style={styles.shareStatLabel}>day streak</Text>
                 </View>
               )}
-              {pattern && (
+              {pro && pattern && (
                 <View>
                   <Text style={[styles.shareStatNum, { color: C.dusk }]}>
                     {WINDOWS[pattern.strong].label}
@@ -710,7 +717,6 @@ export default function RecapScreen() {
             <Text style={styles.sharePrimaryText}>Share my story</Text>
           </Pressable>
           </>
-          )}
           <Pressable onPress={close} style={styles.shareSecondary}>
             <Text style={styles.shareSecondaryText}>Done</Text>
           </Pressable>

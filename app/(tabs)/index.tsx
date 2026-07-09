@@ -1018,6 +1018,7 @@ export default function Home() {
   // ── Store ────────────────────────────────────────────────────────
   const xp = useUserStore((s) => s.xp);
   const streak = useUserStore((s) => s.streak);
+  const activeDaysThisMonth = useUserStore((s) => s.activeDaysThisMonth);
   const addXp = useUserStore((s) => s.addXp);
   const addShard = useUserStore((s) => s.addShard);
   const registerActivity = useUserStore((s) => s.registerActivity);
@@ -3120,7 +3121,19 @@ export default function Home() {
           {companion.showStreak && (
             <View style={styles.streakChip}>
               <Text style={styles.streakFlame}>🔥</Text>
-              <Text style={styles.streakNum}>{streak}</Text>
+              {streak <= 1 && activeDaysThisMonth > 1 ? (
+                // Streak just broke — never show a shaming "1". The
+                // number that persists is cumulative: coming back is
+                // the whole win.
+                <Text style={styles.streakNum}>
+                  back
+                  <Text style={styles.streakBackSub}>
+                    {' '}· {activeDaysThisMonth}d this month
+                  </Text>
+                </Text>
+              ) : (
+                <Text style={styles.streakNum}>{streak}</Text>
+              )}
             </View>
           )}
           <DayThread
@@ -4411,6 +4424,11 @@ const makeStyles = (accent: Accent) =>
       fontFamily: fonts.interMed,
       fontSize: 12.5,
       color: C.boneDim,
+    },
+    streakBackSub: {
+      fontFamily: fonts.inter,
+      fontSize: 10,
+      color: C.mute,
     },
     todayCount: {
       fontFamily: fonts.inter,
