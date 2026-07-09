@@ -1086,6 +1086,11 @@ export default function Home() {
   // suspicious voice transcript until the user edits or sends
   // (a vanishing toast was too easy to miss).
   const pillInputRef = useRef<TextInput>(null);
+  // Vent acknowledgment (deep-dive green #2): a capture that parses
+  // to ZERO tasks and reads emotional used to do NOTHING — the most
+  // loaded input got the most silent output. Holds the vent text for
+  // the "untangle it together" hand-off.
+  const [ventText, setVentText] = useState<string | null>(null);
   const [dymHint, setDymHint] = useState(false);
   // The clarify LLM's whole-sentence repair, shown IN the card with
   // a "use this" action — it must be visible and explicit, never a
@@ -2211,6 +2216,32 @@ export default function Home() {
     return true;
   };
 
+  /**
+   * Zero tasks came out of a send. If the text reads emotional, Luna
+   * acknowledges it (empathize pose + the vent card with an Untangle
+   * hand-off) — "vents are never tasks" deserves a visible moment,
+   * not a no-op. Non-emotional zero-parses keep the old behavior
+   * (text stays in the pill for editing).
+   */
+  const handleNoTasks = (text: string) => {
+    const ventish =
+      textReadsOverwhelmed(text) ||
+      /\b(ugh+|tired|exhausted|overwhelm\w*|stress\w*|drowning|anxious|screwed|hate (?:this|everything|myself)|can'?t (?:do this|even)|falling apart|done with)\b/i.test(
+        text,
+      );
+    if (!ventish) return;
+    triggerEmpathize();
+    setVentText(text);
+    setCapText('');
+    setPillInputH(0);
+    recordAiMetric({
+      route: 'dym',
+      reason: 'vent-shown',
+      latencyMs: 0,
+      edited: false,
+    });
+  };
+
   const sendCapture = () => {
     const text = capText.trim();
     if (!text) return;
@@ -2284,6 +2315,7 @@ export default function Home() {
         if (!parseAndPreview(finalText, true)) {
           // Nothing task-shaped — put their words back, lose nothing.
           setCapText(text);
+          handleNoTasks(finalText);
         } else if (finalText !== text) {
           logCaptureRaw(text, null, 'llm', 'spell-format', {
             fixed: finalText,
@@ -2293,7 +2325,10 @@ export default function Home() {
       return;
     }
 
-    if (!parseAndPreview(parseText)) return; // vent-only etc — keep the pill
+    if (!parseAndPreview(parseText)) {
+      handleNoTasks(parseText);
+      return;
+    }
 
     setEditingIdx(null);
     setCapText('');
@@ -3793,6 +3828,51 @@ export default function Home() {
                 </Pressable>
               </View>
             )}
+          {/* Vent acknowledgment — the capture was a feeling, not a
+              task list. Luna says so and offers the Untangle door. */}
+          {ventText && (
+            <View style={styles.dymHint}>
+              <Text style={[styles.dymHintText, { flex: 1 }]}>
+                that sounds heavy. I didn’t turn it into tasks — it isn’t
+                one. 💛
+              </Text>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  recordAiMetric({
+                    route: 'dym',
+                    reason: 'vent-untangle',
+                    latencyMs: 0,
+                    edited: false,
+                  });
+                  setVentText(null);
+                  setRescueExplain(true);
+                  router.push('/(tabs)/checkin');
+                }}
+                hitSlop={8}
+              >
+                <Text style={[styles.dymHintClear, { color: accent.fg }]}>
+                  untangle it
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  recordAiMetric({
+                    route: 'dym',
+                    reason: 'vent-dismissed',
+                    latencyMs: 0,
+                    edited: false,
+                  });
+                  setVentText(null);
+                  showToast('Said and held. 💛');
+                }}
+                hitSlop={8}
+              >
+                <Text style={styles.dymHintClear}>just needed to say it</Text>
+              </Pressable>
+            </View>
+          )}
           {dymHint && (
             <View style={styles.dymHint}>
               <View style={{ flex: 1 }}>
