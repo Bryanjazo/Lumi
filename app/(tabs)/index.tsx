@@ -1899,89 +1899,6 @@ export default function Home() {
     );
   };
 
-  const upgradeWithUnderstand = async (rawText: string): Promise<void> => {
-    const todayISO = todayKey();
-    const dow = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
-      now.getDay()
-    ];
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const fmtAnchor = (m: number) => {
-      const h = Math.floor(m / 60);
-      const mn = m % 60;
-      return `${String(h).padStart(2, '0')}:${String(mn).padStart(2, '0')}`;
-    };
-    const ctx: UnderstandContext = {
-      nowLabel: `${dow}, ${todayISO} ${hh}:${mm}`,
-      todayISO,
-      sharpWindow,
-      foggyWindow,
-      peakRange:
-        digest.curve.peakStart != null && digest.curve.peakEnd != null
-          ? `${fmtAnchor(digest.curve.peakStart)}–${fmtAnchor(digest.curve.peakEnd)}`
-          : null,
-      slumpRange:
-        digest.curve.slumpStart != null && digest.curve.slumpEnd != null
-          ? `${fmtAnchor(digest.curve.slumpStart)}–${fmtAnchor(digest.curve.slumpEnd)}`
-          : null,
-      curveTrusted: quests.filter((q) => q.completed).length >= 14,
-      anchors: {
-        wake: fmtAnchor(anchors.wake),
-        breakfast: fmtAnchor(anchors.breakfast),
-        lunch: fmtAnchor(anchors.lunch),
-        dinner: fmtAnchor(anchors.dinner),
-        sleep: fmtAnchor(anchors.sleep),
-      },
-      struggles: struggles.slice(0, 3),
-      todayTasks: todayQuests
-        .filter((q) => !q.completed)
-        .slice(0, 12)
-        .map((q) => `${q.title} (${q.window})`),
-      recentCorrections: summarizeCorrections(recentCorrections(6)),
-      userName: userName.trim() || undefined,
-    };
-    const result = await llmUnderstand(rawText, ctx);
-    if (!result) return;
-    // LLM correctly returned 0 tasks (question / emoji / venting).
-    // Keep the deterministic preview instead of wiping it — the
-    // user typed SOMETHING that parseSmartCapture caught, so we
-    // shouldn't silently clear it just because the LLM disagreed.
-    if (result.tasks.length === 0) return;
-
-    setPreviewTasks((cur) => {
-      if (!cur) return cur;
-      // The LLM is the source of truth for splitting a dump into
-      // individual tasks — the deterministic parser (splitFragments
-      // in lib/capture.ts) is conservative and only splits on
-      // "and"/"then"/"." patterns. If the user's dump is a
-      // comma-list ("finish deck, reply to Sam, book dentist…"),
-      // parseSmartCapture may return 2 tasks while the LLM returns
-      // 13. Previously we only patched min(deterministic, llm)
-      // slots and silently dropped the extras — regression that
-      // squashed long brain-dumps into 1 giant title. Fix: rebuild
-      // previewTasks from the LLM's output. For each LLM task,
-      // reuse the deterministic slot at the same index if one
-      // exists (preserves timeOptions / raw / etc. from the local
-      // parser); otherwise mint a fresh stub and patch onto it.
-      const stub = (t: UnderstoodTask): SmartTask => ({
-        title: t.title,
-        importance: 'medium',
-        energyDemand: 'medium',
-        timeMode: 'windowed',
-        at: null,
-        date: null,
-        window: 'midday',
-        recur: null,
-        raw: t.title,
-        needsFollowup: false,
-      });
-      return result.tasks.map((llmTask, i) => {
-        const base = cur[i] ?? stub(llmTask);
-        return patchWithUnderstood(base, llmTask);
-      });
-    });
-  };
-
   /** Merge an UnderstoodTask onto a deterministic SmartTask. The
    *  LLM's understanding wins for title/importance/energyDemand/note,
    *  and for date/time when it's MORE specific than what the
@@ -2122,21 +2039,23 @@ export default function Home() {
    * Returns false when nothing task-shaped came out (caller keeps
    * the pill text).
    */
+  const buildCaptureCtx = (): CaptureContext => ({
+    sharpWindow,
+    foggyWindow,
+    peakStart: digest.curve.peakStart,
+    peakEnd: digest.curve.peakEnd,
+    slumpStart: digest.curve.slumpStart,
+    slumpEnd: digest.curve.slumpEnd,
+    effectiveWindows,
+    now,
+    nowMin: now.getHours() * 60 + now.getMinutes(),
+    wakeMin: anchors.wake,
+    sleepMin: anchors.sleep,
+    anchors,
+  });
+
   const parseAndPreview = (text: string, spellFixed = false): boolean => {
-    const ctx: CaptureContext = {
-      sharpWindow,
-      foggyWindow,
-      peakStart: digest.curve.peakStart,
-      peakEnd: digest.curve.peakEnd,
-      slumpStart: digest.curve.slumpStart,
-      slumpEnd: digest.curve.slumpEnd,
-      effectiveWindows,
-      now,
-      nowMin: now.getHours() * 60 + now.getMinutes(),
-      wakeMin: anchors.wake,
-      sleepMin: anchors.sleep,
-      anchors,
-    };
+    const ctx: CaptureContext = buildCaptureCtx();
 
     const detTasks = parseSmartCapture(text, ctx);
     if (detTasks.length === 0) return false;
@@ -2289,12 +2208,23 @@ export default function Home() {
     // spelling + capitalization, then the DETERMINISTIC engine
     // builds the tasks from the clean string. Free tier skips this
     // (their captures parse exactly as before).
+    // Would this capture route to the understand LLM anyway? Then
+    // Sonnet normalizes the typos itself — chaining the Haiku spell
+    // pass first DOUBLED latency and burned two capture-bucket units
+    // for one send (token audit #5). Spell-fix only pays when the
+    // cleaned text will parse LOCALLY (or split locally via 'multi').
+    const spellProbe = () => {
+      const det = parseSmartCapture(parseText, buildCaptureCtx());
+      const g = routeCapture(parseText, det);
+      return g.route === 'local' || g.reason === 'multi';
+    };
     if (
       isEnglishCapture &&
       isLlmAvailable() &&
       access.hasPremium &&
       parseText.length <= 300 &&
-      countUnknownWords(parseText) > 0
+      countUnknownWords(parseText) > 0 &&
+      spellProbe()
     ) {
       setEditingIdx(null);
       setCapText('');

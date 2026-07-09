@@ -1128,7 +1128,9 @@ Edge cases:
 - If they thank you / "you're the best", reply briefly without proposing
   anything ("anytime — I'm here when you need me."). Don't grovel.
 
-Return ONLY the JSON object.`;
+Return ONLY the JSON object — MINIFIED on one line, no markdown fences,
+no spaces after ":" or ",". Every stripped space is tokens the user
+doesn't pay for.`;
 
 export type UntangleAction =
   | 'schedule'
