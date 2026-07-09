@@ -1,7 +1,12 @@
 import { syncParseMetrics } from '../lib/telemetry';
 import { installErrorReporting } from '../lib/errorReport';
+import * as Notifications from 'expo-notifications';
+import {
+  useNotifIntentStore,
+  type NotifIntent,
+} from '../store/notifIntentStore';
 import { AppState } from 'react-native';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -51,6 +56,45 @@ import { UpgradePromptSheet } from '../components/UpgradePromptSheet';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 
 export default function RootLayout() {
+  // ── Notification taps DO the thing they promised ────────────────
+  // The scheduled content carries {action, questId?}; route to the
+  // right screen and park the intent for it to consume on focus.
+  // getLastNotificationResponseAsync covers the cold-start tap (the
+  // listener only exists once JS is alive).
+  const router2 = useRouter();
+  const handledNotifRef = useRef<string | null>(null);
+  useEffect(() => {
+    const act = (resp: Notifications.NotificationResponse | null) => {
+      if (!resp) return;
+      const key =
+        resp.notification.request.identifier +
+        String(resp.notification.date ?? '');
+      if (handledNotifRef.current === key) return;
+      handledNotifRef.current = key;
+      const data = (resp.notification.request.content.data ?? {}) as {
+        action?: NotifIntent['action'];
+        questId?: string;
+        questTitle?: string;
+      };
+      if (!data.action) return;
+      if (data.action === 'recap') {
+        router2.push('/recap');
+        return;
+      }
+      useNotifIntentStore.getState().setIntent({
+        action: data.action,
+        questId: data.questId,
+        questTitle: data.questTitle,
+      });
+      // Home consumes every non-recap intent.
+      router2.navigate('/(tabs)');
+    };
+    const sub = Notifications.addNotificationResponseReceivedListener(act);
+    void Notifications.getLastNotificationResponseAsync().then(act);
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Parse-quality telemetry (tier 1, zero text): push pending
   // aiMetrics rows shortly after launch and on each return to
   // foreground. Silent, batched, offline-mode aware.

@@ -74,6 +74,7 @@ const schedule = async (
   hour: number,
   minute: number,
   identifier: string,
+  action: string,
 ) => {
   const body = await nextLine(bucket);
   await Notifications.scheduleNotificationAsync({
@@ -81,6 +82,8 @@ const schedule = async (
     content: {
       title: 'Lumi',
       body,
+      // Tap → the app performs this action (store/notifIntentStore).
+      data: { action },
     },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
@@ -164,15 +167,20 @@ export const syncNotifications = async (opts?: {
 
   // ── Daily nudges, anchored to the user's real day ──
   if (prefs.nudges) {
-    const slots: Array<[Bucket, number, string]> = [
-      ['morning', Math.max(0, a.wake + 30), 'lumi-morning'],
-      ['meds', a.breakfast > 0 ? a.breakfast : a.wake + 60, 'lumi-meds'],
-      ['midday', a.lunch, 'lumi-midday'],
-      ['windDown', Math.max(0, a.sleep - 90), 'lumi-winddown'],
+    const slots: Array<[Bucket, number, string, string]> = [
+      ['morning', Math.max(0, a.wake + 30), 'lumi-morning', 'hero'],
+      [
+        'meds',
+        a.breakfast > 0 ? a.breakfast : a.wake + 60,
+        'lumi-meds',
+        'meds',
+      ],
+      ['midday', a.lunch, 'lumi-midday', 'smallest'],
+      ['windDown', Math.max(0, a.sleep - 90), 'lumi-winddown', 'tomorrow'],
     ];
-    for (const [bucket, min, id] of slots) {
+    for (const [bucket, min, id, action] of slots) {
       if (!speakable(min)) continue;
-      await schedule(bucket, Math.floor(min / 60), min % 60, id);
+      await schedule(bucket, Math.floor(min / 60), min % 60, id, action);
     }
     // Come-back nudge: 48h out, re-pushed every sync (each app open
     // runs a passive sync, so it only ever fires after real absence).
@@ -180,7 +188,7 @@ export const syncNotifications = async (opts?: {
     const body = await nextLine('recovery');
     await Notifications.scheduleNotificationAsync({
       identifier: 'lumi-recovery',
-      content: { title: 'Lumi', body },
+      content: { title: 'Lumi', body, data: { action: 'rescue' } },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
         seconds: recoverySeconds,
@@ -196,7 +204,7 @@ export const syncNotifications = async (opts?: {
       const body = await nextLine('recap');
       await Notifications.scheduleNotificationAsync({
         identifier: 'lumi-recap',
-        content: { title: 'Lumi', body },
+        content: { title: 'Lumi', body, data: { action: 'recap' } },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
           weekday: 1, // Sunday
@@ -221,7 +229,11 @@ export const syncNotifications = async (opts?: {
       const min =
         r.at ?? (winStart != null ? winStart * 60 + 15 : 9 * 60);
       if (!speakable(min)) continue;
-      const content = { title: 'Lumi', body: q.title };
+      const content = {
+        title: 'Lumi',
+        body: q.title,
+        data: { action: 'quest', questId: q.id, questTitle: q.title },
+      };
       const base = {
         hour: Math.floor(min / 60),
         minute: min % 60,

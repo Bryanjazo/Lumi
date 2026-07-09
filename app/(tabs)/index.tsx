@@ -93,6 +93,7 @@ import {
   dominantStaleCluster,
 } from '../../lib/learning/avoidance';
 import { useRescueStore } from '../../store/rescueStore';
+import { useNotifIntentStore } from '../../store/notifIntentStore';
 import { useAccessStatus } from '../../lib/subscription';
 import { RescueCard } from '../../components/RescueCard';
 import { WelcomeBackCard } from '../../components/WelcomeBackCard';
@@ -1084,6 +1085,7 @@ export default function Home() {
   // "Did you mean?" — persists over the capture pill after a
   // suspicious voice transcript until the user edits or sends
   // (a vanishing toast was too easy to miss).
+  const pillInputRef = useRef<TextInput>(null);
   const [dymHint, setDymHint] = useState(false);
   // The clarify LLM's whole-sentence repair, shown IN the card with
   // a "use this" action — it must be visible and explicit, never a
@@ -1520,8 +1522,15 @@ export default function Home() {
     );
   }, [quests]);
 
+  // A tapped recovery notification ("want me to shrink today?") must
+  // open Rescue Mode even when the automatic triggers wouldn't fire.
+  // Dismissing rescue stamps rescueDismissedDate=today, which also
+  // clears the forced state.
+  const [forceRescue, setForceRescue] = useState(false);
   const rescueActive =
-    ((awaySnap?.daysAway ?? 0) >= 3 || overdueOpen.length >= 8) &&
+    (forceRescue ||
+      (awaySnap?.daysAway ?? 0) >= 3 ||
+      overdueOpen.length >= 8) &&
     rescueDismissedDate !== todayKey() &&
     !totallyEmpty;
 
@@ -2679,6 +2688,76 @@ export default function Home() {
   });
   heyLumiRef.current = heyLumi;
 
+  // ── Notification tap → the promised action ──────────────────────
+  const notifIntent = useNotifIntentStore((s) => s.intent);
+  const consumeNotifIntent = useNotifIntentStore((s) => s.consume);
+  useEffect(() => {
+    if (!isFocused || !notifIntent) return;
+    const intent = consumeNotifIntent();
+    if (!intent) return;
+    switch (intent.action) {
+      case 'hero':
+        setSwap(0);
+        showToast('Start here — the one on top is enough. 💛');
+        break;
+      case 'meds':
+        showToast('Meds + something to eat. That’s the whole quest.');
+        break;
+      case 'smallest': {
+        if (candidates.length === 0) {
+          showToast('Nothing waiting — that’s a win, not a stall.');
+          break;
+        }
+        // Smallest = lowest tier, then shortest. Momentum first.
+        let idx = 0;
+        for (let i = 1; i < candidates.length; i++) {
+          const a2 = candidates[idx];
+          const b2 = candidates[i];
+          const rank =
+            IMPORTANCE[a2.importance].rank - IMPORTANCE[b2.importance].rank;
+          if (
+            rank > 0 ||
+            (rank === 0 &&
+              (b2.durationMinutes ?? 30) < (a2.durationMinutes ?? 30))
+          ) {
+            idx = i;
+          }
+        }
+        setSwap(idx);
+        showToast('Switched you to the smallest thing — momentum first.');
+        break;
+      }
+      case 'tomorrow':
+        pillInputRef.current?.focus();
+        showToast('Tuck tomorrow’s first thing here — it’ll be waiting.');
+        break;
+      case 'rescue':
+        if (totallyEmpty) {
+          showToast('Nothing on the plate — that IS the small win today.');
+        } else {
+          setForceRescue(true);
+        }
+        break;
+      case 'quest': {
+        const norm = (s: string) =>
+          s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+        const idx = candidates.findIndex(
+          (q) =>
+            q.id === intent.questId ||
+            (intent.questTitle && norm(q.title) === norm(intent.questTitle)),
+        );
+        if (idx >= 0) {
+          setSwap(idx);
+          showToast(`Here it is — “${candidates[idx].title}”.`);
+        } else {
+          showToast('That one’s already handled today. 💛');
+        }
+        break;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFocused, notifIntent]);
+
   // Suggestion → schedule sheet → commit. The user picks cadence
   // (daily/weekly/monthly/etc.), an optional day, and an exact time
   // before we write the recurring quest. No more silent one-tap
@@ -3778,6 +3857,7 @@ export default function Home() {
               ✦
             </Text>
             <TextInput
+              ref={pillInputRef}
               // While recording, the live partial transcript streams
               // into the pill (dusk-dimmed) so speaking never feels
               // blind — the words appear as they're heard, then the
