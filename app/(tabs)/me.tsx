@@ -1684,6 +1684,21 @@ export default function MeTab() {
               </View>
             </HubRow>
 
+            {/* The self-knowledge surface — a fully built screen that
+                had no door until the Jul-9 deep dive found it. */}
+            <HubRow
+              glyph="✦"
+              color="#8EA0B4"
+              label="What Lumi knows"
+              sub="your patterns, named gently"
+              open={false}
+              chevronOnly
+              onToggle={() => {
+                Haptics.selectionAsync();
+                router.push('/insights');
+              }}
+            />
+
             {/* One door, not two — Personalize and Account both live
                 on /profile, so they share a row (skins, accent,
                 playfulness, email, notifications — all one screen). */}

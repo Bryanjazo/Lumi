@@ -1925,6 +1925,25 @@ export default function AccountScreen() {
               <Text style={styles.knowsTitle}>
                 The more we go,{'\n'}the better I know you.
               </Text>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  router.push('/insights');
+                }}
+                hitSlop={8}
+                style={{ alignSelf: 'flex-start', marginTop: 8 }}
+              >
+                <Text
+                  style={{
+                    fontFamily: fonts.interSemi,
+                    fontSize: 12,
+                    color: '#8EA0B4',
+                    textDecorationLine: 'underline',
+                  }}
+                >
+                  see everything Lumi's noticed →
+                </Text>
+              </Pressable>
               {/* Learning meter — dusk progress bar showing how much
                  of Lumi's picture is filled in. Grows as the user
                  seeds more (sharpWindow / struggles / patterns). */}
