@@ -570,6 +570,9 @@ const proposalLine = (
   }
   const q = pileById.get(p.taskId);
   const title = q ? `"${q.title}"` : '(missing task)';
+  if (p.action === 'complete') {
+    return `Done ✓ ${title}`;
+  }
   const winLabel = (w?: string): string => {
     if (w === 'morning') return 'this morning';
     if (w === 'midday') return 'after lunch';
@@ -808,6 +811,10 @@ export default function Untangle() {
   const moveWindow = useQuestStore((s) => s.moveWindow);
   const setDate = useQuestStore((s) => s.setDate);
   const anchor = useQuestStore((s) => s.anchor);
+  const toggleQuest = useQuestStore((s) => s.toggle);
+  const addXp = useUserStore((s) => s.addXp);
+  const addShard = useUserStore((s) => s.addShard);
+  const registerActivity = useUserStore((s) => s.registerActivity);
 
   // User profile bits the LLM needs as context (sharp/foggy windows,
   // anchors, top struggles).
@@ -1130,6 +1137,22 @@ export default function Untangle() {
       });
     let applied = 0;
     for (const p of items) {
+      // 'complete' — the user told Lumi it's already done. Same data
+      // fan-out as Home's completeQuest (XP + shard + streak) so a
+      // check-off through conversation counts exactly like a tap.
+      if (p.action === 'complete') {
+        const q = pileById.get(p.taskId);
+        if (!q || q.completed) continue;
+        const next = toggleQuest(q.id);
+        if (next) {
+          addXp(q.xpReward);
+          addShard();
+          registerActivity();
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          applied += 1;
+        }
+        continue;
+      }
       // 'create' is the only action that doesn't need a pile lookup —
       // it mints a brand-new task from the LLM's title + metadata.
       if (p.action === 'create') {

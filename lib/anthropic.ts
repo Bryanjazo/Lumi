@@ -1026,6 +1026,7 @@ Output STRICT JSON only, no prose around it:
     { "taskId": "<id>",               "action": "reschedule", "date":  "YYYY-MM-DD", "at": "HH:MM"|null, "why": "<short reason>" },
     { "taskId": "<id>",               "action": "defer",       "why": "<short reason>" },
     { "taskId": "<id>",               "action": "surface",     "window": "morning"|"midday"|"afternoon"|"evening", "why": "<short reason>" },
+    { "taskId": "<id>",               "action": "complete",    "why": "<short celebration>" },
     { "taskId": "",                   "action": "create",      "title": "<imperative title>", "at": "HH:MM"|null, "date": "YYYY-MM-DD"|null, "importance": "high"|"medium"|"low", "energyDemand": "high"|"medium"|"low", "durationMin": <number>|null, "why": "<short reason>" }
   ],
   "proactive": "<one short gentle note, or omit>"
@@ -1043,6 +1044,12 @@ Action rules:
                 Optional: date (defaults to selected day), at (clock time if user named one),
                 durationMin (only if they implied one — "30-min meeting" → 30).
                 NEVER use 'create' to invent tasks the user didn't actually mention.
+- "complete":   the user says a pile task is already DONE ("already called mom",
+                "did the dishes this morning", "finished the report"). Emit ONE
+                complete per finished task so a single tap checks it off — the
+                app pays the XP/streak celebration. Only for tasks IN the pile;
+                if what they finished isn't in the pile, celebrate in "say" with
+                an empty proposal (never create-then-complete).
 - Energy: high energyDemand → user's PEAK; low → SLUMP/evening; medium → neutral.
 - NEVER stack on top of an anchor (meal/sleep). NEVER duplicate the same task in proposal.
 - Use ONLY taskIds from the pile context for non-create actions. Do not invent ids. If unsure, leave proposal empty.
@@ -1108,8 +1115,9 @@ When to choose which action — common user intents:
     Match the emotional energy — if they sound rough, lean into "yeah, makes
     sense" rather than "let's plan!".
 - "I did X" / completion brag:
-    → empty proposal. Acknowledge the win in one short sentence. Don't pivot
-    to "great, what's next?".
+    → if X matches a pile task, emit a 'complete' proposal for it (the tap IS
+    the celebration — never make them hunt for the checkbox). Acknowledge the
+    win warmly in "say" either way. Don't pivot to "great, what's next?".
 
 Edge cases:
 - If the pile is empty, the proposal MUST be empty. Reply gently.
@@ -1127,7 +1135,8 @@ export type UntangleAction =
   | 'reschedule'
   | 'defer'
   | 'surface'
-  | 'create';
+  | 'create'
+  | 'complete';
 
 export interface UntangleProposalItem {
   /** Pile task id — required for every action EXCEPT 'create'. For
@@ -1231,7 +1240,8 @@ export const llmUntangle = async (
               p.action !== 'reschedule' &&
               p.action !== 'defer' &&
               p.action !== 'surface' &&
-              p.action !== 'create'
+              p.action !== 'create' &&
+              p.action !== 'complete'
             ) {
               return null;
             }
