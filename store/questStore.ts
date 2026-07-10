@@ -435,6 +435,16 @@ export const useQuestStore = create<QuestState>()(
           completed: !q.completed,
           completedAt: !q.completed ? new Date().toISOString() : null,
         };
+        // Lifetime ledger (choke point — Home, Untangle, and Focus
+        // completions all pass through toggle). Un-completing gives
+        // the count back so undo stays honest.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { useUserStore } = require('./userStore') as typeof import('./userStore');
+          useUserStore.getState().bumpTasksEver(next.completed ? 1 : -1);
+        } catch {
+          // store not ready (early boot) — ledger misses one, fine
+        }
         set((s) => ({
           quests: s.quests.map((x) => (x.id === id ? next : x)),
         }));

@@ -104,6 +104,7 @@ import {
 } from '../../lib/voice';
 import { useHeyLumi, requestHeyLumiPermission } from '../../lib/heyLumi';
 import { HeyLumiSheet } from '../../components/HeyLumiSheet';
+import { DaySetSheet } from '../../components/DaySetSheet';
 import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
 import { TwinkleMotes } from '../../components/TwinkleMotes';
@@ -1092,6 +1093,8 @@ export default function Home() {
   // loaded input got the most silent output. Holds the vent text for
   // the "untangle it together" hand-off.
   const [ventText, setVentText] = useState<string | null>(null);
+  // "Let the day set" — evening close ritual (fresh-eyes #1).
+  const [daySetOpen, setDaySetOpen] = useState(false);
   const [dymHint, setDymHint] = useState(false);
   // The clarify LLM's whole-sentence repair, shown IN the card with
   // a "use this" action — it must be visible and explicit, never a
@@ -2013,6 +2016,12 @@ export default function Home() {
     const winLabel = effectiveWindows[t.window].label.toLowerCase();
     const titlePreview =
       t.title.length > 24 ? t.title.slice(0, 22) + '…' : t.title;
+    // 3am anxiety dump — close the loop out loud (fresh-eyes #2):
+    // the capture already rolled to tomorrow; SAY so, so the night
+    // brain can put it down.
+    if (t.rolledToTomorrow) {
+      return `Caught it — “${titlePreview}” is on tomorrow. Nothing to do tonight.`;
+    }
     if (t.timeMode === 'anchored' && t.at != null) {
       const h = Math.floor(t.at / 60);
       const m = t.at % 60;
@@ -2654,6 +2663,43 @@ export default function Home() {
   });
   heyLumiRef.current = heyLumi;
 
+  // ── "While you slept" — narrate overnight captures once ─────────
+  const overnightToldRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isFocused) return;
+    const dayKey = todayKey();
+    if (overnightToldRef.current === dayKey) return;
+    const nowMin2 = now.getHours() * 60 + now.getMinutes();
+    // Only in the first ~3 waking hours.
+    if (nowMin2 < anchors.wake || nowMin2 > anchors.wake + 180) return;
+    const wakeToday = new Date();
+    wakeToday.setHours(Math.floor(anchors.wake / 60), anchors.wake % 60, 0, 0);
+    const lastNightSleep = new Date(wakeToday);
+    lastNightSleep.setDate(lastNightSleep.getDate() - 1);
+    lastNightSleep.setHours(
+      Math.floor(anchors.sleep / 60),
+      anchors.sleep % 60,
+      0,
+      0,
+    );
+    const overnight = quests.filter(
+      (q) =>
+        q.date === dayKey &&
+        !q.completed &&
+        q.createdAt > lastNightSleep.toISOString() &&
+        q.createdAt < wakeToday.toISOString(),
+    );
+    overnightToldRef.current = dayKey;
+    if (overnight.length > 0) {
+      showToast(
+        `You handed me ${overnight.length} thing${
+          overnight.length === 1 ? '' : 's'
+        } overnight — already sorted into today.`,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFocused]);
+
   // ── Notification tap → the promised action ──────────────────────
   const notifIntent = useNotifIntentStore((s) => s.intent);
   const consumeNotifIntent = useNotifIntentStore((s) => s.consume);
@@ -2693,10 +2739,20 @@ export default function Home() {
         showToast('Switched you to the smallest thing — momentum first.');
         break;
       }
-      case 'tomorrow':
-        pillInputRef.current?.focus();
-        showToast('Tuck tomorrow’s first thing here — it’ll be waiting.');
+      case 'tomorrow': {
+        const leftovers = todayQuests.filter(
+          (q) => !q.completed && q.window !== 'someday',
+        );
+        if (leftovers.length > 0) {
+          // The soft close the notification promised: triage the
+          // day's leftovers, then Luna curls up.
+          setDaySetOpen(true);
+        } else {
+          pillInputRef.current?.focus();
+          showToast('Tuck tomorrow’s first thing here — it’ll be waiting.');
+        }
         break;
+      }
       case 'rescue':
         if (totallyEmpty) {
           showToast('Nothing on the plate — that IS the small win today.');
@@ -4128,6 +4184,28 @@ export default function Home() {
         onTranscribed={handleTranscribed}
         submitting={aiPending}
       />
+      {/* "Let the day set" — evening close ritual. */}
+      <DaySetSheet
+        visible={daySetOpen}
+        leftovers={todayQuests.filter(
+          (q) => !q.completed && q.window !== 'someday',
+        )}
+        onCarry={(q) => {
+          Haptics.selectionAsync();
+          setQuestDate(q.id, offsetDate(1));
+          showToast(`“${q.title.slice(0, 22)}” — carried to tomorrow.`);
+        }}
+        onLetGo={(q) => {
+          Haptics.selectionAsync();
+          moveQuestWindow(q.id, 'someday');
+          showToast('Let go — it’ll wait in someday, no weight.');
+        }}
+        onDidIt={(q) => {
+          completeQuest(q);
+        }}
+        onClose={() => setDaySetOpen(false)}
+      />
+
       {/* "Hey Lumi" voice layer — phrase-triggered only, Pro. */}
       <HeyLumiSheet
         phase={heyLumi.phase}

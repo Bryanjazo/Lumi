@@ -1373,6 +1373,8 @@ export default function MeTab() {
   // Pet name flows into every "{name} is {stage}" / "{name}'s world"
   // copy so users who renamed their cat see THEIR name, not "Luna".
   const petName = useUserStore((s) => s.petName);
+  const focusMinutesLifetime = useUserStore((s) => s.focusMinutesLifetime);
+  const tasksEverCompleted = useUserStore((s) => s.tasksEverCompleted);
 
   const todayQuests = useMemo(() => selectTodayQuests(quests), [quests]);
   const questsToday = todayQuests.filter((q) => q.completed).length;
@@ -1579,6 +1581,17 @@ export default function MeTab() {
             you.
           </Text>
           <Text style={styles.bondLine}>✦ {bondLine}</Text>
+          {(focusMinutesLifetime > 0 || tasksEverCompleted > 4) && (
+            <Text style={styles.bondLine}>
+              {focusMinutesLifetime > 0
+                ? `${Math.floor(focusMinutesLifetime / 60) > 0 ? `${Math.floor(focusMinutesLifetime / 60)}h ` : ''}${focusMinutesLifetime % 60}m by the hearth together`
+                : ''}
+              {focusMinutesLifetime > 0 && tasksEverCompleted > 4 ? ' · ' : ''}
+              {tasksEverCompleted > 4
+                ? `${tasksEverCompleted} things finished, ever`
+                : ''}
+            </Text>
+          )}
         </View>
 
         {/* ═══ Your road — rank as a walked path ═══ */}

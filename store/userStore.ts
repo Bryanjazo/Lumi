@@ -182,6 +182,12 @@ interface UserState {
   /** Active days THIS calendar month — the streak-reset reframe
    *  ("back again · 12 days this month"). Unlike streak it only ever
    *  grows within a month, so a broken chain never zeroes the story. */
+  /** Lifetime ledger — starts counting at launch or it never exists
+   *  (fresh-eyes audit #7). Surfaced as one warm hearth line on Me. */
+  focusMinutesLifetime: number;
+  tasksEverCompleted: number;
+  addFocusMinutes: (m: number) => void;
+  bumpTasksEver: (delta: 1 | -1) => void;
   activeDaysThisMonth: number;
   /** YYYY-MM the counter belongs to. */
   activeMonthKey: string | null;
@@ -431,6 +437,8 @@ export const useUserStore = create<UserState>()(
       backlogNudgeDismissedDate: null,
       heyLumiEnabled: false,
       activeDaysThisMonth: 0,
+      focusMinutesLifetime: 0,
+      tasksEverCompleted: 0,
       activeMonthKey: null,
       isTester: false,
       shieldAvailable: true,
@@ -539,6 +547,15 @@ export const useUserStore = create<UserState>()(
       setHeyLumiEnabled: (v) => set({ heyLumiEnabled: v }),
 
       setIsTester: (v) => set({ isTester: v }),
+
+      addFocusMinutes: (m) =>
+        set((s) => ({
+          focusMinutesLifetime: Math.max(0, s.focusMinutesLifetime + m),
+        })),
+      bumpTasksEver: (delta) =>
+        set((s) => ({
+          tasksEverCompleted: Math.max(0, s.tasksEverCompleted + delta),
+        })),
 
       consumeShield: () =>
         set({ shieldAvailable: false, shieldUsedThisWeek: true }),
@@ -713,6 +730,8 @@ export const useUserStore = create<UserState>()(
           backlogNudgeDismissedDate: null,
           heyLumiEnabled: false,
           activeDaysThisMonth: 0,
+          focusMinutesLifetime: 0,
+          tasksEverCompleted: 0,
           activeMonthKey: null,
           isTester: false,
           shieldAvailable: true,

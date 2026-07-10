@@ -47,6 +47,8 @@ export const resetLocalUserData = (): void => {
     backlogNudgeDismissedDate: null,
     heyLumiEnabled: false,
     activeDaysThisMonth: 0,
+    focusMinutesLifetime: 0,
+    tasksEverCompleted: 0,
     activeMonthKey: null,
     isTester: false,
     shieldAvailable: true,

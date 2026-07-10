@@ -1773,6 +1773,33 @@ const NextBar = ({
 // ═════════════════════════════════════════════════════════════════════
 // Screen
 // ═════════════════════════════════════════════════════════════════════
+const styles2 = StyleSheet.create({
+  dragHintCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginHorizontal: 18,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: 'rgba(142,160,180,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(142,160,180,0.35)',
+  },
+  dragHintText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#8EA0B4',
+  },
+  dragHintGot: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#B0A38B',
+    textDecorationLine: 'underline',
+  },
+});
+
 export default function Time() {
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
@@ -1780,6 +1807,8 @@ export default function Time() {
 
   const anchors = useUserStore((s) => s.anchors);
   const allQuests = useQuestStore((s) => s.quests);
+  const hintsSeen = useUserStore((s) => s.hintsSeen);
+  const markHintSeen = useUserStore((s) => s.markHintSeen);
   const digest = useLearningDigest();
 
   const [now, setNow] = useState(() => new Date());
@@ -2175,6 +2204,28 @@ export default function Time() {
           styles={styles}
         />
       </View>
+
+      {/* One-time drag-rebalance hint — the 220ms hold gesture is
+          invisible and its captions live at the page bottom. Uses
+          the shared hintsSeen infra (like heyLumiIntro). */}
+      {!hintsSeen.includes('timeDrag') &&
+        allQuests.some((q) => !q.completed && !q.recur) && (
+          <View style={styles2.dragHintCard}>
+            <Text style={styles2.dragHintText}>
+              hold a task for half a second, then drag it onto another
+              day to rebalance ✦
+            </Text>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                markHintSeen('timeDrag');
+              }}
+              hitSlop={8}
+            >
+              <Text style={styles2.dragHintGot}>got it</Text>
+            </Pressable>
+          </View>
+        )}
 
       {/* Active view */}
       {scale === 'day' ? (

@@ -205,6 +205,24 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
     // (× button, session hijacked by a new start()) skip the done
     // screen and leave lastCompleted untouched.
     if (reason === 'completed' && cur) {
+      // Lifetime hearth minutes — actual time spent, pause-aware,
+      // capped at the planned length.
+      try {
+        const elapsedMs =
+          (cur.pausedAt ?? Date.now()) - cur.startedAt - (cur.pauseTotalMs ?? 0);
+        const mins = Math.max(
+          1,
+          Math.min(
+            Math.round(cur.durationSec / 60),
+            Math.round(elapsedMs / 60000),
+          ),
+        );
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { useUserStore } = require('../store/userStore') as typeof import('../store/userStore');
+        useUserStore.getState().addFocusMinutes(mins);
+      } catch {
+        // ledger miss is fine
+      }
       set({
         current: null,
         lastCompleted: {

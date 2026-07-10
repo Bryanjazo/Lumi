@@ -984,13 +984,36 @@ function SessionStep({
   task,
   onEndEarly,
   onCompleted,
+  onPickNext,
   companion,
 }: {
   task: PickedTask;
   onEndEarly: () => void;
   onCompleted: () => void;
+  /** Done-screen hand-back: jump straight into the next open task
+   *  instead of dumping the user on the picker (momentum!). */
+  onPickNext: (q: Quest) => void;
   companion: ReturnType<typeof useCompanionMode>;
 }) {
+  // The next open thing today (importance first) — excludes the task
+  // just finished.
+  const allQuests = useQuestStore((s) => s.quests);
+  const nextUp = useMemo(() => {
+    const t = isoDate(new Date());
+    const open = allQuests.filter(
+      (q) =>
+        q.date === t &&
+        !q.completed &&
+        q.window !== 'someday' &&
+        q.id !== task.questId,
+    );
+    return (
+      open.find((q) => q.importance === 'high') ??
+      open.find((q) => q.importance === 'medium') ??
+      open[0] ??
+      null
+    );
+  }, [allQuests, task.questId]);
   const currentFocus = useFocusSession((s) => s.current);
   const lastCompleted = useFocusSession((s) => s.lastCompleted);
   const pause = useFocusSession((s) => s.pause);
@@ -1092,6 +1115,24 @@ function SessionStep({
         ) : (
           <Pressable style={styles.doneMarkBtn} onPress={handleMarkItDone}>
             <Text style={styles.doneMarkText}>Nice — log it</Text>
+          </Pressable>
+        )}
+        {nextUp && (
+          <Pressable
+            style={styles.doneAnotherBtn}
+            onPress={() => {
+              Haptics.selectionAsync();
+              clearLastCompleted();
+              onPickNext(nextUp);
+            }}
+          >
+            <Text style={styles.doneAnotherText}>
+              Next up: “
+              {nextUp.title.length > 26
+                ? nextUp.title.slice(0, 24) + '…'
+                : nextUp.title}
+              ” — one more block?
+            </Text>
           </Pressable>
         )}
         <Pressable style={styles.doneAnotherBtn} onPress={handleAnotherBlock}>
@@ -1326,6 +1367,25 @@ export default function FocusScreen() {
           companion={companion}
           onEndEarly={handleSessionEndedEarly}
           onCompleted={handleSessionCompleted}
+          onPickNext={(q) => {
+            // Momentum hand-back: straight to the duration step with
+            // the next task, skipping the picker entirely.
+            setPickedTask({
+              questId: q.id,
+              title: q.title,
+              tier: q.importance,
+              atLabel:
+                q.scheduledHour != null
+                  ? `${((q.scheduledHour + 11) % 12) + 1}${
+                      q.scheduledMinute
+                        ? ':' + String(q.scheduledMinute).padStart(2, '0')
+                        : ''
+                    }${q.scheduledHour < 12 ? 'am' : 'pm'}`
+                  : q.window,
+              xpReward: q.xpReward,
+            });
+            setStep('duration');
+          }}
         />
       )}
     </SafeAreaView>
