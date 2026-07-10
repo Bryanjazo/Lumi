@@ -59,6 +59,7 @@ export const resetLocalUserData = (): void => {
     rescueDismissedDate: null,
     backlogNudgeDismissedDate: null,
     heyLumiEnabled: false,
+    medsNudge: false,
     activeDaysThisMonth: 0,
     focusMinutesLifetime: 0,
     vitalitySnapshot: null,

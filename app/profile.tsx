@@ -865,6 +865,8 @@ export default function AccountScreen() {
   const voiceEnabled = useUserStore((s) => s.voiceEnabled);
   const setVoiceEnabled = useUserStore((s) => s.setVoiceEnabled);
   const heyLumiEnabled = useUserStore((s) => s.heyLumiEnabled);
+  const medsNudge = useUserStore((s) => s.medsNudge);
+  const setMedsNudge = useUserStore((s) => s.setMedsNudge);
   const setHeyLumiEnabled = useUserStore((s) => s.setHeyLumiEnabled);
 
   /** "Hey Lumi" wake word — Pro-only. Flipping it ON asks for the
@@ -3155,6 +3157,24 @@ export default function AccountScreen() {
             prefKey="nudges"
             value={notifPrefs.nudges}
             onChange={(v) => changeNotifPref('nudges', v)}
+          />
+          <Row
+            icon="◦"
+            label="Morning meds nudge"
+            sub="only if meds are part of your morning — off unless you say so"
+            right={
+              <Switch
+                value={medsNudge}
+                onValueChange={(v) => {
+                  Haptics.selectionAsync();
+                  setMedsNudge(v);
+                  void syncNotifications({ interactive: true });
+                }}
+                trackColor={{ false: C.surface, true: accent.fg }}
+                thumbColor={medsNudge ? C.void : C.boneDim}
+                ios_backgroundColor={C.surface}
+              />
+            }
           />
           <NotifRow
             icon="◷"

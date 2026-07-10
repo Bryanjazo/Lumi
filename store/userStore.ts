@@ -196,6 +196,10 @@ interface UserState {
   activeDaysThisMonth: number;
   /** YYYY-MM the counter belongs to. */
   activeMonthKey: string | null;
+  /** Morning meds nudge — OPT-IN ONLY. We never assume medication
+   *  (a user rightly flagged getting med copy unprompted). */
+  medsNudge: boolean;
+  setMedsNudge: (v: boolean) => void;
   heyLumiEnabled: boolean;
   /** Server-granted flag (users.is_tester) — internal/TestFlight
    *  testers whose raw captures upload for parser tuning. Never
@@ -441,6 +445,7 @@ export const useUserStore = create<UserState>()(
       rescueDismissedDate: null,
       backlogNudgeDismissedDate: null,
       heyLumiEnabled: false,
+      medsNudge: false,
       activeDaysThisMonth: 0,
       focusMinutesLifetime: 0,
       vitalitySnapshot: null,
@@ -551,6 +556,8 @@ export const useUserStore = create<UserState>()(
         set({ backlogNudgeDismissedDate: today() }),
 
       setHeyLumiEnabled: (v) => set({ heyLumiEnabled: v }),
+
+      setMedsNudge: (v) => set({ medsNudge: v }),
 
       setIsTester: (v) => set({ isTester: v }),
 
@@ -737,6 +744,7 @@ export const useUserStore = create<UserState>()(
           rescueDismissedDate: null,
           backlogNudgeDismissedDate: null,
           heyLumiEnabled: false,
+          medsNudge: false,
           activeDaysThisMonth: 0,
           focusMinutesLifetime: 0,
           vitalitySnapshot: null,

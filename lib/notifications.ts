@@ -176,12 +176,17 @@ export const syncNotifications = async (opts?: {
   if (prefs.nudges) {
     const slots: Array<[Bucket, number, string, string]> = [
       ['morning', Math.max(0, a.wake + 30), 'lumi-morning', 'hero'],
-      [
-        'meds',
-        a.breakfast > 0 ? a.breakfast : a.wake + 60,
-        'lumi-meds',
-        'meds',
-      ],
+      // Meds copy is OPT-IN only — never assume medication.
+      ...(u.medsNudge
+        ? ([
+            [
+              'meds',
+              a.breakfast > 0 ? a.breakfast : a.wake + 60,
+              'lumi-meds',
+              'meds',
+            ],
+          ] as Array<[Bucket, number, string, string]>)
+        : []),
       ['midday', a.lunch, 'lumi-midday', 'smallest'],
       ['windDown', Math.max(0, a.sleep - 90), 'lumi-winddown', 'tomorrow'],
     ];
