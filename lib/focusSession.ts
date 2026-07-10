@@ -63,6 +63,9 @@ export interface CompletedFocus {
   questId: string;
   taskTitle: string;
   durationSec: number;
+  /** Honest elapsed (pause-aware, ≤ planned) — the done screen says
+   *  what really happened instead of claiming the full block. */
+  actualSec: number;
   completedAt: number;
 }
 
@@ -125,11 +128,19 @@ const stopTick = () => {
   }
 };
 
+let startInFlight = false;
+
 export const useFocusSession = create<FocusSessionState>((set, get) => ({
   current: null,
   lastCompleted: null,
 
   start: async ({ questId, taskTitle, petName, durationSec, mood }) => {
+    // Re-entrancy latch (audit B2): a double-tap on "Start" used to
+    // request TWO ActivityKit activities — the first pill orphaned on
+    // the lock screen for hours.
+    if (startInFlight) return;
+    startInFlight = true;
+    try {
     // End any in-flight session first — only one focus session at a
     // time keeps the model simple and matches the Dynamic Island's
     // single-active-activity expectation.
@@ -157,6 +168,9 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
     tickHandle = setInterval(() => {
       void get()._tick();
     }, TICK_MS);
+    } finally {
+      startInFlight = false;
+    }
   },
 
   pause: async () => {
@@ -204,7 +218,11 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
     // "you made it" payoff + the earned Mark-it-done tap. Cancels
     // (× button, session hijacked by a new start()) skip the done
     // screen and leave lastCompleted untouched.
-    if (reason === 'completed' && cur) {
+    // Bank the hearth minutes on EVERY teardown (audit B3) — ending
+    // early, completing the task from Home, or a session hijack all
+    // COUNT. "12 minutes is 12 minutes" — anti-perfectionism is the
+    // whole thesis; only completed used to bank.
+    if (cur) {
       // Lifetime hearth minutes — actual time spent, pause-aware,
       // capped at the planned length.
       try {
@@ -223,15 +241,35 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
       } catch {
         // ledger miss is fine
       }
-      set({
-        current: null,
-        lastCompleted: {
-          questId: cur.questId,
-          taskTitle: cur.taskTitle,
-          durationSec: cur.durationSec,
-          completedAt: Date.now(),
-        },
-      });
+      // The done screen only appears for natural/finish completions —
+      // cancels stay quiet (unchanged behavior); the banking above is
+      // what's new for them.
+      if (reason === 'completed') {
+        const actualSec = Math.min(
+          cur.durationSec,
+          Math.max(
+            0,
+            Math.round(
+              ((cur.pausedAt ?? Date.now()) -
+                cur.startedAt -
+                (cur.pauseTotalMs ?? 0)) /
+                1000,
+            ),
+          ),
+        );
+        set({
+          current: null,
+          lastCompleted: {
+            questId: cur.questId,
+            taskTitle: cur.taskTitle,
+            durationSec: cur.durationSec,
+            actualSec,
+            completedAt: Date.now(),
+          },
+        });
+      } else {
+        set({ current: null });
+      }
     } else {
       set({ current: null });
     }

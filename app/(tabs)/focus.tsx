@@ -1036,11 +1036,11 @@ function SessionStep({
   }, [doneMode, isPaused, currentFocus]);
 
   const total = doneMode
-    ? lastCompleted!.durationSec
+    ? lastCompleted!.actualSec || lastCompleted!.durationSec
     : (currentFocus?.durationSec ?? 0);
   const remain = doneMode ? 0 : selectRemainingSeconds(currentFocus);
   const elapsed = doneMode
-    ? Math.round((lastCompleted?.durationSec ?? 0) / 60)
+    ? Math.round((lastCompleted?.actualSec || lastCompleted?.durationSec || 0) / 60)
     : Math.floor(selectElapsedSeconds(currentFocus) / 60);
   const frac = total > 0 ? Math.max(0, Math.min(1, remain / total)) : 0;
   const mm = Math.floor(remain / 60);

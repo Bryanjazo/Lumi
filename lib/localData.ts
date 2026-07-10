@@ -23,6 +23,19 @@ export const resetLocalUserData = (): void => {
   // Scheduled notifications belong to the signed-out user's day —
   // a new account shouldn't inherit their reminder times.
   void cancelAllReminders().catch(() => {});
+  // A live focus session must die with the account (audit C2): the
+  // Live Activity otherwise keeps counting on the lock screen, and
+  // its natural expiry would bank minutes into the NEXT account's
+  // freshly-reset ledger.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useFocusSession } = require('./focusSession') as typeof import('./focusSession');
+    if (useFocusSession.getState().current) {
+      void useFocusSession.getState().end({ reason: 'cancelled' });
+    }
+  } catch {
+    // module unavailable — nothing running
+  }
   useQuestStore.getState().reset();
   useCheckinStore.getState().reset();
   useSuggestionsStore.getState().reset();

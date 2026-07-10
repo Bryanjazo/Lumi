@@ -100,6 +100,15 @@ export default function RootLayout() {
   // foreground. Silent, batched, offline-mode aware.
   useEffect(() => {
     installErrorReporting();
+    // Orphan Live Activities from a crash/force-quit would count on
+    // the lock screen for hours — sweep any stragglers not owned by
+    // a live session (the store is in-memory, so on cold start ANY
+    // existing activity is an orphan).
+    void import('../lib/focusSession').then(({ clearOrphanFocusActivities, useFocusSession }) => {
+      if (!useFocusSession.getState().current) {
+        void clearOrphanFocusActivities();
+      }
+    });
     const t = setTimeout(() => void syncParseMetrics(), 6000);
     const sub = AppState.addEventListener('change', (s) => {
       if (s === 'active') void syncParseMetrics();
