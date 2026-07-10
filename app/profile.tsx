@@ -38,7 +38,7 @@ import { DayRibbon } from '../components/DayRibbon';
 
 import { fonts } from '../constants/fonts';
 import { skins } from '../constants/skins';
-import { syncNotifications } from '../lib/notifications';
+import { syncNotifications, cancelAllReminders } from '../lib/notifications';
 import { lunaSource, useLunaSkin, type LunaMood } from '../lib/luna-source';
 import { skinPreview } from '../lib/skin-preview';
 import { useAmbientLunaMood } from '../lib/luna-mood';
@@ -942,7 +942,7 @@ export default function AccountScreen() {
   // window expired sees the upgrade card instead).
   const trialActive =
     subscriptionStatus === 'trial' && access.inTrial && access.trialDaysLeft > 0;
-  const isPremium = subscriptionStatus === 'active' || trialActive;
+  const isPremium = access.hasPremium; // paid-through aware (audit)
 
   const planLabel = useMemo(() => {
     if (subscriptionStatus === 'active') {
@@ -1267,6 +1267,10 @@ export default function AccountScreen() {
   };
 
   const handleDelete = () => {
+    // A deleted user must never get another nudge — the signOut path
+    // only cancels reminders when the final cloud push succeeds,
+    // which it can't after the auth row is gone (audit).
+    void cancelAllReminders().catch(() => {});
     Alert.alert(
       'Delete account?',
       'This permanently erases everything: your quests, your check-ins, what Lumi has learned about you. There is no undo.',
@@ -1304,7 +1308,7 @@ export default function AccountScreen() {
                     if (!serverPurged) {
                       Alert.alert(
                         'Local data cleared',
-                        'Your data on this device is gone. Server-side deletion is queued — email us to confirm if you need it expedited.',
+                        'Your data on this device is gone. If anything lingers server-side, email support@lumitasks.app and we will wipe it by hand — email us to confirm if you need it expedited.',
                       );
                     }
                   },

@@ -33,7 +33,14 @@ import { fonts } from '../constants/fonts';
 import { timeColors as C } from '../constants/colors';
 import { lunaSource, useLunaSkin } from '../lib/luna-source';
 import { useSession } from '../lib/auth';
-import { useAccessStatus, COMPARE_ROWS, LEGAL_URLS, STORE_URLS, PRICING } from '../lib/subscription';
+import {
+  useAccessStatus,
+  COMPARE_ROWS,
+  LEGAL_URLS,
+  STORE_URLS,
+  PRICING,
+  ANNUAL_SAVE_PCT,
+} from '../lib/subscription';
 import { useUserStore } from '../store/userStore';
 import { purchaseTier, restorePurchases } from '../lib/revenuecat';
 
@@ -63,6 +70,9 @@ export default function Paywall() {
   const { session } = useSession();
   const access = useAccessStatus(session);
   const petName = useUserStore((s) => s.petName);
+  const subscriptionCurrentPeriodEnd = useUserStore(
+    (s) => s.subscriptionCurrentPeriodEnd,
+  );
   const insets = useSafeAreaInsets();
   const lunaSkin = useLunaSkin();
 
@@ -74,13 +84,7 @@ export default function Paywall() {
   // the $59.99 intro year said "save 67%" — accurate for year one
   // only, and the kind of technically-true math that erodes trust
   // (the first-year deal already sells itself in the price line).
-  const annualSavePct = useMemo(() => {
-    const monthlyYearly = PRICING.monthly.amountUSD * 12;
-    return Math.round(
-      ((monthlyYearly - PRICING.annual.renewalAmountUSD) / monthlyYearly) *
-        100,
-    );
-  }, []);
+  const annualSavePct = ANNUAL_SAVE_PCT;
 
   // ── Handlers — preserved verbatim from the prior implementation ──
 
@@ -189,6 +193,19 @@ export default function Paywall() {
         pillColor: C.ember,
         headline: 'You’re on Pro.',
         body: 'All of Lumi’s extras are unlocked. Manage your plan in App Store Settings.',
+      };
+    }
+    if (access.hasPremium && !access.inTrial) {
+      // Cancelled (or past_due) but PAID THROUGH — auto-renew is off,
+      // access continues. Was shown "FREE PLAN" + invited to re-buy.
+      const end = subscriptionCurrentPeriodEnd
+        ? new Date(subscriptionCurrentPeriodEnd).toLocaleDateString()
+        : 'your period ends';
+      return {
+        pill: 'PRO — WON’T RENEW',
+        pillColor: C.honey,
+        headline: `You’re on Pro until ${end}.`,
+        body: 'Auto-renew is off, but everything stays unlocked until then. Pick a plan below any time to keep it going.',
       };
     }
     if (access.inTrial) {

@@ -32,7 +32,7 @@ import Svg, { Path } from 'react-native-svg';
 import { fonts } from '../constants/fonts';
 import { useUserStore } from '../store/userStore';
 import { useSession } from '../lib/auth';
-import { useAccessStatus, COMPARE_ROWS, LEGAL_URLS, PRICING } from '../lib/subscription';
+import { useAccessStatus, COMPARE_ROWS, LEGAL_URLS, ANNUAL_SAVE_PCT, PRICING } from '../lib/subscription';
 import { lunaSource, useLunaSkin } from '../lib/luna-source';
 import {
   purchaseTier,
@@ -91,6 +91,9 @@ export default function ManageSubscriptionScreen() {
   const router = useRouter();
   const { session } = useSession();
   const access = useAccessStatus(session);
+  const subscriptionCurrentPeriodEnd = useUserStore(
+    (s) => s.subscriptionCurrentPeriodEnd,
+  );
   const tier = useUserStore((s) => s.subscriptionTier);
   const periodEnd = useUserStore((s) => s.subscriptionCurrentPeriodEnd);
   const lunaSkin = useLunaSkin();
@@ -99,13 +102,7 @@ export default function ManageSubscriptionScreen() {
   const [purchasing, setPurchasing] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
-  const annualSavePct = useMemo(() => {
-    const monthlyYearly = PRICING.monthly.amountUSD * 12;
-    return Math.round(
-      ((monthlyYearly - PRICING.annual.firstYearAmountUSD) / monthlyYearly) *
-        100,
-    );
-  }, []);
+  const annualSavePct = ANNUAL_SAVE_PCT;
 
   const handleBack = () => {
     Haptics.selectionAsync();
@@ -220,6 +217,17 @@ export default function ManageSubscriptionScreen() {
         pillColor: C.ember,
         headline: 'You’re on Pro.',
         body: `${tier === 'annual' ? 'Annual' : 'Monthly'} plan · renews ${fmtDate(periodEnd)}.`,
+      };
+    }
+    if (access.hasPremium && !access.inTrial) {
+      const end = subscriptionCurrentPeriodEnd
+        ? new Date(subscriptionCurrentPeriodEnd).toLocaleDateString()
+        : 'your period ends';
+      return {
+        pill: 'PRO — WON’T RENEW',
+        pillColor: C.honey,
+        headline: `You’re on Pro until ${end}.`,
+        body: 'Auto-renew is off, but everything stays unlocked until then.',
       };
     }
     if (access.inTrial) {

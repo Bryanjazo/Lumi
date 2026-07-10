@@ -581,17 +581,7 @@ export default function RecapScreen() {
               </View>
               <Text style={styles.patternHeadline}>{pattern.headline}</Text>
               <Text style={styles.patternBody}>{pattern.body}</Text>
-              <Pressable
-                onPress={() =>
-                  Alert.alert(
-                    'Scheduled',
-                    'Will move Trials to your strong window.',
-                  )
-                }
-                style={styles.patternBtn}
-              >
-                <Text style={styles.patternBtnText}>{pattern.cta}</Text>
-              </Pressable>
+
             </View>
           </Section>
         )}

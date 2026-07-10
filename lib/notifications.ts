@@ -77,6 +77,13 @@ const schedule = async (
   action: string,
 ) => {
   const body = await nextLine(bucket);
+  // Night-owl anchors legally run past midnight (sleep at 25:30) —
+  // iOS calendar triggers with hour >= 24 silently never fire, so
+  // wrap into the real clock (audit: wind-down + recap vanished for
+  // exactly the late-night users the anchors were widened for).
+  const wrapped = (((hour * 60 + minute) % 1440) + 1440) % 1440;
+  hour = Math.floor(wrapped / 60);
+  minute = wrapped % 60;
   await Notifications.scheduleNotificationAsync({
     identifier,
     content: {
@@ -202,14 +209,15 @@ export const syncNotifications = async (opts?: {
     const min = a.dinner;
     if (speakable(min)) {
       const body = await nextLine('recap');
+      const recapMin = min % 1440;
       await Notifications.scheduleNotificationAsync({
         identifier: 'lumi-recap',
         content: { title: 'Lumi', body, data: { action: 'recap' } },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
           weekday: 1, // Sunday
-          hour: Math.floor(min / 60),
-          minute: min % 60,
+          hour: Math.floor(recapMin / 60),
+          minute: recapMin % 60,
           repeats: true,
         } as Notifications.CalendarTriggerInput,
       });

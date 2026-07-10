@@ -35,6 +35,10 @@ const DAY_MS = 86_400_000;
  *
  * ASC mirror: base annual price = $89.99 with an Introductory Offer
  * of "1 year at $59.99 — first-time subscribers only".
+ * lumi_monthly ALSO carries a StoreKit Introductory Offer: 7 days
+ * free, then $14.99/mo (configured in ASC Jul 4) — the paywall's
+ * monthly disclaimer copy is accurate. Distinct from the in-app
+ * CARD-LESS soft trial (startTrial / trial_started_at).
  */
 export const PRICING = {
   trialDays: TRIAL_DAYS,
@@ -67,6 +71,16 @@ export const STORE_URLS = {
  *  drifted: paywall gained the Hey Lumi row, manage-subscription
  *  didn't. Free values must describe what the server actually
  *  enforces (weekly AI caps), not aspirational limits. */
+/** Annual savings vs monthly×12 — computed against the RENEWAL
+ *  price so the badge stays true every year (comparing against the
+ *  intro year said "67%", technically-true-but-trust-eroding). Both
+ *  money screens must show THIS number. */
+export const ANNUAL_SAVE_PCT = Math.round(
+  ((PRICING.monthly.amountUSD * 12 - PRICING.annual.renewalAmountUSD) /
+    (PRICING.monthly.amountUSD * 12)) *
+    100,
+);
+
 export const COMPARE_ROWS = [
   { label: 'AI-sorted captures', free: '10 / week', pro: 'Unlimited' },
   { label: 'AI sorting & re-plan', free: 'Basic', pro: 'Smart' },
