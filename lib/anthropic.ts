@@ -1115,6 +1115,9 @@ export interface UntanglePileItem {
 
 export interface UntangleContext extends UnderstandContext {
   pile: UntanglePileItem[];
+  /** Parked tasks beyond the pile cap — lets Lumi say "and 22 more
+   *  parked" instead of pretending they don't exist. */
+  parkedOverflow?: number;
   /** ISO date the user is currently viewing in Untangle. Moves
    *  default to this date when one isn't specified. */
   selectedDayISO: string;
@@ -1161,7 +1164,11 @@ export const llmUntangle = async (
     }
     const head: AnthropicMessage = {
       role: 'user',
-      content: `${stable.join('\n')}\nSelected day: ${ctx.selectedDayISO}\n\nThe user's pile right now:\n${pileLines || '(empty pile)'}`,
+      content: `${stable.join('\n')}\nSelected day: ${ctx.selectedDayISO}\n\nThe user's pile right now:\n${pileLines || '(empty pile)'}${
+        ctx.parkedOverflow && ctx.parkedOverflow > 0
+          ? `\n(…and ${ctx.parkedOverflow} more parked in Later, oldest not shown)`
+          : ''
+      }`,
     };
     const clock: AnthropicMessage = {
       role: 'user',

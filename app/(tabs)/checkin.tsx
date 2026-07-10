@@ -983,8 +983,24 @@ export default function Untangle() {
   // ── Apply mutations to questStore ──
   const applyMutations = (muts: QuestMutation[]) => {
     for (const m of muts) {
-      if (m.patch.date != null) setDate(m.id, m.patch.date);
-      if (m.patch.window != null) moveWindow(m.id, m.patch.window);
+      // ANCHOR SAFETY (audit C1): setDate/moveWindow wipe scheduled
+      // times AND delete calendar mirrors. A no-op date patch used
+      // to un-anchor "Dentist 3pm" and vanish its calendar event the
+      // moment the user tapped "I'm overwhelmed".
+      const live = useQuestStore.getState().quests.find((q) => q.id === m.id);
+      if (!live) continue;
+      if (m.patch.date != null && live.date !== m.patch.date) {
+        setDate(m.id, m.patch.date);
+      }
+      if (
+        m.patch.window != null &&
+        live.window !== m.patch.window &&
+        // Never fuzzy-window a clock-anchored task — a fixed 3pm
+        // appointment must not become "morning".
+        (live.scheduledHour == null || m.patch.window === 'someday')
+      ) {
+        moveWindow(m.id, m.patch.window);
+      }
     }
   };
 
@@ -1072,10 +1088,15 @@ export default function Untangle() {
       .sort(byUrgency)
       .slice(0, PILE_LIMITS.plate)
       .map((q) => toPileItem(q, 'plate'));
-    const laterItems: UntanglePileItem[] = active
-      .filter((q) => q.window === 'someday')
-      .slice(0, PILE_LIMITS.later)
+    // Most RECENTLY parked first (audit R1) — store order is oldest-
+    // first, so the old slice(0,10) starved exactly the tasks users
+    // ask about ("bring back what I parked yesterday").
+    const somedayAll = active.filter((q) => q.window === 'someday');
+    const laterItems: UntanglePileItem[] = somedayAll
+      .slice(-PILE_LIMITS.later)
+      .reverse()
       .map((q) => toPileItem(q, 'later'));
+    const laterOverflow = Math.max(0, somedayAll.length - PILE_LIMITS.later);
     const pile: UntanglePileItem[] = [
       ...todayItems,
       ...overdueItems,
@@ -1110,6 +1131,7 @@ export default function Untangle() {
       userName: userName.trim() || undefined,
       pile,
       selectedDayISO: selectedDate,
+      parkedOverflow: laterOverflow,
     };
   };
 
@@ -1185,6 +1207,12 @@ export default function Untangle() {
       // it mints a brand-new task from the LLM's title + metadata.
       if (p.action === 'create') {
         if (!p.title || p.title.trim().length === 0) continue;
+        // Same round-trip validation as reschedule — the sanitizer
+        // regex admits "2026-02-31", which would mint an invisible
+        // task matching no real day anywhere (audit B7).
+        if (p.date && localYmd(localDateFromISO(p.date)) !== p.date) {
+          continue;
+        }
         const imp = p.importance ?? 'medium';
         const difficulty: 'easy' | 'medium' | 'hard' =
           imp === 'high' ? 'hard' : imp === 'medium' ? 'medium' : 'easy';
@@ -1442,6 +1470,10 @@ export default function Untangle() {
 
   // ── Conversational send (LLM-first, deterministic fallback) ──
   const send = (overrideText?: string) => {
+    // One turn at a time — the guard must run BEFORE the user bubble
+    // echoes, or the message renders in chat but never reaches the
+    // thread (audit B1: visible words, no reply, silently eaten).
+    if (busy) return;
     const t = (overrideText ?? text).trim();
     if (!t) return;
     Haptics.selectionAsync();
@@ -1455,10 +1487,6 @@ export default function Untangle() {
       return;
     }
 
-    // Concurrent sends raced: message B's thread was built from the
-    // same base as A's, erasing A's turn (finding #7). One turn at a
-    // time; the send button quietly waits while Lumi is typing.
-    if (busy) return;
     // Append the user turn to the LLM thread and call.
     const nextThread: UntangleThreadMsg[] = [
       ...thread,
