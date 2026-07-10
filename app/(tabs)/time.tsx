@@ -1,3 +1,4 @@
+import { useFocusEffect } from 'expo-router';
 // Lumi · Time v3 — "The Load Map"
 //
 // Spec: lumi-time-loadmap.jsx (carries v2.2's bones forward).
@@ -31,6 +32,7 @@ import {
   useRef,
   useState,
   type ReactElement,
+  useCallback,
 } from 'react';
 import {
   View,
@@ -328,7 +330,9 @@ const buildItemsForDate = (
       if (seen.has(q.id)) continue;
       if (!recurMatches(q.recur, date, today)) continue;
       const winStart = effective[q.window].start ?? 12;
-      const m = winStart * 60;
+      // The store spawns real instances at recur.at — projections
+      // must show the same clock or the habit hops times per scale.
+      const m = q.recur.at ?? winStart * 60;
       items.push({
         kind: 'quest',
         min: m,
@@ -1821,6 +1825,16 @@ export default function Time() {
     return () => clearInterval(id);
   }, []);
 
+  // Recurring templates re-date on Home mount only — if the user
+  // lives on Time across midnight, today's habit renders as a stale
+  // not-done projection whose radio would UN-complete the template.
+  const refreshRecurring = useQuestStore((s) => s.refreshRecurring);
+  useFocusEffect(
+    useCallback(() => {
+      refreshRecurring();
+    }, [refreshRecurring]),
+  );
+
   const today = useMemo(() => {
     const d = new Date(now);
     d.setHours(0, 0, 0, 0);
@@ -2046,6 +2060,11 @@ export default function Time() {
     const toIso = k.slice(4);
     if (toIso === t.fromIso) return;
     const d = fromIsoLocal(toIso);
+    // Never drop onto a day that's already over — it instantly mints
+    // a MISSED tag (guilt) and contradicts Day view's own rule.
+    if (dayOffset(d, today) < 0) {
+      return; // silent reject — the card was dimmed as past already
+    }
     applyMoves(
       [{ id: t.questId, toIso }],
       `Moved “${short}” → ${WD[d.getDay()]} ${d.getDate()}`,
