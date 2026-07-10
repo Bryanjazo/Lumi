@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Svg, {
   Circle,
@@ -46,7 +46,7 @@ import {
   selectTodayQuests,
   type Quest,
 } from '../../store/questStore';
-import { useCheckinStore } from '../../store/checkinStore';
+import { useCheckinStore, localYmdFromIso } from '../../store/checkinStore';
 import { useUserStore } from '../../store/userStore';
 import { todayKey, xpProgress, TITLES } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
@@ -121,11 +121,14 @@ const Room = ({
   cheer = 0,
   width,
   height,
+  active = true,
 }: {
   vitality: number;
   cheer?: number;
   width?: number;
   height?: number;
+  /** Tab focused — gates the 60fps loop + walk timers (audit C1). */
+  active?: boolean;
 }) => {
   const accent = useAccent();
   const lunaMood = useAmbientLunaMood();
@@ -216,11 +219,19 @@ const Room = ({
     // Walk SPEED (px/sec) scales with mood; sad drags, happy zips.
     const pxPerSec =
       lunaMood === 'sad' ? 20 : lunaMood === 'happy' ? 40 : 28;
+    if (!active) return; // audit C1 — no strolling on other tabs
+    // Audit B3: a mood change mid-stroll used to freeze the walking
+    // sprite in place and desync the position origin.
+    setIsWalking(false);
+    setIsLicking(false);
     let stopped = false;
     let pauseTimer: ReturnType<typeof setTimeout> | null = null;
     // Track where the cat is so each stroll can start from there —
     // strolls go to RANDOM spots on the rug, not end-to-end laps.
     let curX = 0;
+    walkX.stopAnimation((v) => {
+      curX = v; // resume from where the cat actually stands
+    });
 
     // A real cat mostly SITS. Long, randomized rests (9–22s) between
     // short strolls — the room breathes instead of pacing. (The old
@@ -299,9 +310,13 @@ const Room = ({
       if (pauseTimer) clearTimeout(pauseTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lunaMood]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lunaMood, active]);
 
   useEffect(() => {
+    // AUDIT C1: this 60fps setState loop used to run for the whole
+    // session once Me was visited (tabs stay mounted). Focus-gated.
+    if (!active) return;
     let raf: number;
     const tick = () => {
       S.t++;
@@ -313,7 +328,7 @@ const Room = ({
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vitality]);
+  }, [vitality, active]);
 
   const v = Math.max(0, Math.min(100, S.veased)) / 100;
 
@@ -402,7 +417,7 @@ const Room = ({
   // for ~80 frames so the cat visibly reacts to a tap.
   const happy = v >= 0.5;
   const sleeping = v < 0.25;
-  const excited = v >= 0.85 || S.joy > 0.2;
+  const excited = (v >= 0.85 || S.joy > 0.2) && !sleeping;
   // Damped from 2.5/2.6 — the tap reaction read as violent bouncing
   // rather than a happy wiggle (owner feedback, Jul 9).
   const joyAmp = 1 + S.joy * 1.1;
@@ -1373,6 +1388,13 @@ export default function MeTab() {
   // Pet name flows into every "{name} is {stage}" / "{name}'s world"
   // copy so users who renamed their cat see THEIR name, not "Luna".
   const petName = useUserStore((s) => s.petName);
+  const [meFocused, setMeFocused] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setMeFocused(true);
+      return () => setMeFocused(false);
+    }, []),
+  );
   const focusMinutesLifetime = useUserStore((s) => s.focusMinutesLifetime);
   const tasksEverCompleted = useUserStore((s) => s.tasksEverCompleted);
 
@@ -1389,13 +1411,9 @@ export default function MeTab() {
   // (date == today and not from yesterday's rollover) is a reasonable
   // signal that something landed today.
   const untangledToday = checkins.some(
-    (c) => c.createdAt.slice(0, 10) === today,
+    (c) => localYmdFromIso(c.createdAt) === today,
   );
-  const capturedToday = quests.some(
-    (q) =>
-      q.completedAt == null && // not already done before today
-      q.date === today,
-  );
+  const capturedToday = quests.some((q) => q.date === today);
   // avgEnergy left here for the recap section that still surfaces it;
   // it no longer feeds vitality.
   const avgEnergy = useMemo(() => {
@@ -1553,6 +1571,7 @@ export default function MeTab() {
           style={{ position: 'relative' }}
         >
           <Room
+            active={meFocused}
             vitality={vitality}
             cheer={cheer}
             width={screenWidth}

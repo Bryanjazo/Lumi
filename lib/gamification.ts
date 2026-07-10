@@ -14,12 +14,12 @@ export const TITLES = [
   'Tuned In',
   'Lit Up',
   'Untamed',
-  'Threshold',
-  'Threshold',
-  'Threshold',
-  'Threshold',
-  'Threshold',
-  'Threshold',
+  'Steady Ground',
+  'Long Stride',
+  'Quiet Summit',
+  'High Meadow',
+  'North Star',
+  'Horizon',
 ];
 
 export const levelFromXp = (xp: number) => {

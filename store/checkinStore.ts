@@ -12,7 +12,7 @@ import { readState, energyValue, type ZoneName } from '../constants/moodMap';
 // non-UTC timezone — a 9pm PT check-in shows up as the NEXT day's
 // key under UTC, so todayMood() looks for "today PT" but finds
 // nothing, and the Me tab's "today" tile silently goes blank.
-const localYmdFromIso = (iso: string): string => {
+export const localYmdFromIso = (iso: string): string => {
   const d = new Date(iso);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
