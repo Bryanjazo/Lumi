@@ -609,9 +609,13 @@ const DayTaskRow = ({
     const next = useQuestStore.getState().toggle(it.questId);
     if (prev && next && !prev.completed && next.completed) {
       const u = useUserStore.getState();
-      u.addXp(next.xpReward);
+      // Economy guard — XP/shards pay once per quest, ever (C1).
+      if (!prev.xpPaid) {
+        u.addXp(next.xpReward);
+        u.addShard();
+        useQuestStore.getState().markXpPaid(next.id);
+      }
       u.registerActivity();
-      u.addShard();
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };

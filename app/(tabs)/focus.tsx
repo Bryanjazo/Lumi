@@ -1328,8 +1328,11 @@ export default function FocusScreen() {
       const q = quests.find((x) => x.id === sessionTask.questId);
       if (q && !q.completed) {
         toggle(q.id);
-        addXp(q.xpReward);
+        if (!q.xpPaid) {
+          addXp(q.xpReward);
         addShard();
+          useQuestStore.getState().markXpPaid(q.id);
+        }
         registerActivity();
       }
     }

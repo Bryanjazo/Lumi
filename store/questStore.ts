@@ -39,6 +39,9 @@ export interface Quest {
   durationMinutes?: number;
   accent?: 'plum' | 'terra' | 'moss' | 'caramel' | 'mist' | 'rose' | 'fog';
   createdAt: string;
+  /** XP/shard already awarded for this quest ONCE — undo→re-complete
+   *  must not farm the economy (Home audit C1). Never cleared. */
+  xpPaid?: boolean;
   /**
    * When set, this quest auto-resets to "open" on its cadence's next
    * occurrence — see refreshRecurring(). v1 conflates template +
@@ -143,6 +146,8 @@ interface QuestState {
    */
   deletedIds: string[];
   clearDeletedIds: (ids: string[]) => void;
+  /** Stamp the one-time XP award (see Quest.xpPaid). */
+  markXpPaid: (id: string) => void;
   /**
    * Persist the calendar event id map returned by lib/calendar.ts
    * after a successful upsert across all selected calendars. Pass
@@ -461,6 +466,13 @@ export const useQuestStore = create<QuestState>()(
         }));
         if (prev) mirrorDelete(prev);
       },
+
+      markXpPaid: (id) =>
+        set((s) => ({
+          quests: s.quests.map((x) =>
+            x.id === id ? { ...x, xpPaid: true } : x,
+          ),
+        })),
 
       clearDeletedIds: (ids) =>
         set((s) => ({

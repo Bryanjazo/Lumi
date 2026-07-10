@@ -1104,7 +1104,7 @@ export default function Home() {
   // Send-time soft stop bookkeeping: if we already held a suspicious
   // text once and the user sends it again unchanged, we respect the
   // intent and let it through.
-  const dymHeldRef = useRef<string | null>(null);
+  const dymHeldRef = useRef<Set<string>>(new Set());
   // Measured content height of the pill input — iOS multiline
   // TextInputs don't auto-grow from min/maxHeight alone; we track
   // contentSize and set an explicit height (clamped to ~5 lines,
@@ -1422,10 +1422,16 @@ export default function Home() {
     const next = toggle(q.id);
     if (!next) return;
 
+    // ECONOMY GUARD (audit C1): XP/shards pay exactly ONCE per quest,
+    // ever — undo→re-complete used to farm them indefinitely.
     const gain = q.xpReward;
-    addXp(gain);
+    const firstAward = !q.xpPaid;
+    if (firstAward) {
+      addXp(gain);
+      addShard();
+      useQuestStore.getState().markXpPaid(q.id);
+    }
     registerActivity();
-    addShard();
 
     // If a focus session is running ON THIS quest, end it cleanly
     // so the Dynamic Island pill clears immediately (otherwise it
@@ -2179,9 +2185,9 @@ export default function Home() {
     // did-you-mean card + background clarify. Sending the same text
     // again means "I meant it" — it goes through.
     const typedTidy = tidyTranscript(text);
-    if (isEnglishCapture && typedTidy.suspicious && dymHeldRef.current !== text) {
+    if (isEnglishCapture && typedTidy.suspicious && !dymHeldRef.current.has(text)) {
       const parked = typedTidy.changed ? typedTidy.tidied : text;
-      dymHeldRef.current = parked;
+      dymHeldRef.current.add(parked);
       // Deterministic fixes (date-word near-misses) apply directly —
       // they're surgical and safe. The LLM's whole-sentence repair
       // shows in the card instead, so the user SEES the suggestion
@@ -2194,7 +2200,7 @@ export default function Home() {
       if (isLlmAvailable() && access.hasPremium) {
         void llmClarify(parked).then((fixed) => {
           if (!fixed || fixed === parked) return;
-          dymHeldRef.current = fixed; // either way, next send passes
+          dymHeldRef.current.add(fixed); // both texts now pass send
           setDymSuggestion(fixed);
         });
       }
@@ -2682,6 +2688,7 @@ export default function Home() {
       0,
       0,
     );
+    if (quests.length === 0) return; // store may not be hydrated yet
     const overnight = quests.filter(
       (q) =>
         q.date === dayKey &&
@@ -3469,7 +3476,11 @@ export default function Home() {
             before the user accepts. Bulk-aware: when multiple
             suggestions are pending, the "1 of N" badge shows up
             and each accept/dismiss reveals the next. */}
-        {heroSuggestion && !allDone && !rescueActive && (
+        {heroSuggestion &&
+          !allDone &&
+          !rescueActive &&
+          !previewTasks &&
+          !sortingRaw && (
           <View style={{ marginTop: 14 }}>
             <LumiSuggestCard
               // Same remount-per-suggestion reasoning as the preview
@@ -3891,7 +3902,7 @@ export default function Home() {
                   onPress={() => {
                     Haptics.selectionAsync();
                     setCapText(dymSuggestion);
-                    dymHeldRef.current = dymSuggestion;
+                    dymHeldRef.current.add(dymSuggestion);
                     setDymSuggestion(null);
                     recordAiMetric({
                       route: 'dym',
@@ -3986,6 +3997,7 @@ export default function Home() {
               multiline
               scrollEnabled
               returnKeyType="send"
+              submitBehavior="submit"
               onSubmitEditing={sendCapture}
               blurOnSubmit={false}
             />
@@ -4173,7 +4185,15 @@ export default function Home() {
         visible={capOpen}
         onClose={() => {
           setCapOpen(false);
-          setCapText('');
+          // NEVER destroy the dump (audit R1) — an accidental × on a
+          // 200-word spill kept the words; they're waiting in the
+          // pill. Only the dym card clears (it referenced the modal
+          // context).
+          if (capText.trim()) {
+            showToast('Held it — your words are in the pill below.');
+          }
+          setDymHint(false);
+          setDymSuggestion(null);
           if (voice.state === 'recording') {
             void voice.cancel();
           }

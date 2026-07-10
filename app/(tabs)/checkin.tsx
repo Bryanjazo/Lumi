@@ -1163,8 +1163,12 @@ export default function Untangle() {
         const next = toggleQuest(live.id);
         // Pay ONLY when the flip landed in the done direction.
         if (next && next.completed) {
-          addXp(live.xpReward);
-          addShard();
+          // Economy guard — once per quest, ever (Home audit C1).
+          if (!live.xpPaid) {
+            addXp(live.xpReward);
+            addShard();
+            useQuestStore.getState().markXpPaid(live.id);
+          }
           registerActivity();
           // Same as Home's completeQuest: a focus session running on
           // this quest ends now, or the Island pill lingers.
