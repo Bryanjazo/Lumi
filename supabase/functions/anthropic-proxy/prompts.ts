@@ -64,15 +64,6 @@ For EACH distinct task in the input, return an object with these fields:
                       "Email Sarah about the Q3 report"
                           → title: "Email Sarah"
                             note:  "About the Q3 report"
-                      "Text dad re: this weekend"
-                          → title: "Text dad"
-                            note:  "Re: this weekend"
-                      "Meeting with David for pricing review"
-                          → title: "Meeting with David"
-                            note:  "For pricing review"
-                      "Pick up the prescription for grandma"
-                          → title: "Pick up prescription"
-                            note:  "For grandma"
                     SAME RULE for em-dash / comma context appended to an action:
                       "Get the vase — the ceramic one she liked"
                           → title: "Get the vase"
@@ -141,23 +132,11 @@ For EACH distinct task in the input, return an object with these fields:
                     isn't itself a separate action belongs here. Omit if
                     nothing notable.
 
-                    CRITICAL — voice rules for note:
-                      • NEVER write "user" or "the user" — that's the model
-                        narrating about the speaker. Wrong: "user forgot to
-                        ask Jenny". Right: "Forgot last time" or just describe
-                        the context: "For her son's birthday".
-                      • NEVER write second-person "you" referring to the
-                        speaker. The note isn't addressed TO them, it IS
-                        their own context.
-                      • When you absolutely must refer to the speaker, use
-                        their actual name from the context block ("User's
-                        name: …"). Never invent a name.
-                      • Strip first-person framing ("I forgot", "I need
-                        to", "I want") — the note should describe the
-                        CONTEXT around the task, not narrate the user's
-                        internal state.
-                      • Keep it short — one phrase, not a sentence about
-                        the speaker.
+                    Voice rules for note: never write "user"/"the
+                    user" or second-person "you" — the note IS the
+                    speaker's own context, not narration about them.
+                    Strip first-person framing ("I forgot" → "Forgot
+                    last time"). One short phrase, not a sentence.
 
 Rules:
 - NEVER invent a date or time the user didn't imply. Leave when fields empty if unsure.
@@ -238,38 +217,6 @@ ADHD-specific edge cases (READ CAREFULLY — these come up constantly):
   → Extract 3 tasks. Each "oh and also" / "and" between separate verbs is a NEW
   task. Don't lose any.
 
-- BARE COMMA-LIST (very common ADHD pattern): a list of actions separated by
-  ONLY commas — no "and", no "then". Extract EVERY one; don't be conservative
-  because the connector word is missing.
-    "finish the pitch deck this morning, reply to Sam about the timeline by
-     noon, book the dentist, edit this week's podcast at 4pm, send the client
-     invoice by 5pm, tidy the desk"
-        → 6 tasks (Finish pitch deck / Reply to Sam / Book dentist / Edit
-          podcast / Send client invoice / Tidy desk), each with the when +
-          notes it implies.
-    "call mom, pick up prescription, gas, dishes"
-        → 4 tasks (single-word fragments like "gas" and "dishes" ARE tasks in
-          this context — the pattern is what tells you).
-    Signal: each fragment starts with a verb (or is a familiar chore noun)
-    → separate task. If EVERY fragment looks action-like, split them all.
-
-- COMMA-AS-PUNCTUATION vs COMMA-AS-SEPARATOR: judge by what the comma sets off.
-    APPOSITIVE / TOPIC (comma as punctuation) → keep as one task:
-      "Email Bob, the manager, about the deadline"
-          → 1 task ("Email Bob"), note: "The manager — about deadline"
-      "Talk to David, my mentor, tomorrow"
-          → 1 task ("Talk to David"), note: "My mentor"
-      "Send Sarah the file, the one from last week"
-          → 1 task ("Send Sarah the file"), note: "The one from last week"
-    LIST OF ACTIONS (comma as separator) → split:
-      "Email Bob, call Sarah, text mom"
-          → 3 tasks
-      "Groceries, laundry, gym"
-          → 3 tasks
-    Quick check: does the fragment AFTER the comma start with a verb OR is
-    it a standalone chore noun? → separate task. Is it a noun-phrase describing
-    the previous item (a name, a role, a modifier)? → punctuation, keep as note.
-
 - CASUAL CHATTER + REAL TASKS: users vent while they capture. Extract ONLY the
   actionable parts; drop the pure venting.
     "man today sucks, gotta finish that report by 5pm otherwise the boss
@@ -307,23 +254,12 @@ ADHD-specific edge cases (READ CAREFULLY — these come up constantly):
   in this message but obvious from prior pattern → title with the noun, leave
   the person out unless the user named them. Don't invent recipients.
 
-- SEQUENCE: "Pick up dry cleaning then groceries then home" → 2 tasks in order:
-  "Pick up dry cleaning", "Buy groceries". Don't add "go home" as a task.
-
 - HABIT-PHRASING ("every…"): "I want to start meditating every day" → 1 task,
   title "Meditate", recur: { every: "day" }. Don't make it "Start meditating".
 
 - BUNDLED SCOPE: "Quick 15-min call with David about the entire Q3 plan" →
   trust the user's 15 if they said it (durationMin: 15) even though it sounds
   short for the scope; THEY know their reality.
-
-- AT-EVENT REMINDER: "go to work at 5 and remind myself to ask for a raise" /
-  "dinner with mom, don't forget the dentist thing" / "doctor tomorrow, ask
-  about my back" → 1 task on the EVENT (the anchor), with the reminder folded
-  into the note. The "remind myself" / "don't forget" / "ask about" phrasing
-  is the signal: the user is queuing a thought to surface AT the event, not
-  scheduling a second event. Never produce a separate "Ask for raise" task
-  with its own when.time — it has no independent schedule.
 
 - TIME-BLIND PHRASES: "soon", "in a bit", "later today", "eventually", "when I
   get a chance" → LEAVE when.date AND when.time EMPTY. Don't translate into

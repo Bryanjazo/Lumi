@@ -284,7 +284,27 @@ Deno.serve(async (req: Request) => {
               ],
             }
           : {}),
-        messages: body.messages,
+        // Untangle's first message is the stable pile+profile head —
+        // byte-identical between turns (client keeps the volatile
+        // clock line in a separate message). Caching it makes turns
+        // 2+ read ~1.3k tokens at 10% price. Heads under the 1024-
+        // token cache minimum are silently not cached — no downside.
+        messages:
+          body.kind === "untangle" && body.messages.length > 1
+            ? [
+                {
+                  role: body.messages[0].role,
+                  content: [
+                    {
+                      type: "text",
+                      text: body.messages[0].content,
+                      cache_control: { type: "ephemeral" },
+                    },
+                  ],
+                },
+                ...body.messages.slice(1),
+              ]
+            : body.messages,
       }),
     });
   } catch (e) {
