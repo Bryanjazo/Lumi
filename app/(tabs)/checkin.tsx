@@ -538,7 +538,7 @@ interface ChatMsg {
   actions?: {
     approveLabel: string;
     onApprove: () => void;
-    onAdjust: () => void;
+    onAdjust?: () => void;
   };
   /** LLM-shaped structured proposal — Approve runs the validated
    *  applier. Adjust posts a calm "tell me what to change" reply.
@@ -703,12 +703,14 @@ const Bubble = ({
                   {msg.actions.approveLabel}
                 </Text>
               </Pressable>
-              <Pressable
-                onPress={msg.actions.onAdjust}
-                style={styles.adjustBtn}
-              >
-                <Text style={styles.adjustBtnText}>Adjust</Text>
-              </Pressable>
+              {msg.actions.onAdjust && (
+                <Pressable
+                  onPress={msg.actions.onAdjust}
+                  style={styles.adjustBtn}
+                >
+                  <Text style={styles.adjustBtnText}>Adjust</Text>
+                </Pressable>
+              )}
             </View>
           )}
           {msg.proposal && (
@@ -981,7 +983,53 @@ export default function Untangle() {
   };
 
   // ── Apply mutations to questStore ──
+  // "Put it back" (audit enhancement): every deterministic move and
+  // approved proposal snapshots the pre-mutation state; the
+  // confirmation message carries a one-tap restore. Moves used to be
+  // irreversible at the user's most fragile moment.
+  const moveUndoRef = useRef<
+    Array<{
+      id: string;
+      date: string;
+      window: WindowKey;
+      scheduledHour: number | null;
+      scheduledMinute: number | null;
+      completed: boolean;
+    }>
+  >([]);
+  const snapshotForUndo = (id: string) => {
+    if (moveUndoRef.current.some((s) => s.id === id)) return;
+    const q = useQuestStore.getState().quests.find((x) => x.id === id);
+    if (!q) return;
+    moveUndoRef.current.push({
+      id: q.id,
+      date: q.date,
+      window: q.window,
+      scheduledHour: q.scheduledHour ?? null,
+      scheduledMinute: q.scheduledMinute ?? null,
+      completed: q.completed,
+    });
+  };
+  const putItBack = () => {
+    const snaps = moveUndoRef.current;
+    moveUndoRef.current = [];
+    const st = useQuestStore.getState();
+    for (const s of snaps) {
+      const live = st.quests.find((x) => x.id === s.id);
+      if (!live) continue;
+      if (live.completed !== s.completed) st.toggle(s.id);
+      if (live.date !== s.date) setDate(s.id, s.date);
+      if (s.scheduledHour != null && s.scheduledMinute != null) {
+        anchor(s.id, s.scheduledHour, s.scheduledMinute);
+      } else if (live.window !== s.window || live.scheduledHour != null) {
+        moveWindow(s.id, s.window); // also clears a new anchor
+      }
+    }
+    pushLumi('Put back exactly how it was. 💛');
+  };
+
   const applyMutations = (muts: QuestMutation[]) => {
+    moveUndoRef.current = [];
     for (const m of muts) {
       // ANCHOR SAFETY (audit C1): setDate/moveWindow wipe scheduled
       // times AND delete calendar mirrors. A no-op date patch used
@@ -989,6 +1037,7 @@ export default function Untangle() {
       // moment the user tapped "I'm overwhelmed".
       const live = useQuestStore.getState().quests.find((q) => q.id === m.id);
       if (!live) continue;
+      snapshotForUndo(m.id);
       if (m.patch.date != null && live.date !== m.patch.date) {
         setDate(m.id, m.patch.date);
       }
@@ -1163,6 +1212,7 @@ export default function Untangle() {
             ? new Date().getHours() * 60 + new Date().getMinutes()
             : null,
       });
+    moveUndoRef.current = [];
     let applied = 0;
     // The prompt says "never duplicate a task in a proposal" — this
     // is the client backstop (finding: duplicate complete ids paid
@@ -1181,6 +1231,7 @@ export default function Untangle() {
           .quests.find((x) => x.id === p.taskId);
         if (!live || live.completed) continue;
         if (seenIds.has(p.taskId)) continue; // duplicate id in one proposal
+        snapshotForUndo(p.taskId);
         seenIds.add(p.taskId);
         const next = toggleQuest(live.id);
         // Pay ONLY when the flip landed in the done direction.
@@ -1292,6 +1343,7 @@ export default function Untangle() {
       if (!q) continue;
       if (seenIds.has(p.taskId)) continue;
       seenIds.add(p.taskId);
+      snapshotForUndo(p.taskId);
       if (p.action === 'schedule') {
         if (!p.window || p.window === 'someday') continue;
         // Schedule onto the selected day if it's not already there.
@@ -1451,6 +1503,7 @@ export default function Untangle() {
               );
               pushLumi(
                 `Done — it's on your day now, spaced out so nothing piles up. You can see it on Home and Time too.`,
+                { approveLabel: 'Put it back', onApprove: putItBack },
               );
             },
             onAdjust: () => {
@@ -1539,6 +1592,9 @@ export default function Untangle() {
                         applied > 0
                           ? `Done. ${applied} move${applied === 1 ? '' : 's'} applied — you can see it on Home and Time too.`
                           : `Hmm — those tasks moved or finished before I could apply. Have a fresh look and tell me what you'd like.`,
+                        applied > 0
+                          ? { approveLabel: 'Put it back', onApprove: putItBack }
+                          : undefined,
                       );
                     },
                     onAdjust: () => {

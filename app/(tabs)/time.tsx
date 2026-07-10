@@ -40,6 +40,7 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
+  Alert,
 } from 'react-native';
 import {
   SafeAreaView,
@@ -1117,6 +1118,14 @@ const WeekView = ({
         const dayQuests = items.filter((it) => it.kind === 'quest');
         const load = loadOf(items);
         const over = ctl.overKey === `day:${dIso}`;
+        // Hover preview (audit enhancement): while dragging over this
+        // day, show what the drop would make it — "full → heavy" at
+        // the exact decision moment.
+        const dragTier = ctl.draggingId
+          ? quests.find((qq) => qq.id === ctl.draggingId)?.importance
+          : null;
+        const projected =
+          over && dragTier ? load + TIER_W[dragTier] : load;
         return (
           <View
             key={dIso}
@@ -1151,10 +1160,12 @@ const WeekView = ({
               <Text
                 style={[
                   styles.weekLoadWord,
-                  { color: load > 6 ? C.ember : C.mute },
+                  { color: (over ? projected : load) > 6 ? C.ember : C.mute },
                 ]}
               >
-                {loadWord(load)}
+                {over && projected !== load
+                  ? `${loadWord(load)} → ${loadWord(projected)}`
+                  : loadWord(load)}
               </Text>
               <Pips load={load} />
             </Pressable>
@@ -1238,6 +1249,7 @@ const WeekView = ({
 // any cell moves the task, and heavy days offer one-tap "Lighten".
 // ═════════════════════════════════════════════════════════════════════
 const MonthView = ({
+  onMoveTask,
   date,
   today,
   anchors,
@@ -1249,6 +1261,7 @@ const MonthView = ({
   nowMin,
   ctl,
 }: {
+  onMoveTask: (id: string, toIso: string, label: string) => void;
   date: Date;
   today: Date;
   anchors: DailyAnchors;
@@ -1603,6 +1616,40 @@ const MonthView = ({
                     )}
                   </View>
                   {canDrag && (
+                    <Pressable
+                      onPress={() => {
+                        const opts = [1, 2, 7].map((n) => {
+                          const target = addDays(today, n);
+                          return {
+                            text:
+                              n === 1
+                                ? 'Tomorrow'
+                                : n === 2
+                                  ? `${WD[target.getDay()]} (in 2 days)`
+                                  : `Next ${WD[target.getDay()]}`,
+                            onPress: () =>
+                              onMoveTask(
+                                q.questId as string,
+                                ymd(target),
+                                `Moved “${q.title.slice(0, 22)}” → ${WD[target.getDay()]} ${target.getDate()}`,
+                              ),
+                          };
+                        });
+                        Alert.alert(
+                          'Move this task',
+                          `“${q.title}”`,
+                          [...opts, { text: 'Cancel', style: 'cancel' as const }],
+                        );
+                      }}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Move ${q.title} to another day`}
+                      style={styles.peekMoveBtn}
+                    >
+                      <Text style={styles.peekMoveGlyph}>→</Text>
+                    </Pressable>
+                  )}
+                  {canDrag && (
                     <View style={styles.peekHandle}>
                       {[0, 1, 2].map((r) => (
                         <View key={r} style={styles.peekHandleRow}>
@@ -1782,6 +1829,8 @@ const NextBar = ({
 // Screen
 // ═════════════════════════════════════════════════════════════════════
 const styles2 = StyleSheet.create({
+  peekMoveBtnShared: {},
+
   dragHintCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2279,6 +2328,9 @@ export default function Time() {
         />
       ) : (
         <MonthView
+          onMoveTask={(id, toIso, label) =>
+            applyMoves([{ id, toIso }], label)
+          }
           date={date}
           today={today}
           anchors={anchors}
@@ -2984,6 +3036,17 @@ const makeStyles = (accent: Accent) =>
       fontSize: 8,
       letterSpacing: -1,
     },
+    peekMoveBtn: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      borderWidth: 1,
+      borderColor: hexA(C.bone, 0.15),
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 6,
+    },
+    peekMoveGlyph: { color: '#B0A38B', fontSize: 14 },
     peekHandle: {
       marginTop: 4,
       gap: 3,

@@ -65,7 +65,9 @@ import {
   listWritableCalendars,
   getDefaultCalendarId,
   type WritableCalendar,
+  upsertEventForQuest,
 } from '../lib/calendar';
+import { todayKey } from '../lib/gamification';
 import { EditProfileSheet } from '../components/EditProfileSheet';
 import { LanguagePickerSheet } from '../components/LanguagePickerSheet';
 import { WindowEditorSheet } from '../components/WindowEditorSheet';
@@ -1226,6 +1228,55 @@ export default function AccountScreen() {
         },
       },
     ]);
+  };
+
+  const offerCalendarBackfill = () => {
+    const ids = useUserStore.getState().calendarIds;
+    if (!ids || ids.length === 0) return;
+    const t = todayKey();
+    const candidates = useQuestStore
+      .getState()
+      .quests.filter(
+        (q) =>
+          !q.completed &&
+          q.scheduledHour != null &&
+          q.date >= t &&
+          (!q.calendarEventIds ||
+            Object.keys(q.calendarEventIds).length === 0),
+      );
+    if (candidates.length === 0) return;
+    Alert.alert(
+      'Add your existing tasks?',
+      `You have ${candidates.length} already-timed task${
+        candidates.length === 1 ? '' : 's'
+      } that ${candidates.length === 1 ? "isn't" : "aren't"} on your calendar yet.`,
+      [
+        {
+          text: 'Add them',
+          onPress: () => {
+            void (async () => {
+              let added = 0;
+              for (const q of candidates.slice(0, 30)) {
+                try {
+                  const events = await upsertEventForQuest(q, ids);
+                  if (Object.keys(events).length > 0) {
+                    useQuestStore.getState().setCalendarEventIds(q.id, events);
+                    added++;
+                  }
+                } catch {
+                  // one bad event must not stop the rest
+                }
+              }
+              Alert.alert(
+                'Done',
+                `${added} task${added === 1 ? '' : 's'} added to your calendar.`,
+              );
+            })();
+          },
+        },
+        { text: 'Not now', style: 'cancel' },
+      ],
+    );
   };
 
   const handleExport = async () => {
@@ -2710,6 +2761,11 @@ export default function AccountScreen() {
                                 onValueChange={(v) => {
                                   Haptics.selectionAsync();
                                   setAutoSyncTasksWithTimes(v);
+                                  // Backfill offer (audit): only
+                                  // FUTURE edits mirror otherwise —
+                                  // the feature's first impression
+                                  // was an empty calendar.
+                                  if (v) offerCalendarBackfill();
                                 }}
                                 trackColor={{
                                   false: '#3A322B',
