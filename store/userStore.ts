@@ -184,6 +184,11 @@ interface UserState {
    *  grows within a month, so a broken chain never zeroes the story. */
   /** Lifetime ledger — starts counting at launch or it never exists
    *  (fresh-eyes audit #7). Surfaced as one warm hearth line on Me. */
+  /** Yesterday's closing room vitality — the morning afterglow.
+   *  Without it the room cold-opened dark every day, even after a
+   *  perfect one (audit R1: "the daily cold-open IS the scold"). */
+  vitalitySnapshot: { date: string; value: number } | null;
+  setVitalitySnapshot: (s: { date: string; value: number }) => void;
   focusMinutesLifetime: number;
   tasksEverCompleted: number;
   addFocusMinutes: (m: number) => void;
@@ -438,6 +443,7 @@ export const useUserStore = create<UserState>()(
       heyLumiEnabled: false,
       activeDaysThisMonth: 0,
       focusMinutesLifetime: 0,
+      vitalitySnapshot: null,
       tasksEverCompleted: 0,
       activeMonthKey: null,
       isTester: false,
@@ -547,6 +553,8 @@ export const useUserStore = create<UserState>()(
       setHeyLumiEnabled: (v) => set({ heyLumiEnabled: v }),
 
       setIsTester: (v) => set({ isTester: v }),
+
+      setVitalitySnapshot: (s) => set({ vitalitySnapshot: s }),
 
       addFocusMinutes: (m) =>
         set((s) => ({
@@ -731,6 +739,7 @@ export const useUserStore = create<UserState>()(
           heyLumiEnabled: false,
           activeDaysThisMonth: 0,
           focusMinutesLifetime: 0,
+          vitalitySnapshot: null,
           tasksEverCompleted: 0,
           activeMonthKey: null,
           isTester: false,

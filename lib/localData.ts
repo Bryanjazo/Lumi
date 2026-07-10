@@ -61,6 +61,7 @@ export const resetLocalUserData = (): void => {
     heyLumiEnabled: false,
     activeDaysThisMonth: 0,
     focusMinutesLifetime: 0,
+    vitalitySnapshot: null,
     tasksEverCompleted: 0,
     activeMonthKey: null,
     isTester: false,

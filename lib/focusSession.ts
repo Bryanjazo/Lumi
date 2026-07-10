@@ -10,6 +10,7 @@
 // 5-second cadence matches Apple's guidance: more frequent updates
 // burn the ActivityKit budget and can get throttled.
 
+import { Platform } from 'react-native';
 import { create } from 'zustand';
 import {
   startTaskActivity,
@@ -130,6 +131,48 @@ const stopTick = () => {
 
 let startInFlight = false;
 
+// Session-end local notification — the hyperfocus goodbye. A locked
+// phone otherwise never learns the block ended (the Live Activity
+// just sits at 0:00). Scheduled at start for the remaining time,
+// rescheduled around pauses, cancelled on any end.
+const FOCUS_END_ID = 'lumi-focus-end';
+const scheduleFocusEnd = async (seconds: number) => {
+  if (Platform.OS === 'web' || seconds <= 5) return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Notifications = require('expo-notifications') as typeof import('expo-notifications');
+    await Notifications.cancelScheduledNotificationAsync(FOCUS_END_ID).catch(
+      () => {},
+    );
+    await Notifications.scheduleNotificationAsync({
+      identifier: FOCUS_END_ID,
+      content: {
+        title: 'Lumi',
+        body: 'The block is done — that counts. Come stretch. 💛',
+      },
+      trigger: {
+        type: 'timeInterval',
+        seconds: Math.round(seconds),
+        repeats: false,
+      } as never,
+    });
+  } catch {
+    // notifications unavailable — the in-app done screen still lands
+  }
+};
+const cancelFocusEnd = () => {
+  if (Platform.OS === 'web') return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Notifications = require('expo-notifications') as typeof import('expo-notifications');
+    void Notifications.cancelScheduledNotificationAsync(FOCUS_END_ID).catch(
+      () => {},
+    );
+  } catch {
+    // ignore
+  }
+};
+
 export const useFocusSession = create<FocusSessionState>((set, get) => ({
   current: null,
   lastCompleted: null,
@@ -164,6 +207,7 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
       pausedAt: null,
     };
     set({ current: session });
+    void scheduleFocusEnd(durationSec);
     stopTick();
     tickHandle = setInterval(() => {
       void get()._tick();
@@ -174,6 +218,7 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
   },
 
   pause: async () => {
+    cancelFocusEnd();
     const cur = get().current;
     if (!cur || cur.pausedAt != null) return;
     // Freeze the tick loop and stamp the pause moment. Elapsed is
@@ -187,6 +232,14 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
   },
 
   resume: async () => {
+    {
+      const cur0 = get().current;
+      if (cur0) {
+        const remaining =
+          cur0.durationSec - selectElapsedSeconds({ ...cur0, pausedAt: null });
+        void scheduleFocusEnd(remaining);
+      }
+    }
     const cur = get().current;
     if (!cur || cur.pausedAt == null) return;
     // Accumulate the just-completed pause span into pauseTotalMs so
@@ -209,6 +262,7 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
 
   end: async ({ reason } = {}) => {
     stopTick();
+    cancelFocusEnd();
     const cur = get().current;
     if (cur?.activityId) {
       await endTaskActivity(cur.activityId, true);

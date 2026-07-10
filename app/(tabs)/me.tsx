@@ -348,8 +348,13 @@ const Room = ({
   const wh = 104;
   const skyTop = `rgb(${Math.round(lerp(30, 120, v))},${Math.round(lerp(34, 96, v))},${Math.round(lerp(50, 70, v))})`;
   const skyBot = `rgb(${Math.round(lerp(20, 200, v))},${Math.round(lerp(22, 140, v))},${Math.round(lerp(30, 90, v))})`;
+  // The window shows the USER'S sky, not the mood — stars at noon /
+  // sunshine at midnight read as a broken clock (audit B4). Rough
+  // day split: 6:00–19:59 is daytime.
+  const hourNow = new Date().getHours();
+  const isNightSky = hourNow < 6 || hourNow >= 20;
   const stars: { x: number; y: number }[] = [];
-  if (v <= 0.5) {
+  if (isNightSky) {
     for (let i = 0; i < 8; i++) {
       stars.push({
         x: wx + 10 + ((i * 31) % ww),
@@ -495,7 +500,7 @@ const Room = ({
         fill="#1A1410"
       />
       <Rect x={wx} y={wy} width={ww} height={wh} fill="url(#sky)" />
-      {v > 0.5 && (
+      {!isNightSky && (
         <Circle
           cx={wx + ww - 26}
           cy={wy + 28}
@@ -1438,7 +1443,40 @@ export default function MeTab() {
   // Vitality still drives the ROOM's ambience (wall warmth, lamp,
   // plant) — it just isn't displayed as a bar/number anymore. The
   // room IS the read; her health-bar UI is gone by design.
-  const vitality = computeVitality(signals);
+  const rawVitality = computeVitality(signals);
+  // Afterglow (audit R1): carry ~55% of yesterday's closing vitality
+  // into the morning, fading across the waking day — the room greets
+  // you with residual warmth instead of a daily cold-open. Rest days
+  // dim gently instead of going dark at dawn.
+  const anchors = useUserStore((s) => s.anchors);
+  const vitalitySnapshot = useUserStore((s) => s.vitalitySnapshot);
+  const setVitalitySnapshot = useUserStore((s) => s.setVitalitySnapshot);
+  const vitality = useMemo(() => {
+    const yester = new Date();
+    yester.setDate(yester.getDate() - 1);
+    const yKey = `${yester.getFullYear()}-${String(yester.getMonth() + 1).padStart(2, '0')}-${String(yester.getDate()).padStart(2, '0')}`;
+    if (!vitalitySnapshot || vitalitySnapshot.date !== yKey) {
+      return rawVitality;
+    }
+    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+    const wake = anchors.wake;
+    const sleep = anchors.sleep;
+    const span = Math.max(1, Math.min(sleep, 1439) - wake);
+    const progress = Math.max(0, Math.min(1, (nowMin - wake) / span));
+    const afterglow = vitalitySnapshot.value * 0.55 * (1 - progress);
+    return Math.max(rawVitality, Math.round(afterglow));
+  }, [rawVitality, vitalitySnapshot, anchors.wake, anchors.sleep]);
+  // Snapshot today's RAW closing value (throttled to real changes).
+  useEffect(() => {
+    const t = todayKey();
+    if (
+      vitalitySnapshot?.date !== t ||
+      Math.abs((vitalitySnapshot?.value ?? 0) - rawVitality) >= 2
+    ) {
+      setVitalitySnapshot({ date: t, value: rawVitality });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawVitality]);
 
   // Hearthside UI state — cheer pulses the room; hub rows collapse.
   const [cheer, setCheer] = useState(0);

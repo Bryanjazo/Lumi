@@ -1335,7 +1335,9 @@ export default function AccountScreen() {
     if (!isPremium && next !== 'ember') {
       Alert.alert(
         'Premium theme',
-        'Accent themes are part of Lumi Premium. Unlock with a 7-day free trial.',
+        access.trialAlreadyUsed
+            ? 'Accent themes are part of Lumi Premium.'
+            : 'Accent themes are part of Lumi Premium. Unlock with a 7-day free trial.',
       );
       return;
     }
@@ -3079,7 +3081,9 @@ export default function AccountScreen() {
                 style={[styles.upgradeBtn, { backgroundColor: accent.fg }]}
               >
                 <Text style={styles.upgradeBtnText}>
-                  See Premium · 7-day free trial
+                  {access.trialAlreadyUsed
+                    ? 'See Premium'
+                    : 'See Premium · 7-day free trial'}
                 </Text>
               </Pressable>
             </View>
