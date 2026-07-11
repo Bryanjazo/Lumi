@@ -447,6 +447,9 @@ export const useQuestStore = create<QuestState>()(
           // eslint-disable-next-line @typescript-eslint/no-require-imports
           const { useUserStore } = require('./userStore') as typeof import('./userStore');
           useUserStore.getState().bumpTasksEver(next.completed ? 1 : -1);
+          const d = new Date();
+          const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          useUserStore.getState().bumpDoneLog(k, next.completed ? 1 : -1);
         } catch {
           // store not ready (early boot) — ledger misses one, fine
         }

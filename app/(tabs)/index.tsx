@@ -39,7 +39,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams, router as globalRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
@@ -2799,6 +2799,20 @@ export default function Home() {
     Haptics.selectionAsync();
     setScheduleSuggestion(s);
   };
+
+  // Patterns' recurrence door — "/(tabs)?suggest=<id>" opens the
+  // schedule sheet for that suggestion directly. The door must
+  // DELIVER the setup it promises, not just switch tabs.
+  const { suggest: suggestParam } = useLocalSearchParams<{
+    suggest?: string;
+  }>();
+  useEffect(() => {
+    if (!suggestParam) return;
+    globalRouter.setParams({ suggest: undefined });
+    const s = suggestions.find((x) => x.id === suggestParam);
+    if (s) setScheduleSuggestion(s);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestParam]);
 
   // Direct-accept from LumiSuggestCard for the recurrence-suggestion
   // surface (the "heroSuggestion" card). Maps the SuggestInput back

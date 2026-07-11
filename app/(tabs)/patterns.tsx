@@ -6,17 +6,27 @@
 // to read any time's energy). Everything computed on-device from the
 // learning layer — zero tokens, zero network.
 //
-// The mock's "day 1 / week 2 / week 6" toggles were demo-state
-// switches, not shippable time nav — replaced here with REAL
-// navigation on "Showing up": a Week/Month view switcher, ‹ ›
-// steppers to any past week or month, and tap-a-day drill-in that
-// names what actually got finished that day.
+// "Showing up" carries REAL time navigation (the mock's day-1/week-2
+// toggles were demo-state switches): Week/Month segmented views,
+// ‹ › steppers to any past week or month, tap-a-day drill-in.
+//
+// Post-audit hardening (two independent auditors, Jul 2026):
+// - one x-scale for everything (minutes); slots plot at slot CENTERS
+// - preserveAspectRatio="none" so touch math matches the drawing on
+//   every device width (letterboxing skewed scrubs ~70min on Pro Max)
+// - scrub claims the gesture only on horizontal intent and refuses
+//   termination — no more ScrollView stealing mid-drag
+// - "now" ticks every 60s while focused (was frozen at render time)
+// - the two "this week" numbers agree (both count completions in the
+//   Sunday-anchored calendar week)
+// - history merges userStore.doneLog so deleting old quests on Home
+//   can never turn a past warm day cold
+// - focused companion mode strips ALL cozy strings, not just whispers
 //
 // Soul: sparse guards everywhere (day 1 = dotted "first sketch",
-// never empty dashboards), gaps are rest not failure, Focused
-// companion mode strips the cozy language.
+// never empty dashboards), gaps are rest not failure.
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   PanResponder,
   Pressable,
@@ -26,7 +36,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Svg, {
   Circle,
@@ -40,7 +50,7 @@ import Svg, {
 } from 'react-native-svg';
 
 import { timeColors as C } from '../../constants/colors';
-import { fonts, italicNumberFix } from '../../constants/fonts';
+import { fonts, italicNumberFixLarge } from '../../constants/fonts';
 import { WINDOWS } from '../../constants/windows';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 import { useLearningDigest } from '../../lib/learning';
@@ -54,6 +64,10 @@ const hexA = (hex: string, a: number) => {
 };
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DOW_FULL = [
+  'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+  'Saturday',
+];
 const DOW_LETTER = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const MONTHS = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -87,21 +101,29 @@ const Rule = ({
     {typeof right === 'string' ? (
       <Text style={styles.ruleRight}>{right}</Text>
     ) : (
-      right ?? null
+      (right ?? null)
     )}
   </View>
 );
 
 // ═════════════════════════════════════════════════════════════════════
-// Hero — the scrubbable energy curve. Drag anywhere on the chart to
-// read that time's energy; release and the cursor returns to NOW.
+// Hero — the scrubbable energy curve. Drag horizontally to read any
+// time's energy; release and the cursor breathes back to NOW.
 // Baseline (day-1) state renders a dotted "first sketch" instead —
 // no scrub, no fill, a promise rather than a fake chart.
+//
+// ONE coordinate system: minutes-since-midnight / 1440 → x. Slots
+// plot at their CENTER minute (slot·30+15) so the now-dot, bands,
+// ticks and the line itself all agree (the old /47-vs-/1440 split
+// floated the dot ~7px off the curve by evening).
 // ═════════════════════════════════════════════════════════════════════
 const CW = 340;
 const CH = 150;
 const CTOP = 14;
 const CBASE = 126;
+
+const xAtMin = (min: number) => (min / 1440) * CW;
+const yAtE = (e: number) => CBASE - (e / 100) * (CBASE - CTOP);
 
 const EnergyHero = ({
   slots,
@@ -110,7 +132,11 @@ const EnergyHero = ({
   slumpStart,
   slumpEnd,
   sparse,
+  learned,
   focused,
+  nowMs,
+  wakeMin,
+  sleepMin,
 }: {
   slots: { slot: number; energy: number }[];
   peakStart: number | null;
@@ -118,20 +144,20 @@ const EnergyHero = ({
   slumpStart: number | null;
   slumpEnd: number | null;
   sparse: boolean;
+  learned: boolean;
   focused: boolean;
+  nowMs: number;
+  wakeMin: number | null;
+  sleepMin: number | null;
 }) => {
   const [scrubH, setScrubH] = useState<number | null>(null);
   const chartWRef = useRef(1);
+  const lastSlotRef = useRef(-1);
 
-  // Catmull-Rom → cubic segments: visibly smoother than the old
-  // midpoint quadratics at the same point count.
   const geo = useMemo(() => {
+    // Catmull-Rom → cubic segments, points at slot-center minutes.
     const pts = slots.map(
-      (s) =>
-        [
-          (s.slot / 47) * CW,
-          CBASE - (s.energy / 100) * (CBASE - CTOP),
-        ] as const,
+      (s) => [xAtMin(s.slot * 30 + 15), yAtE(s.energy)] as const,
     );
     let line = `M ${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
     for (let i = 0; i < pts.length - 1; i++) {
@@ -141,60 +167,107 @@ const EnergyHero = ({
       const p3 = pts[Math.min(pts.length - 1, i + 2)];
       line += ` C ${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)},${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(1)} ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)},${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
     }
-    return { line, area: `${line} L ${CW},${CBASE} L 0,${CBASE} Z` };
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    return {
+      line,
+      area: `${line} L ${last[0].toFixed(1)},${CBASE} L ${first[0].toFixed(1)},${CBASE} Z`,
+    };
   }, [slots]);
 
-  const eAt = (h: number) =>
-    slots[Math.max(0, Math.min(47, Math.round(h * 2)))]?.energy ?? 50;
+  // Interpolated energy at an hour-float — the cursor glides along
+  // the curve instead of stair-stepping between half-hour slots.
+  const eLerp = (h: number) => {
+    const f = Math.max(0, Math.min(47, h * 2 - 0.5));
+    const lo = Math.floor(f);
+    const hi = Math.min(47, lo + 1);
+    const t = f - lo;
+    const a = slots[lo]?.energy ?? 50;
+    const b = slots[hi]?.energy ?? a;
+    return a + (b - a) * t;
+  };
 
-  const now = new Date();
-  const nowH = now.getHours() + now.getMinutes() / 60;
+  const nowDate = new Date(nowMs);
+  const nowH = nowDate.getHours() + nowDate.getMinutes() / 60;
   const cursor = scrubH ?? nowH;
-  const cx = (cursor / 24) * CW;
-  const cy = CBASE - (eAt(cursor) / 100) * (CBASE - CTOP);
-  const cursorE = Math.round(eAt(cursor));
+  const cx = xAtMin(cursor * 60);
+  const cy = yAtE(eLerp(cursor));
+  const cursorE = Math.round(eLerp(cursor));
   const tone: [string, string] =
     cursorE >= 60
       ? ['strong', C.honey]
       : cursorE <= 30
         ? ['runs tender', C.dusk]
         : ['steady', C.boneDim];
+  // Scrub label snaps to the half-hour it reads (clamped to 11:30p —
+  // the old rounding could label the last slot "12a"); the NOW label
+  // shows the actual clock time.
+  const labelMin =
+    scrubH != null
+      ? Math.min(1410, Math.round(scrubH * 2) * 30)
+      : nowDate.getHours() * 60 + nowDate.getMinutes();
 
-  // One pointer handler, no chart deps. Width read through a ref so
-  // the responder (created once) never sees a stale layout.
+  // Horizontal-intent gesture: never claims a vertical scroll, and
+  // once scrubbing it refuses termination so the ScrollView can't
+  // steal mid-drag and snap the cursor home.
   const pan = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_e, g) =>
+        Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+      onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (e) => {
-        const x = e.nativeEvent.locationX;
-        setScrubH(
-          Math.max(0, Math.min(23.98, (x / chartWRef.current) * 24)),
+        const h = Math.max(
+          0,
+          Math.min(23.98, (e.nativeEvent.locationX / chartWRef.current) * 24),
         );
+        lastSlotRef.current = Math.round(h * 2);
+        setScrubH(h);
       },
       onPanResponderMove: (e) => {
-        const x = e.nativeEvent.locationX;
-        setScrubH(
-          Math.max(0, Math.min(23.98, (x / chartWRef.current) * 24)),
+        const h = Math.max(
+          0,
+          Math.min(23.98, (e.nativeEvent.locationX / chartWRef.current) * 24),
         );
+        const slot = Math.round(h * 2);
+        if (slot !== lastSlotRef.current) {
+          lastSlotRef.current = slot;
+          void Haptics.selectionAsync();
+        }
+        setScrubH(h);
       },
       onPanResponderRelease: () => setScrubH(null),
       onPanResponderTerminate: () => setScrubH(null),
     }),
   ).current;
 
-  const minX = (min: number) => (min / 1440) * CW;
   const readoutLeftPct = Math.min(72, Math.max(2, (cx / CW) * 100 - 11));
 
   return (
     <View>
       <View
+        accessible
+        accessibilityLabel={
+          sparse
+            ? 'Energy curve — still sketching'
+            : `Energy curve.${peakStart != null && peakEnd != null ? ` Peak ${fmtClock(peakStart)} to ${fmtClock(peakEnd)}.` : ''} Right now ${Math.round(eLerp(nowH))} out of 100.`
+        }
         onLayout={(e) => {
           chartWRef.current = Math.max(1, e.nativeEvent.layout.width);
         }}
         {...(sparse ? {} : pan.panHandlers)}
       >
-        <Svg width="100%" height={CH} viewBox={`0 0 ${CW} ${CH}`}>
+        {/* preserveAspectRatio="none": the touch math divides by the
+            CONTAINER width, so the drawing must fill it exactly —
+            default "meet" letterboxed ~19pt per side on Pro Max and
+            skewed edge scrubs by ~70 minutes. Heights match, so only
+            x stretches (safe). */}
+        <Svg
+          width="100%"
+          height={CH}
+          viewBox={`0 0 ${CW} ${CH}`}
+          preserveAspectRatio="none"
+        >
           <Defs>
             <LinearGradient id="p4fill" x1="0" y1="0" x2="0" y2="1">
               <Stop offset="0" stopColor={C.honey} stopOpacity={0.4} />
@@ -204,18 +277,18 @@ const EnergyHero = ({
           {/* peak + dip bands */}
           {peakStart != null && peakEnd != null && (
             <Rect
-              x={minX(peakStart)}
+              x={xAtMin(peakStart)}
               y={CTOP - 4}
-              width={Math.max(2, minX(peakEnd) - minX(peakStart))}
+              width={Math.max(2, xAtMin(peakEnd) - xAtMin(peakStart))}
               height={CBASE - CTOP + 4}
               fill={hexA(C.ember, 0.09)}
             />
           )}
           {slumpStart != null && slumpEnd != null && (
             <Rect
-              x={minX(slumpStart)}
+              x={xAtMin(slumpStart)}
               y={CTOP - 4}
-              width={Math.max(2, minX(slumpEnd) - minX(slumpStart))}
+              width={Math.max(2, xAtMin(slumpEnd) - xAtMin(slumpStart))}
               height={CBASE - CTOP + 4}
               fill={hexA(C.dusk, 0.07)}
             />
@@ -224,14 +297,36 @@ const EnergyHero = ({
           {[0, 6, 12, 18, 24].map((h) => (
             <Line
               key={h}
-              x1={(h / 24) * CW}
+              x1={xAtMin(h * 60)}
               y1={CBASE}
-              x2={(h / 24) * CW}
+              x2={xAtMin(h * 60)}
               y2={CBASE + 4}
               stroke={hexA(C.bone, 0.25)}
               strokeWidth={1}
             />
           ))}
+          {/* wake/sleep anchors — faint glow ticks so a shift-worker
+              sees the curve is drawn around THEIR day */}
+          {wakeMin != null && (
+            <Line
+              x1={xAtMin(wakeMin)}
+              y1={CBASE}
+              x2={xAtMin(wakeMin)}
+              y2={CBASE + 7}
+              stroke={hexA(C.glow, 0.45)}
+              strokeWidth={1.5}
+            />
+          )}
+          {sleepMin != null && (
+            <Line
+              x1={xAtMin(sleepMin)}
+              y1={CBASE}
+              x2={xAtMin(sleepMin)}
+              y2={CBASE + 7}
+              stroke={hexA(C.glow, 0.45)}
+              strokeWidth={1.5}
+            />
+          )}
           <Line
             x1={0}
             y1={CBASE}
@@ -240,7 +335,8 @@ const EnergyHero = ({
             stroke={hexA(C.bone, 0.16)}
             strokeWidth={1}
           />
-          {/* the curve — dotted first-sketch when sparse */}
+          {/* the curve — dotted first-sketch when sparse; slightly
+              translucent while still learning */}
           {sparse ? (
             <Path
               d={geo.line}
@@ -257,6 +353,7 @@ const EnergyHero = ({
                 d={geo.line}
                 fill="none"
                 stroke={C.honey}
+                strokeOpacity={learned ? 1 : 0.82}
                 strokeWidth={2}
                 strokeLinecap="round"
               />
@@ -285,9 +382,10 @@ const EnergyHero = ({
           {[6, 12, 18].map((h) => (
             <SvgText
               key={h}
-              x={(h / 24) * CW}
+              x={xAtMin(h * 60)}
               y={CH - 6}
               textAnchor="middle"
+              fontFamily={fonts.inter}
               fontSize={9}
               fill={C.mute}
             >
@@ -302,7 +400,7 @@ const EnergyHero = ({
             style={[styles.readout, { left: `${readoutLeftPct}%` }]}
           >
             <Text style={styles.readoutText}>
-              {fmtClock(Math.round(cursor * 2) * 30)} ·{' '}
+              {fmtClock(labelMin)} ·{' '}
               <Text style={{ color: tone[1] }}>{cursorE}</Text>
               <Text style={{ color: C.mute }}>
                 {' '}
@@ -315,7 +413,9 @@ const EnergyHero = ({
       {peakStart != null && peakEnd != null ? (
         <View style={styles.legendRow}>
           <View style={styles.legendItem}>
-            <View style={[styles.legendSwatch, { backgroundColor: C.ember }]} />
+            <View
+              style={[styles.legendSwatch, { backgroundColor: C.ember }]}
+            />
             <Text style={styles.legendText}>
               peak {fmtClock(peakStart)}–{fmtClock(peakEnd)}
             </Text>
@@ -336,8 +436,9 @@ const EnergyHero = ({
         </View>
       ) : (
         <Text style={styles.sketchLine}>
-          a first sketch — check in for a few days and this line becomes
-          yours.
+          {focused
+            ? 'not enough data yet — a few check-ins draw this line.'
+            : 'a first sketch — check in for a few days and this line becomes yours.'}
         </Text>
       )}
       {peakStart != null && !focused && (
@@ -352,9 +453,8 @@ const EnergyHero = ({
 
 // ═════════════════════════════════════════════════════════════════════
 // Showing up — navigable warmth field. Week view (7 big day cells) or
-// Month view (a real calendar month), ‹ › steppers to any past period,
-// tap a day to see what actually got finished. This replaces the
-// mock's demo-stage toggles with genuine time navigation.
+// Month view (a real calendar month with its weekday header), ‹ ›
+// steppers to any past period, tap a day to see what got finished.
 // ═════════════════════════════════════════════════════════════════════
 type DayLog = Map<string, { count: number; titles: string[] }>;
 
@@ -362,8 +462,7 @@ const MAX_WEEKS_BACK = 26;
 const MAX_MONTHS_BACK = 6;
 
 const cellColors = (count: number, max: number) => {
-  if (count === 0)
-    return { bg: C.void2, border: C.hair, glow: false };
+  if (count === 0) return { bg: C.void2, border: C.hair, glow: false };
   const t = Math.min(1, count / Math.max(2, max));
   return {
     bg: hexA(C.ember, 0.25 + t * 0.6),
@@ -376,19 +475,19 @@ const ShowingUp = ({
   dayLog,
   focused,
   view,
+  todayYmd,
 }: {
   dayLog: DayLog;
   focused: boolean;
   view: 'week' | 'month';
+  todayYmd: string;
 }) => {
   const [offset, setOffset] = useState(0); // periods back from now
   const [selected, setSelected] = useState<string | null>(null);
 
-  const todayYmd = localYmd(new Date());
-
   // Build the visible period's day list (ymd strings, Sunday-first).
   const days = useMemo<(string | null)[]>(() => {
-    const now = new Date();
+    const now = new Date(todayYmd + 'T12:00');
     if (view === 'week') {
       const start = new Date(now);
       start.setDate(now.getDate() - now.getDay() - offset * 7);
@@ -401,15 +500,18 @@ const ShowingUp = ({
     const m = new Date(now.getFullYear(), now.getMonth() - offset, 1);
     const lead = m.getDay();
     const dim = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate();
-    const cells: (string | null)[] = Array.from({ length: lead }, () => null);
+    const cells: (string | null)[] = Array.from(
+      { length: lead },
+      () => null,
+    );
     for (let d = 1; d <= dim; d++)
       cells.push(localYmd(new Date(m.getFullYear(), m.getMonth(), d)));
     while (cells.length % 7 !== 0) cells.push(null);
     return cells;
-  }, [view, offset]);
+  }, [view, offset, todayYmd]);
 
   const periodLabel = useMemo(() => {
-    const now = new Date();
+    const now = new Date(todayYmd + 'T12:00');
     if (view === 'week') {
       if (offset === 0) return 'this week';
       if (offset === 1) return 'last week';
@@ -426,7 +528,7 @@ const ShowingUp = ({
     return m.getFullYear() === now.getFullYear()
       ? MONTHS[m.getMonth()]
       : `${MONTHS[m.getMonth()]} ${m.getFullYear()}`;
-  }, [view, offset, days]);
+  }, [view, offset, days, todayYmd]);
 
   const maxBack = view === 'week' ? MAX_WEEKS_BACK : MAX_MONTHS_BACK;
   const periodTotal = days.reduce(
@@ -438,25 +540,48 @@ const ShowingUp = ({
     0,
   );
 
+  // Presence, framed as showing up — never as obligation.
+  const presence = useMemo(() => {
+    let n = 0;
+    const t = new Date(todayYmd + 'T12:00');
+    for (let i = 0; i < 30; i++) {
+      const d = new Date(t);
+      d.setDate(t.getDate() - i);
+      if ((dayLog.get(localYmd(d))?.count ?? 0) > 0) n++;
+    }
+    return n;
+  }, [dayLog, todayYmd]);
+
   const step = (dir: 1 | -1) => {
     void Haptics.selectionAsync();
     setSelected(null);
     setOffset((o) => Math.max(0, Math.min(maxBack, o + dir)));
   };
+
   const sel = selected ? dayLog.get(selected) : null;
   const selDate = selected ? new Date(selected + 'T12:00') : null;
 
   const renderCell = (ymd: string | null, i: number, big: boolean) => {
     if (!ymd)
-      return <View key={`pad${i}`} style={big ? styles.weekCell : styles.monthCell} />;
+      return (
+        <View
+          key={`pad${i}`}
+          style={big ? styles.weekCell : styles.monthCell}
+        />
+      );
     const isFuture = ymd > todayYmd;
     const isToday = ymd === todayYmd;
     const count = dayLog.get(ymd)?.count ?? 0;
     const col = cellColors(isFuture ? 0 : count, maxInPeriod);
+    const d = new Date(ymd + 'T12:00');
     return (
       <Pressable
         key={ymd}
         disabled={isFuture}
+        accessibilityRole="button"
+        accessibilityLabel={`${DOW_FULL[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}${
+          count > 0 ? `, ${count} finished` : ', nothing finished'
+        }`}
         onPress={() => {
           void Haptics.selectionAsync();
           setSelected((s) => (s === ymd ? null : ymd));
@@ -473,6 +598,8 @@ const ShowingUp = ({
             borderStyle: isToday ? 'dashed' : 'solid',
             opacity: isFuture ? 0.3 : 1,
           },
+          // NOTE: iOS-only glow (shadow* props). Deliberate for the
+          // iOS launch; revisit with elevation art before Android.
           col.glow && styles.cellGlow,
         ]}
       >
@@ -491,6 +618,8 @@ const ShowingUp = ({
           onPress={() => step(1)}
           disabled={offset >= maxBack}
           hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={`previous ${view}`}
           style={{ opacity: offset >= maxBack ? 0.25 : 1 }}
         >
           <Text style={styles.navChev}>‹</Text>
@@ -505,6 +634,8 @@ const ShowingUp = ({
           onPress={() => step(-1)}
           disabled={offset === 0}
           hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={`next ${view}`}
           style={{ opacity: offset === 0 ? 0.25 : 1 }}
         >
           <Text style={styles.navChev}>›</Text>
@@ -526,6 +657,15 @@ const ShowingUp = ({
         </View>
       ) : (
         <View style={{ gap: 8 }}>
+          {/* weekday header — a calendar grid without S-M-T-W-T-F-S
+              is unreadable (you can't tell which column is Saturday) */}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {DOW_LETTER.map((l, i) => (
+              <Text key={i} style={styles.dowLetter}>
+                {l}
+              </Text>
+            ))}
+          </View>
           {Array.from({ length: days.length / 7 }, (_, r) => (
             <View key={r} style={{ flexDirection: 'row', gap: 8 }}>
               {days
@@ -534,6 +674,13 @@ const ShowingUp = ({
             </View>
           ))}
         </View>
+      )}
+
+      {/* quiet past periods get a designed line, not dead space */}
+      {periodTotal === 0 && offset > 0 && !focused && (
+        <Text style={styles.quietLine}>
+          a quiet {view} — rest counts.
+        </Text>
       )}
 
       {/* tapped-day drill-in */}
@@ -547,9 +694,11 @@ const ShowingUp = ({
           {sel && sel.count > 0 ? (
             <Text style={styles.dayReadoutBody}>
               {sel.titles.slice(0, 3).join(' · ')}
-              {sel.titles.length > 3
-                ? `  +${sel.titles.length - 3} more`
-                : ''}
+              {sel.count > 3 ? `  +${sel.count - 3} more` : ''}
+            </Text>
+          ) : focused ? (
+            <Text style={styles.dayReadoutBodyMuted}>
+              nothing finished.
             </Text>
           ) : (
             <Text style={styles.dayReadoutRest}>
@@ -559,6 +708,11 @@ const ShowingUp = ({
         </View>
       )}
 
+      {presence > 0 && (
+        <Text style={styles.presenceLine}>
+          showed up {presence} of the last 30 days
+        </Text>
+      )}
       {!focused && (
         <Text style={styles.whisperSmall}>
           warmth = things finished · gaps are rest, not failure
@@ -577,19 +731,35 @@ export default function PatternsScreen() {
   const quests = useQuestStore((s) => s.quests);
   const tasksEver = useUserStore((s) => s.tasksEverCompleted);
   const focusMin = useUserStore((s) => s.focusMinutesLifetime);
+  const doneLog = useUserStore((s) => s.doneLog);
+  const anchors = useUserStore((s) => s.anchors);
   const companion = useCompanionMode();
   const focused = companion.isFocused;
   // Week/Month for "Showing up" — lifted here so the toggle can sit
   // in the section rule while the grid remounts fresh per view.
   const [supView, setSupView] = useState<'week' | 'month'>('week');
 
+  // "Now" heartbeat — ticks every 60s while the tab is focused so
+  // the ember cursor and today-boundaries stay honest across long
+  // sessions and midnight (they used to freeze at render time).
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useFocusEffect(
+    useCallback(() => {
+      setNowMs(Date.now());
+      const id = setInterval(() => setNowMs(Date.now()), 60_000);
+      return () => clearInterval(id);
+    }, []),
+  );
+  const todayYmd = localYmd(new Date(nowMs));
+
   const curve = digest.curve;
   const sparseCurve = curve.source === 'baseline';
   const learned = curve.source === 'learned';
   const ft = digest.followThrough;
 
-  // Every completed quest, bucketed by local day — feeds the
-  // navigable warmth field AND the tap-a-day drill-in.
+  // Every completed quest bucketed by local day, MERGED with the
+  // persisted doneLog ledger — deleting old quests on Home must
+  // never turn a past warm day cold (titles vanish, warmth stays).
   const dayLog = useMemo<DayLog>(() => {
     const m: DayLog = new Map();
     for (const q of quests) {
@@ -600,13 +770,43 @@ export default function PatternsScreen() {
       e.titles.push(q.title);
       m.set(k, e);
     }
+    for (const [k, n] of Object.entries(doneLog)) {
+      const e = m.get(k);
+      if (!e) m.set(k, { count: n, titles: [] });
+      else e.count = Math.max(e.count, n);
+    }
     return m;
-  }, [quests]);
+  }, [quests, doneLog]);
   const everLogged = dayLog.size > 0;
 
   const sparsePage = curve.sampleDays < 3 && !everLogged;
 
-  const trendChar = ft.trend > 0 ? '▲' : ft.trend < 0 ? '▽' : '—';
+  // Mantel week counts come from the SAME Sunday-anchored calendar
+  // week + completion-day bucketing as the grid below — the old
+  // planned-date rolling-7 source made two adjacent "this week"
+  // numbers disagree.
+  const { thisWeekDone, lastWeekDone } = useMemo(() => {
+    const t = new Date(todayYmd + 'T12:00');
+    const sumWeek = (weeksBack: number) => {
+      const start = new Date(t);
+      start.setDate(t.getDate() - t.getDay() - weeksBack * 7);
+      let n = 0;
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        n += dayLog.get(localYmd(d))?.count ?? 0;
+      }
+      return n;
+    };
+    return { thisWeekDone: sumWeek(0), lastWeekDone: sumWeek(1) };
+  }, [dayLog, todayYmd]);
+  const trendChar =
+    thisWeekDone > lastWeekDone
+      ? '▲'
+      : thisWeekDone < lastWeekDone
+        ? '▽'
+        : '—';
+
   const fmtMin = (m: number) =>
     m >= 60
       ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}`
@@ -615,19 +815,32 @@ export default function PatternsScreen() {
   const strong = ft.strongWindow;
   const weak = ft.weakWindow;
 
+  // Best-day chip: guarded against tiny samples — one check-in must
+  // never yield "Tuesdays tend to be your day".
   const dayChip =
-    digest.peakDow != null &&
-    digest.lowDow != null &&
-    digest.peakDow !== digest.lowDow
-      ? { up: `${DOW[digest.peakDow]}s carry you`, down: `${DOW[digest.lowDow]}s run quieter` }
-      : digest.peakDow != null
-        ? { up: `${DOW[digest.peakDow]}s tend to be your day`, down: null }
-        : null;
+    curve.sampleDays >= 5
+      ? digest.peakDow != null &&
+        digest.lowDow != null &&
+        digest.peakDow !== digest.lowDow
+        ? {
+            up: `${DOW[digest.peakDow]}s carry you`,
+            down: `${DOW[digest.lowDow]}s run quieter`,
+          }
+        : digest.peakDow != null
+          ? { up: `${DOW[digest.peakDow]}s tend to be your day`, down: null }
+          : null
+      : null;
 
   const hasNoticed =
     digest.win != null ||
     digest.recurrence.length > 0 ||
     digest.avoidance != null;
+
+  const learningTag = !learned
+    ? curve.sampleDays > 0
+      ? `still learning · day ${Math.min(curve.sampleDays, 13)} of 14`
+      : 'still learning'
+    : undefined;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -648,10 +861,7 @@ export default function PatternsScreen() {
         </Text>
 
         {/* 1 · hero curve */}
-        <Rule
-          label="Your day, as energy"
-          right={!learned ? 'still learning' : undefined}
-        />
+        <Rule label="Your day, as energy" right={learningTag} />
         <EnergyHero
           slots={curve.slots}
           peakStart={sparseCurve ? null : curve.peakStart}
@@ -659,20 +869,27 @@ export default function PatternsScreen() {
           slumpStart={sparseCurve ? null : curve.slumpStart}
           slumpEnd={sparseCurve ? null : curve.slumpEnd}
           sparse={sparseCurve}
+          learned={learned}
           focused={focused}
+          nowMs={nowMs}
+          wakeMin={anchors?.wake ?? null}
+          sleepMin={anchors?.sleep ?? null}
         />
 
         {/* 2 · momentum — mantel numbers, only when data */}
-        {(ft.thisWeek.done > 0 || tasksEver > 0 || focusMin > 0) && (
+        {(thisWeekDone > 0 || tasksEver > 0 || focusMin > 0) && (
           <View style={styles.mantel}>
             <View style={styles.mantelCol}>
               <Text style={[styles.mantelNum, { color: C.ember }]}>
-                {ft.thisWeek.done}
-                {ft.lastWeek.set > 0 && (
+                {thisWeekDone}
+                {lastWeekDone > 0 && (
                   <Text
                     style={[
                       styles.mantelTrend,
-                      { color: ft.trend > 0 ? C.honey : C.mute },
+                      {
+                        color:
+                          thisWeekDone > lastWeekDone ? C.honey : C.mute,
+                      },
                     ]}
                   >
                     {' '}
@@ -701,7 +918,7 @@ export default function PatternsScreen() {
           </View>
         )}
 
-        {/* 3 · showing up — REAL time navigation */}
+        {/* 3 · showing up — real time navigation */}
         <Rule
           label="Showing up"
           right={
@@ -715,6 +932,9 @@ export default function PatternsScreen() {
                     setSupView(v);
                   }}
                   hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: supView === v }}
+                  accessibilityLabel={`${v} view`}
                   style={[styles.segBtn, supView === v && styles.segBtnOn]}
                 >
                   <Text
@@ -735,6 +955,7 @@ export default function PatternsScreen() {
           view={supView}
           dayLog={dayLog}
           focused={focused}
+          todayYmd={todayYmd}
         />
 
         {/* 4 · windows */}
@@ -762,8 +983,8 @@ export default function PatternsScreen() {
             )}
             {strong && !focused && (
               <Text style={styles.whisperSmall}>
-                Lumi already leans on this — big things get offered to your{' '}
-                {WINDOWS[strong.window].label.toLowerCase()} first.
+                your {WINDOWS[strong.window].label.toLowerCase()} carries
+                the big things well — worth leaning on.
               </Text>
             )}
           </>
@@ -779,18 +1000,27 @@ export default function PatternsScreen() {
                 <Text style={styles.winText}>
                   you finished “{digest.win.quest.title}”
                   {digest.win.delayDays > 1
-                    ? ` after carrying it ${digest.win.delayDays} days — that one counts double.`
-                    : ' — clean and done.'}
+                    ? focused
+                      ? ` after ${digest.win.delayDays} days.`
+                      : ` after carrying it ${digest.win.delayDays} days — that one counts double.`
+                    : focused
+                      ? '.'
+                      : ' — clean and done.'}
                 </Text>
               </View>
             )}
             {digest.recurrence.slice(0, 2).map((r) => (
               <Pressable
-                key={r.title}
+                key={r.id}
                 style={styles.doorRow}
+                accessibilityRole="button"
+                accessibilityLabel={`${r.title} keeps coming back. Set it up to repeat.`}
                 onPress={() => {
                   void Haptics.selectionAsync();
-                  router.push('/(tabs)');
+                  router.push({
+                    pathname: '/(tabs)',
+                    params: { suggest: r.id },
+                  });
                 }}
               >
                 <View style={styles.doorDot} />
@@ -805,8 +1035,8 @@ export default function PatternsScreen() {
             ))}
             {digest.avoidance && !focused && (
               <Text style={styles.avoidLine}>
-                a few {digest.avoidance.label} have been waiting a while. not
-                a judgment — just naming it, in case one is ready.
+                a few {digest.avoidance.label} have been waiting a while.
+                not a judgment — just naming it, in case one is ready.
               </Text>
             )}
           </>
@@ -826,10 +1056,12 @@ export default function PatternsScreen() {
           </View>
         )}
 
-        {/* 7 · footer */}
-        <Text style={styles.foot}>
-          every week, this page knows you a little better ✦
-        </Text>
+        {/* 7 · footer — quiet in focused mode */}
+        {!focused && (
+          <Text style={styles.foot}>
+            every week, this page knows you a little better ✦
+          </Text>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -871,6 +1103,7 @@ const WindowRow = ({
               width: `${Math.max(pct, 2)}%`,
               backgroundColor: color,
             },
+            // iOS-only glow — deliberate for the iOS launch.
             glow && {
               shadowColor: C.ember,
               shadowOpacity: 0.5,
@@ -984,6 +1217,20 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingRight: 3,
   },
+  quietLine: {
+    fontFamily: fonts.fraunces,
+    fontSize: 12.5,
+    color: C.dusk,
+    textAlign: 'center',
+    marginTop: 12,
+    paddingRight: 3,
+  },
+  presenceLine: {
+    fontFamily: fonts.inter,
+    fontSize: 11,
+    color: C.mute,
+    marginTop: 12,
+  },
 
   mantel: {
     flexDirection: 'row',
@@ -1000,7 +1247,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.fraunces,
     fontSize: 26,
     lineHeight: 28,
-    ...italicNumberFix,
+    ...italicNumberFixLarge,
   },
   mantelTrend: { fontSize: 13 },
   mantelLabel: {
@@ -1018,7 +1265,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'transparent',
   },
-  segBtnOn: { borderColor: hexA(C.ember, 0.5), backgroundColor: hexA(C.ember, 0.12) },
+  segBtnOn: {
+    borderColor: hexA(C.ember, 0.5),
+    backgroundColor: hexA(C.ember, 0.12),
+  },
   segText: { fontFamily: fonts.inter, fontSize: 11, color: C.mute },
   segTextOn: { color: C.ember, fontFamily: fonts.interMed },
 
@@ -1060,7 +1310,8 @@ const styles = StyleSheet.create({
     fontFamily: fonts.fraunces,
     fontSize: 17,
     color: C.bone,
-    ...italicNumberFix,
+    paddingRight: 3,
+    includeFontPadding: false,
   },
   monthCell: {
     flex: 1,
@@ -1100,6 +1351,12 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginTop: 3,
   },
+  dayReadoutBodyMuted: {
+    fontFamily: fonts.inter,
+    fontSize: 12.5,
+    color: C.mute,
+    marginTop: 3,
+  },
   dayReadoutRest: {
     fontFamily: fonts.fraunces,
     fontSize: 12.5,
@@ -1111,8 +1368,12 @@ const styles = StyleSheet.create({
   winHeadRow: { flexDirection: 'row', alignItems: 'baseline' },
   winName: { fontFamily: fonts.inter, fontSize: 14, color: C.bone },
   winNote: { fontFamily: fonts.fraunces, fontSize: 13, paddingRight: 3 },
-  winCount: { fontFamily: fonts.inter, fontSize: 11.5, color: C.mute },
-  winPct: { fontFamily: fonts.fraunces, fontSize: 14, ...italicNumberFix },
+  winCount: {
+    fontFamily: fonts.inter,
+    fontSize: 11.5,
+    color: C.mute,
+  },
+  winPct: { fontFamily: fonts.fraunces, fontSize: 14 },
   winTrack: {
     height: 3,
     backgroundColor: C.void2,

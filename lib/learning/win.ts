@@ -70,7 +70,9 @@ export const findWinOfWeek = (quests: Quest[]): WinItem | null => {
 
   for (const q of quests) {
     if (!q.completed || !q.completedAt) continue;
-    const completedDay = q.completedAt.slice(0, 10);
+    // Local day, not UTC slice — an 8pm PT completion has tomorrow's
+    // UTC date and used to vanish from "this week" until morning.
+    const completedDay = ymd(new Date(q.completedAt));
     if (completedDay < thisWeekStart || completedDay > today) continue;
     const created = new Date(q.createdAt);
     const completed = new Date(q.completedAt);
@@ -96,7 +98,10 @@ export const findWinOfWeek = (quests: Quest[]): WinItem | null => {
       : '';
   return {
     quest: best.quest,
-    delayDays: Math.min(best.delay, 14),
+    // Unclamped for display — the 14-cap is a SCORING guard, and
+    // "carried it 14 days" on a 40-day carry undersells the exact
+    // moment this surface exists to celebrate.
+    delayDays: best.delay,
     completedDow: dow,
     headline: `You finally finished ${best.quest.title.toLowerCase()}${delayCopy}.`,
     body:

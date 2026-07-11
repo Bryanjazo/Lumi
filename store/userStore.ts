@@ -213,6 +213,12 @@ interface UserState {
    *  'none' = the art's own cream. Free feature (small delight). */
   roomTint: RoomTint;
   setRoomTint: (t: RoomTint) => void;
+  /** Per-day completion counts (local YYYY-MM-DD → n), bumped at the
+   *  same choke point as tasksEverCompleted. Exists so Patterns'
+   *  history grid survives quest DELETION — past warmth must never
+   *  go cold because the list got tidied. */
+  doneLog: Record<string, number>;
+  bumpDoneLog: (ymd: string, delta: 1 | -1) => void;
   heyLumiEnabled: boolean;
   /** Server-granted flag (users.is_tester) — internal/TestFlight
    *  testers whose raw captures upload for parser tuning. Never
@@ -460,6 +466,7 @@ export const useUserStore = create<UserState>()(
       heyLumiEnabled: false,
       medsNudge: false,
       roomTint: 'none',
+      doneLog: {},
       activeDaysThisMonth: 0,
       focusMinutesLifetime: 0,
       vitalitySnapshot: null,
@@ -573,6 +580,14 @@ export const useUserStore = create<UserState>()(
 
       setMedsNudge: (v) => set({ medsNudge: v }),
       setRoomTint: (t) => set({ roomTint: t }),
+      bumpDoneLog: (ymd, delta) =>
+        set((s) => {
+          const next = Math.max(0, (s.doneLog[ymd] ?? 0) + delta);
+          const doneLog = { ...s.doneLog };
+          if (next === 0) delete doneLog[ymd];
+          else doneLog[ymd] = next;
+          return { doneLog };
+        }),
 
       setIsTester: (v) => set({ isTester: v }),
 
@@ -761,6 +776,7 @@ export const useUserStore = create<UserState>()(
           heyLumiEnabled: false,
           medsNudge: false,
           roomTint: 'none',
+          doneLog: {},
           activeDaysThisMonth: 0,
           focusMinutesLifetime: 0,
           vitalitySnapshot: null,

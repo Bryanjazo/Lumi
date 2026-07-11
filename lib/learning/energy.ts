@@ -171,7 +171,9 @@ export const computeEnergyCurve = (
     const at = new Date(c.createdAt);
     if (at < cutoff) continue;
     const slot = Math.floor((at.getHours() * 60 + at.getMinutes()) / 30);
-    const day = c.createdAt.slice(0, 10);
+    // Local day key — the UTC slice split one local evening into two
+    // "days", inflating sampleDays and firing the learned label early.
+    const day = ymdLocal(at);
     sums[slot] += c.energy;
     counts[slot]++;
     dayKeys[slot].add(day);
