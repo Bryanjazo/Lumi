@@ -345,8 +345,14 @@ const Room = ({
   // of the score": a dim veil lifts as vitality climbs, honey warmth
   // settles in on good days, and decor pieces fade in at the same
   // thresholds the old drawn props used (vase ~30, frame ~55).
-  const kx = W / 172; // all placement below is in art coords × k
-  const ky = H / 144;
+  // The bg asset is the 172×144 art edge-extended to 200×164 so the
+  // scene sits zoomed OUT a touch (owner request) — wall and floor
+  // continue into the padding. Content coords below are original art
+  // coords + the padding offset.
+  const kx = W / 200;
+  const ky = H / 164;
+  const OX = 14; // padding offset baked into room-bg.png
+  const OY = 10;
   // The window shows the USER'S sky, not the mood — stars at noon /
   // sunshine at midnight read as a broken clock (audit B4). The art's
   // glass is painted daytime; at night a deep-blue pane with a few
@@ -355,8 +361,6 @@ const Room = ({
   const isNightSky = hourNow < 6 || hourNow >= 20;
   const dimAlpha = Math.min(1, Math.max(0, (1 - v) * 0.2 + (isNightSky ? 0.08 : 0)));
   const warmAlpha = Math.min(1, Math.max(0, v * 0.1));
-  const vaseFade = Math.max(0, Math.min(1, (v - 0.3) / 0.2));
-  const frameFade = Math.max(0, Math.min(1, (v - 0.55) / 0.2));
 
   // Luna mood + position. Joy spikes (tap-to-cheer) amplify the bob
   // for ~80 frames so the cat visibly reacts to a tap.
@@ -375,12 +379,12 @@ const Room = ({
           ? Math.sin(S.t * 0.025) * 0.7
           : Math.sin(S.t * 0.05) * 1.2) * joyAmp;
   // Rug center in the art ≈ (85, 121) — Luna lives on the rug.
-  const lunaX = 85 * kx;
-  const lunaY = 121 * ky - 6 + lunaBob;
+  const lunaX = (85 + OX) * kx;
+  const lunaY = (121 + OY) * ky - 6 + lunaBob;
 
   // GIF cat: anchor the sprite's center on lunaX and its FEET on
   // lunaY+12 so the cat plants on the rug naturally.
-  const GIF_SIZE = 64;
+  const GIF_SIZE = 56;
   const gifLeft = lunaX - GIF_SIZE / 2;
   const gifTop = lunaY + 12 - GIF_SIZE;
 
@@ -393,14 +397,13 @@ const Room = ({
       style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}
       resizeMode="stretch"
     />
-    {/* Decor — the cabinet is furniture (always there); the vase and
-        frame are the room warming up, fading in with vitality. */}
+    {/* Decor — the cat cabinet, vase and frame (commissioned set) */}
     <Image
       source={ROOM_CABINET}
       style={{
         position: 'absolute',
-        left: 101 * kx,
-        top: 65 * ky,
+        left: (101 + OX) * kx,
+        top: (65 + OY) * ky,
         width: 67 * kx,
         height: 43 * ky,
       }}
@@ -410,11 +413,10 @@ const Room = ({
       source={ROOM_VASE}
       style={{
         position: 'absolute',
-        left: 110 * kx,
-        top: 48 * ky,
+        left: (110 + OX) * kx,
+        top: (48 + OY) * ky,
         width: 16 * kx,
         height: 18 * ky,
-        opacity: vaseFade,
       }}
       resizeMode="stretch"
     />
@@ -422,11 +424,10 @@ const Room = ({
       source={ROOM_FRAME}
       style={{
         position: 'absolute',
-        left: 138 * kx,
-        top: 40 * ky,
+        left: (138 + OX) * kx,
+        top: (40 + OY) * ky,
         width: 16 * kx,
         height: 17 * ky,
-        opacity: frameFade,
       }}
       resizeMode="stretch"
     />
@@ -436,8 +437,8 @@ const Room = ({
         pointerEvents="none"
         style={{
           position: 'absolute',
-          left: 18 * kx,
-          top: 11 * ky,
+          left: (18 + OX) * kx,
+          top: (11 + OY) * ky,
           width: 52 * kx,
           height: 52 * ky,
           backgroundColor: 'rgba(18,22,48,0.82)',
