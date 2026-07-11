@@ -141,6 +141,13 @@ const STRUGGLES: StruggleDef[] = [
     reflect:
       "Order doesn't come naturally — so I'll do the sorting, and just hand you what's next.",
   },
+  {
+    key: 'meds',
+    label: 'Remembering meds or vitamins',
+    glyph: '✚',
+    reflect:
+      "Easy to lose track of — so I'll add one gentle morning nudge. You can turn it off any time.",
+  },
 ];
 
 type RhythmKey = 'morning' | 'afternoon' | 'night' | 'varies';
@@ -386,6 +393,7 @@ const STRUGGLE_PRIORITY: StruggleKey[] = [
   'time',
   'forget',
   'avoid',
+  'meds',
 ];
 
 interface Answers {
@@ -685,6 +693,11 @@ export default function Onboarding() {
     // 'focused'). The setter is a single Zustand call — no async.
     setCompanionMode(companionPick);
 
+    // Picking the meds struggle IS the consent for the morning meds
+    // nudge — the only way that notification ever turns on by itself.
+    if (struggles.includes('meds')) {
+      useUserStore.getState().setMedsNudge(true);
+    }
     completeOnboardingWith({
       struggles,
       sharpWindow: sharp,

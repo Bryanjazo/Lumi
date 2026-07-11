@@ -35,7 +35,8 @@ export type StruggleKey =
   | 'follow'
   | 'avoid'
   | 'overwhelm'
-  | 'forget';
+  | 'forget'
+  | 'meds';
 
 /** Part-of-day windows used for sharp/foggy energy seeds. */
 export type EnergyWindowKey = 'morning' | 'midday' | 'afternoon' | 'evening';

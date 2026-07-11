@@ -393,6 +393,7 @@ const STRUGGLE_LABELS: Record<StruggleKey, string> = {
   avoid: 'Avoidance',
   overwhelm: 'Feeling overwhelmed',
   forget: 'Forgetting',
+  meds: 'Remembering meds or vitamins',
 };
 
 // ─────────────────────────────────────────────────────────────────────
