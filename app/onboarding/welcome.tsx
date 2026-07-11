@@ -455,7 +455,6 @@ export default function Onboarding() {
   // gets its own Lumi prompt and the user only commits to one time at
   // a time. Cascading constraints enforce the natural order (you can't
   // eat breakfast before you wake, etc.).
-  const [anchorIdx, setAnchorIdx] = useState(0);
   const [struggles, setStruggles] = useState<StruggleKey[]>([]);
   const [rhythm, setRhythm] = useState<RhythmKey | null>(null);
   const [dump, setDump] = useState('');
@@ -495,7 +494,7 @@ export default function Onboarding() {
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
-  }, [step, anchorIdx, slide]);
+  }, [step, slide]);
 
   // Reflection cards — staggered reveal (step 5 only).
   const [revealed, setRevealed] = useState(0);
@@ -550,27 +549,10 @@ export default function Onboarding() {
   // ── Step navigation ──────────────────────────────────────────────
   const next = () => {
     Haptics.selectionAsync();
-    if (step === 4 && anchorIdx < ANCHOR_DEFS.length - 1) {
-      // Advance to next anchor sub-step. Snap the next anchor's
-      // current value into its bounds against the just-set previous
-      // anchor (cascading default — keeps things sensible).
-      const nextKey = ANCHOR_DEFS[anchorIdx + 1].key;
-      setAnchors((cur) => clampAnchor(nextKey, cur));
-      setAnchorIdx((i) => i + 1);
-      return;
-    }
-    if (step === 3) {
-      // Entering anchors — reset to the first sub-step.
-      setAnchorIdx(0);
-    }
     setStep((s) => Math.min(TOTAL_STEPS - 1, s + 1));
   };
   const back = () => {
     Haptics.selectionAsync();
-    if (step === 4 && anchorIdx > 0) {
-      setAnchorIdx((i) => i - 1);
-      return;
-    }
     setStep((s) => Math.max(0, s - 1));
   };
 
@@ -787,10 +769,7 @@ export default function Onboarding() {
                 // For the anchors segment (i === 3), partially fill as
                 // the user moves through the 5 sub-steps so the bar
                 // doesn't look stuck on a single segment for ages.
-                let fill = i < step ? 1 : 0;
-                if (step === 4 && i === 3) {
-                  fill = (anchorIdx + 1) / ANCHOR_DEFS.length;
-                }
+                const fill = i < step ? 1 : 0;
                 return (
                   <View key={i} style={styles.progressSeg}>
                     {fill > 0 && (
@@ -1055,76 +1034,81 @@ export default function Onboarding() {
           )}
 
           {/* ── 4 · ANCHORS ── one at a time, cascading. */}
-          {step === 4 && (() => {
-            const cur = ANCHOR_DEFS[anchorIdx];
-            const v = anchors[cur.key];
-            const changed = v !== cur.def;
-            const { min, max } = anchorBounds(cur.key, anchors);
-            const atMin = v <= min;
-            const atMax = v >= max;
-            const prompt = ANCHOR_PROMPTS[cur.key];
-            const isLast = anchorIdx === ANCHOR_DEFS.length - 1;
-            return (
-              <View style={styles.stepWrap}>
-                <Says sub={prompt.sub}>{prompt.title}</Says>
-                <Text style={styles.anchorIndexLabel}>
-                  {anchorIdx + 1} of {ANCHOR_DEFS.length} · {cur.label}
-                </Text>
-                <View style={styles.singleAnchorWrap}>
-                  <View style={styles.singleAnchorRow}>
-                    <Text style={[styles.anchorGlyph, { color: C.honey }]}>
-                      {cur.glyph}
-                    </Text>
-                    <Text style={styles.anchorLabel}>{cur.label}</Text>
-                  </View>
-                  <View style={styles.singleAnchorStepperRow}>
-                    <Pressable
-                      onPressIn={() => !atMin && startNudge(cur.key, -15)}
-                      onPressOut={stopNudge}
-                      disabled={atMin}
+          {step === 4 && (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.stepWrap}
+              showsVerticalScrollIndicator={false}
+            >
+              <Says sub="Rough is fine — these anchor your mornings, meals, and wind-down. Nudge any of them.">
+                When does your day usually breathe?
+              </Says>
+              <View style={styles.anchorsOneCard}>
+                {ANCHOR_DEFS.map((def, di) => {
+                  const v = anchors[def.key];
+                  const changed = v !== def.def;
+                  const { min, max } = anchorBounds(def.key, anchors);
+                  const atMin = v <= min;
+                  const atMax = v >= max;
+                  return (
+                    <View
+                      key={def.key}
                       style={[
-                        styles.anchorStepperBtnLg,
-                        atMin && { opacity: 0.35 },
+                        styles.anchorOneRow,
+                        di > 0 && styles.anchorOneRowBorder,
                       ]}
                     >
-                      <Text style={styles.anchorStepperGlyphLg}>−</Text>
-                    </Pressable>
-                    <Text
-                      style={[
-                        styles.anchorTimeBig,
-                        { color: changed ? C.ember : C.bone },
-                      ]}
-                    >
-                      {fmtTime(v)}
-                    </Text>
-                    <Pressable
-                      onPressIn={() => !atMax && startNudge(cur.key, 15)}
-                      onPressOut={stopNudge}
-                      disabled={atMax}
-                      style={[
-                        styles.anchorStepperBtnLg,
-                        atMax && { opacity: 0.35 },
-                      ]}
-                    >
-                      <Text style={styles.anchorStepperGlyphLg}>+</Text>
-                    </Pressable>
-                  </View>
-                  {anchorIdx > 0 && (
-                    <Text style={styles.anchorBoundsHint}>
-                      after {ANCHOR_DEFS[anchorIdx - 1].label.toLowerCase()} at{' '}
-                      {fmtTime(anchors[ANCHOR_DEFS[anchorIdx - 1].key])}
-                    </Text>
-                  )}
-                </View>
-                <View style={{ marginTop: 16 }}>
-                  <ContinueBtn
-                    onPress={next}
-                    label={isLast ? 'That looks right →' : 'Continue'}
-                  />
-                </View>
+                      <Text style={[styles.anchorGlyph, { color: C.honey }]}>
+                        {def.glyph}
+                      </Text>
+                      <Text style={styles.anchorOneLabel}>{def.label}</Text>
+                      <Pressable
+                        onPressIn={() => !atMin && startNudge(def.key, -15)}
+                        onPressOut={stopNudge}
+                        disabled={atMin}
+                        hitSlop={6}
+                        accessibilityLabel={`${def.label} earlier`}
+                        style={[
+                          styles.anchorOneBtn,
+                          atMin && { opacity: 0.35 },
+                        ]}
+                      >
+                        <Text style={styles.anchorOneBtnGlyph}>−</Text>
+                      </Pressable>
+                      <Text
+                        style={[
+                          styles.anchorOneTime,
+                          { color: changed ? C.ember : C.bone },
+                        ]}
+                      >
+                        {fmtTime(v)}
+                      </Text>
+                      <Pressable
+                        onPressIn={() => !atMax && startNudge(def.key, 15)}
+                        onPressOut={stopNudge}
+                        disabled={atMax}
+                        hitSlop={6}
+                        accessibilityLabel={`${def.label} later`}
+                        style={[
+                          styles.anchorOneBtn,
+                          atMax && { opacity: 0.35 },
+                        ]}
+                      >
+                        <Text style={styles.anchorOneBtnGlyph}>+</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
               </View>
-            );
-          })()}
+              <Text style={styles.anchorOneHint}>
+                each one keeps a sensible gap from its neighbors — you can
+                fine-tune any time in settings
+              </Text>
+              <View style={{ marginTop: 16 }}>
+                <ContinueBtn onPress={next} label="That looks right →" />
+              </View>
+            </ScrollView>
+          )}
 
           {/* ── 5 · REFLECTION ── */}
           {step === 5 && (
@@ -2082,6 +2066,57 @@ const styles = StyleSheet.create({
     fontSize: 22,
     color: C.boneDim,
     lineHeight: 26,
+  },
+  anchorsOneCard: {
+    marginTop: 16,
+    backgroundColor: 'rgba(236,224,203,0.04)',
+    borderWidth: 1,
+    borderColor: '#2A2420',
+    borderRadius: 18,
+    paddingHorizontal: 16,
+  },
+  anchorOneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 13,
+  },
+  anchorOneRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: '#2A2420',
+  },
+  anchorOneLabel: {
+    flex: 1,
+    fontFamily: fonts.interMed,
+    fontSize: 15,
+    color: '#ECE0CB',
+  },
+  anchorOneBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#2A2420',
+    backgroundColor: 'rgba(236,224,203,0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  anchorOneBtnGlyph: { color: '#ECE0CB', fontSize: 18, lineHeight: 20 },
+  anchorOneTime: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 19,
+    minWidth: 76,
+    textAlign: 'center',
+    paddingHorizontal: 4, // Fraunces italic overhang
+  },
+  anchorOneHint: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 12,
+    color: '#6E655A',
+    textAlign: 'center',
+    marginTop: 12,
   },
   anchorTimeBig: {
     minWidth: 140,
