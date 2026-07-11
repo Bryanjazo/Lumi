@@ -444,7 +444,7 @@ const reflectionCards = (ans: Answers): ReflectionCard[] => {
 // screens at the end are skippable opt-ins for power features
 // (calendar sync, iOS home-screen widget) so the user isn't forced
 // past them but is also shown the door.
-const TOTAL_STEPS = 9;
+const TOTAL_STEPS = 7;
 
 export default function Onboarding() {
   const router = useRouter();
@@ -531,14 +531,9 @@ export default function Onboarding() {
       setRevealed(0);
       return;
     }
-    setRevealed(0);
-    let i = 0;
-    const id = setInterval(() => {
-      i += 1;
-      setRevealed(i);
-      if (i >= cards.length) clearInterval(id);
-    }, 560);
-    return () => clearInterval(id);
+    // Instant reveal (simplification audit) — the staggered 560ms
+    // drip hid the Continue button behind a forced wait.
+    setRevealed(cards.length);
   }, [step, cards.length]);
 
   // ── Voice for the brain-dump ────────────────────────────────────
@@ -1169,194 +1164,12 @@ export default function Onboarding() {
               nuanced mid-point that's available later via
               Profile → Personalize — surfacing three options here
               would overload the first-time decision. */}
-          {step === 6 && (
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={[styles.stepWrap, { paddingTop: 6 }]}
-              showsVerticalScrollIndicator={false}
-            >
-              <Says sub="There’s a cozy side to Lumi — a pixel cat in a little world that grows as you care for yourself. Lovely for some, not for everyone. Your call.">
-                How do you want Lumi to feel?
-              </Says>
-
-              <View style={{ gap: 12, marginTop: 18 }}>
-                <Pressable
-                  onPress={() => {
-                    Haptics.selectionAsync();
-                    setCompanionPick('full');
-                  }}
-                  style={[
-                    styles.companionCard,
-                    companionPick === 'full' && styles.companionCardOn,
-                  ]}
-                >
-                  <View style={styles.companionCardHeader}>
-                    <Text style={styles.companionCardGlyph}>◈◈</Text>
-                    <Text
-                      style={[
-                        styles.companionCardTitle,
-                        companionPick === 'full' && {
-                          color: C.ember,
-                        },
-                      ]}
-                    >
-                      A cozy companion
-                    </Text>
-                    <View
-                      style={[
-                        styles.companionCardRadio,
-                        companionPick === 'full' && {
-                          backgroundColor: C.ember,
-                          borderColor: C.ember,
-                        },
-                      ]}
-                    >
-                      {companionPick === 'full' && (
-                        <Text style={styles.companionCardCheck}>✓</Text>
-                      )}
-                    </View>
-                  </View>
-                  <Text style={styles.companionCardBody}>
-                    Lumi the pixel cat, a living room that blooms, gentle
-                    streaks &amp; little rewards as you go.
-                  </Text>
-                  <View style={styles.companionTagRow}>
-                    {['PIXEL PET', 'STREAKS', 'REWARDS'].map((t) => (
-                      <View key={t} style={styles.companionTag}>
-                        <Text style={styles.companionTagText}>{t}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </Pressable>
-
-                <Pressable
-                  onPress={() => {
-                    Haptics.selectionAsync();
-                    setCompanionPick('minimal');
-                  }}
-                  style={[
-                    styles.companionCard,
-                    companionPick === 'minimal' && styles.companionCardOn,
-                  ]}
-                >
-                  <View style={styles.companionCardHeader}>
-                    <Text style={styles.companionCardGlyph}>◐</Text>
-                    <Text
-                      style={[
-                        styles.companionCardTitle,
-                        companionPick === 'minimal' && {
-                          color: C.ember,
-                        },
-                      ]}
-                    >
-                      A warm clean organizer
-                    </Text>
-                    <View
-                      style={[
-                        styles.companionCardRadio,
-                        companionPick === 'minimal' && {
-                          backgroundColor: C.ember,
-                          borderColor: C.ember,
-                        },
-                      ]}
-                    >
-                      {companionPick === 'minimal' && (
-                        <Text style={styles.companionCardCheck}>✓</Text>
-                      )}
-                    </View>
-                  </View>
-                  <Text style={styles.companionCardBody}>
-                    Small quiet Lumi in the corner, gentle streaks. No XP,
-                    no unlocks — the middle ground.
-                  </Text>
-                  <View style={styles.companionTagRow}>
-                    {['QUIET PET', 'STREAKS', 'NO GAME'].map((t) => (
-                      <View key={t} style={styles.companionTag}>
-                        <Text style={styles.companionTagText}>{t}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </Pressable>
-
-                <Pressable
-                  onPress={() => {
-                    Haptics.selectionAsync();
-                    setCompanionPick('focused');
-                  }}
-                  style={[
-                    styles.companionCard,
-                    companionPick === 'focused' && styles.companionCardOn,
-                  ]}
-                >
-                  <View style={styles.companionCardHeader}>
-                    <Text style={styles.companionCardGlyph}>◷</Text>
-                    <Text
-                      style={[
-                        styles.companionCardTitle,
-                        companionPick === 'focused' && {
-                          color: C.ember,
-                        },
-                      ]}
-                    >
-                      Just the essentials
-                    </Text>
-                    <View
-                      style={[
-                        styles.companionCardRadio,
-                        companionPick === 'focused' && {
-                          backgroundColor: C.ember,
-                          borderColor: C.ember,
-                        },
-                      ]}
-                    >
-                      {companionPick === 'focused' && (
-                        <Text style={styles.companionCardCheck}>✓</Text>
-                      )}
-                    </View>
-                  </View>
-                  <Text style={styles.companionCardBody}>
-                    No pet, no points, no streaks. A calm, clean planner
-                    and nothing extra.
-                  </Text>
-                  <View style={styles.companionTagRow}>
-                    {['QUIET', 'NO GAME', 'MINIMAL'].map((t) => (
-                      <View
-                        key={t}
-                        style={[
-                          styles.companionTag,
-                          styles.companionTagMuted,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.companionTagText,
-                            { color: C.mute },
-                          ]}
-                        >
-                          {t}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </Pressable>
-              </View>
-
-              <Text style={styles.companionFootHint}>
-                You can switch anytime in Settings.
-              </Text>
-
-              <View style={{ marginTop: 18 }}>
-                <ContinueBtn onPress={next} label="Continue" />
-              </View>
-            </ScrollView>
-          )}
-
-          {/* Step 7 — Calendar connect.
+          {/* Step 6 (final) — Calendar connect.
               Optional. Auto-enables sync to the OS default calendar
               when granted; user can change which calendar later from
               Profile. Skip is a first-class action — never punishes
               the user for opting out. */}
-          {step === 7 && (
+          {step === 6 && (
             <ScrollView
               style={{ flex: 1 }}
               contentContainerStyle={[styles.stepWrap, { paddingTop: 6 }]}
@@ -1446,7 +1259,10 @@ export default function Onboarding() {
                 }}
               >
                 <Pressable
-                  onPress={skipCalendarStep}
+                  onPress={() => {
+                    skipCalendarStep();
+                    finalize();
+                  }}
                   style={{ paddingVertical: 12, paddingHorizontal: 14 }}
                 >
                   <Text
@@ -1462,63 +1278,13 @@ export default function Onboarding() {
                 {(calendarStatus === 'connected' ||
                   calendarStatus === 'error') && (
                   <View style={{ flex: 1 }}>
-                    <ContinueBtn onPress={next} label="Continue" />
+                    <ContinueBtn onPress={finalize} label="I’m ready →" />
                   </View>
                 )}
               </View>
             </ScrollView>
           )}
 
-          {/* Step 8 — Widget intro.
-              Informational only. Shows a mock of the widget + the
-              three-step recipe to add it. "I'm ready" finalizes
-              onboarding regardless of whether the user actually adds
-              it (the widget is opt-in, not a gate). */}
-          {step === 8 && (
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={[styles.stepWrap, { paddingTop: 6 }]}
-              showsVerticalScrollIndicator={false}
-            >
-              <Says sub="Glanceable on your home screen — my mood, plus how many tasks you've done today.">
-                Add me to your home screen
-              </Says>
-
-              <View style={styles.widgetMockWrap}>
-                <View style={styles.widgetMock}>
-                  <Image
-                    source={lunaSource('idle')}
-                    style={styles.widgetMockCat}
-                  />
-                  <Text style={styles.widgetMockLabel}>Lumi · 3 done</Text>
-                </View>
-              </View>
-
-              <View style={{ gap: 12, marginTop: 22 }}>
-                {[
-                  { n: 1, t: 'Long-press any blank spot on your home screen.' },
-                  { n: 2, t: 'Tap the + in the top corner, search "Lumi".' },
-                  { n: 3, t: 'Pick the small size and add it. You’re set.' },
-                ].map((s) => (
-                  <View key={s.n} style={styles.widgetStepRow}>
-                    <View style={styles.widgetStepBubble}>
-                      <Text style={styles.widgetStepNum}>{s.n}</Text>
-                    </View>
-                    <Text style={styles.widgetStepText}>{s.t}</Text>
-                  </View>
-                ))}
-              </View>
-
-              <Text style={styles.companionFootHint}>
-                Optional — you can always add me later from your home
-                screen.
-              </Text>
-
-              <View style={{ marginTop: 18 }}>
-                <ContinueBtn onPress={finalize} label="I’m ready" />
-              </View>
-            </ScrollView>
-          )}
         </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>

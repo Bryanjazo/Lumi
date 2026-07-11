@@ -1081,7 +1081,7 @@ export default function AccountScreen() {
         glyph: '◔',
         title: 'Your rhythm',
         line: `Sharpest in the ${label}`,
-        detail: `You're at your best in the ${label}. I front-load your hardest quests there and keep the other windows lighter.`,
+        detail: `You're at your best in the ${label}. I front-load your hardest tasks there and keep the other windows lighter.`,
         confidence: 3,
         viz: 'curve',
         action: 'windows',
@@ -1657,490 +1657,30 @@ export default function AccountScreen() {
           </View>
         </View>
 
-        {/* ── 2 · HOW FAR YOU'VE COME ─────────────────────────────────
-            Per lumi-stats-section-spec.md — four warm always-climbing
-            stats with encouraging empty states. Order: Days with Lumi
-            (honey) · Things done (ember) · Current streak (bloom) ·
-            This week (dusk). */}
+        {/* Stats grid removed (simplification audit #4): Me's bond
+            narrative tells the same story one tap away — numbers live
+            in ONE place now. */}
+
+        {/* ── 3 · WHAT LUMI KNOWS — one door, one canonical screen
+            (simplification audit #5: this section, Me's row, and
+            /insights showed the same data three ways). */}
         <View style={styles.sectionWrap}>
-          <SectionLabel>How far you've come</SectionLabel>
-          <View style={styles.statsGrid}>
-            {/* 1 · Days with Lumi — never zero (clamped to 1+) */}
-            <View
-              style={[
-                styles.statCard,
-                {
-                  backgroundColor: hexA(C.honey, 0.07),
-                  borderColor: hexA(C.honey, 0.22),
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.statIconBox,
-                  {
-                    backgroundColor: hexA(C.honey, 0.12),
-                    borderColor: hexA(C.honey, 0.32),
-                  },
-                ]}
-              >
-                <Text style={[styles.statIconGlyph, { color: C.honey }]}>
-                  ❖
-                </Text>
-              </View>
-              <Text style={[styles.statValue, { color: C.honey }]}>
-                {daysWithLumi}
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync();
+              router.push('/insights');
+            }}
+            style={styles.knowsDoor}
+          >
+            <Text style={styles.knowsDoorSpark}>✦</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.knowsDoorTitle}>What Lumi knows</Text>
+              <Text style={styles.knowsDoorSub}>
+                your patterns, named gently — grows as you go
               </Text>
-              <Text style={styles.statLabel}>days with Lumi</Text>
-              {/* Active-day dots — one per day of last 7, lit if any
-                 task was completed that day. Reflects engagement
-                 without the heaviness of a number. */}
-              <View style={styles.statDotsRow}>
-                {Array.from({ length: 7 }).map((_, i) => {
-                  // i=0 is 6 days ago, i=6 is today — read left→right
-                  // as chronological week.
-                  const lit = last7Days[6 - i] > 0;
-                  return (
-                    <View
-                      key={i}
-                      style={[
-                        styles.statDot,
-                        {
-                          backgroundColor: lit
-                            ? C.honey
-                            : hexA(C.honey, 0.18),
-                        },
-                      ]}
-                    />
-                  );
-                })}
-                <Text style={styles.statDotsLabel}>this week</Text>
-              </View>
             </View>
-
-            {/* 2 · Things done — milestone progress bar */}
-            <View
-              style={[
-                styles.statCard,
-                {
-                  backgroundColor: hexA(C.ember, 0.07),
-                  borderColor: hexA(C.ember, 0.22),
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.statIconBox,
-                  {
-                    backgroundColor: hexA(C.ember, 0.12),
-                    borderColor: hexA(C.ember, 0.32),
-                  },
-                ]}
-              >
-                <Text style={[styles.statIconGlyph, { color: C.ember }]}>
-                  ✓
-                </Text>
-              </View>
-              {lifetimeDone === 0 ? (
-                <>
-                  <Text
-                    style={[
-                      styles.statValueSoft,
-                      { color: hexA(C.ember, 0.8) },
-                    ]}
-                  >
-                    Your first
-                  </Text>
-                  <Text style={styles.statLabel}>one&apos;s coming</Text>
-                  <View style={styles.statBarTrack}>
-                    <View
-                      style={[
-                        styles.statBarFill,
-                        { width: '4%', backgroundColor: C.ember },
-                      ]}
-                    />
-                  </View>
-                  <Text style={[styles.statBarSub, { color: C.ember }]}>
-                    0 to {nextMilestone}
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text style={[styles.statValue, { color: C.ember }]}>
-                    {lifetimeDone}
-                  </Text>
-                  <Text style={styles.statLabel}>things done</Text>
-                  <View style={styles.statBarTrack}>
-                    <View
-                      style={[
-                        styles.statBarFill,
-                        {
-                          width: `${Math.max(4, milestoneProgress * 100)}%`,
-                          backgroundColor: C.ember,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={[styles.statBarSub, { color: C.ember }]}>
-                    {nextMilestone - lifetimeDone} to {nextMilestone}
-                  </Text>
-                </>
-              )}
-            </View>
-
-            {/* 3 · Current streak — bloom + flame */}
-            <View
-              style={[
-                styles.statCard,
-                {
-                  backgroundColor: hexA(C.bloom, 0.07),
-                  borderColor: hexA(C.bloom, 0.22),
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.statIconBox,
-                  {
-                    backgroundColor: hexA(C.bloom, 0.12),
-                    borderColor: hexA(C.bloom, 0.32),
-                  },
-                ]}
-              >
-                {/* Small SVG flame so it picks up the tile's bloom
-                   color — the previous ♨ glyph was a unicode emoji
-                   that iOS renders in its locked red/orange palette
-                   regardless of the text color we set. */}
-                <Svg width={16} height={16} viewBox="0 0 24 24">
-                  {/* Heroicons-style flame — solid teardrop with a
-                     small inner pinch. Symmetric, recognizable, and
-                     respects the fill color (unlike the ♨ emoji or
-                     the earlier asymmetric path that read as a curl). */}
-                  <Path
-                    d="M11.083 5.104c.35-.85 1.485-.85 1.834 0 1.422 3.448 4.385 5.054 4.683 8.135.342 3.535-2.231 6.762-5.6 6.762s-5.942-3.227-5.6-6.762c.298-3.08 3.26-4.687 4.683-8.135Z"
-                    fill={C.bloom}
-                  />
-                </Svg>
-              </View>
-              {userStreak === 0 ? (
-                <>
-                  <Text
-                    style={[
-                      styles.statValueSoft,
-                      { color: hexA(C.bloom, 0.85) },
-                    ]}
-                  >
-                    Start
-                  </Text>
-                  <Text style={styles.statLabel}>today</Text>
-                  <View style={styles.statPromptRow}>
-                    <View
-                      style={[
-                        styles.statPromptDot,
-                        { backgroundColor: C.bloom },
-                      ]}
-                    />
-                    <Text
-                      style={[styles.statPromptText, { color: C.bloom }]}
-                    >
-                      a fresh start
-                    </Text>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <View style={styles.statValueRow}>
-                    <Text style={[styles.statValue, { color: C.bloom }]}>
-                      {userStreak}
-                    </Text>
-                    <Text
-                      style={[styles.statSuffix, { color: C.bloom }]}
-                    >
-                      d
-                    </Text>
-                  </View>
-                  <Text style={styles.statLabel}>current streak</Text>
-                  <View style={styles.statPromptRow}>
-                    <View
-                      style={[
-                        styles.statPromptDot,
-                        { backgroundColor: C.bloom },
-                      ]}
-                    />
-                    <Text
-                      style={[styles.statPromptText, { color: C.bloom }]}
-                    >
-                      keep it lit
-                    </Text>
-                  </View>
-                </>
-              )}
-            </View>
-
-            {/* 4 · This week — bar-chart of last 7 days */}
-            <View
-              style={[
-                styles.statCard,
-                {
-                  backgroundColor: hexA(C.dusk, 0.07),
-                  borderColor: hexA(C.dusk, 0.22),
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.statIconBox,
-                  {
-                    backgroundColor: hexA(C.dusk, 0.12),
-                    borderColor: hexA(C.dusk, 0.32),
-                  },
-                ]}
-              >
-                <Text style={[styles.statIconGlyph, { color: C.dusk }]}>
-                  ↻
-                </Text>
-              </View>
-              {thisWeekTotal === 0 ? (
-                <>
-                  <Text
-                    style={[
-                      styles.statValueSoft,
-                      { color: hexA(C.dusk, 0.85) },
-                    ]}
-                  >
-                    A fresh
-                  </Text>
-                  <Text style={styles.statLabel}>week</Text>
-                  <View style={styles.statBarsRow}>
-                    {Array.from({ length: 7 }).map((_, i) => (
-                      <View
-                        key={i}
-                        style={[
-                          styles.statBarMini,
-                          {
-                            height: 4,
-                            backgroundColor: hexA(C.dusk, 0.22),
-                          },
-                        ]}
-                      />
-                    ))}
-                  </View>
-                </>
-              ) : (
-                <>
-                  <Text style={[styles.statValue, { color: C.dusk }]}>
-                    {thisWeekTotal}
-                  </Text>
-                  <Text style={styles.statLabel}>this week</Text>
-                  {/* 7 bars, chronological L→R, height ∝ that day's
-                     count vs the week's max. Active days at full
-                     dusk; empty days faint. */}
-                  <View style={styles.statBarsRow}>
-                    {(() => {
-                      const max = Math.max(...last7Days, 1);
-                      return Array.from({ length: 7 }).map((_, i) => {
-                        const v = last7Days[6 - i];
-                        const h = 4 + Math.round((v / max) * 18);
-                        return (
-                          <View
-                            key={i}
-                            style={[
-                              styles.statBarMini,
-                              {
-                                height: h,
-                                backgroundColor:
-                                  v > 0 ? C.dusk : hexA(C.dusk, 0.22),
-                              },
-                            ]}
-                          />
-                        );
-                      });
-                    })()}
-                  </View>
-                  <Text style={styles.statBarsSub}>
-                    {activeDaysThisWeek === 7
-                      ? 'every day'
-                      : `${activeDaysThisWeek} active day${activeDaysThisWeek === 1 ? '' : 's'}`}
-                  </Text>
-                </>
-              )}
-            </View>
-          </View>
-        </View>
-
-        {/* ── 3 · WHAT LUMI KNOWS — the heart ─────────────────────── */}
-        {/* Per lumi-knows.jsx — each insight shows its evidence
-            (energy curve / mini day-ribbon / tags) plus a 3-dot
-            confidence meter. Dusk-tinted (Lumi's intelligence). */}
-        <View style={styles.sectionWrap}>
-          <View style={styles.knowsWrap}>
-            <View style={styles.knowsTopBar} />
-            <View style={styles.knowsHeader}>
-              <View style={styles.knowsEyebrowRow}>
-                <Text style={styles.knowsSpark}>✦</Text>
-                <Text style={styles.knowsEyebrow}>
-                  What Lumi knows about you
-                </Text>
-              </View>
-              <Text style={styles.knowsTitle}>
-                The more we go,{'\n'}the better I know you.
-              </Text>
-              <Pressable
-                onPress={() => {
-                  Haptics.selectionAsync();
-                  router.push('/insights');
-                }}
-                hitSlop={8}
-                style={{ alignSelf: 'flex-start', marginTop: 8 }}
-              >
-                <Text
-                  style={{
-                    fontFamily: fonts.interSemi,
-                    fontSize: 12,
-                    color: '#8EA0B4',
-                    textDecorationLine: 'underline',
-                  }}
-                >
-                  see everything Lumi's noticed →
-                </Text>
-              </Pressable>
-              {/* Learning meter — dusk progress bar showing how much
-                 of Lumi's picture is filled in. Grows as the user
-                 seeds more (sharpWindow / struggles / patterns). */}
-              <View style={styles.learningMeterRow}>
-                <View style={styles.learningMeterTrack}>
-                  <View
-                    style={[
-                      styles.learningMeterFill,
-                      { width: `${learningPct}%` },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.learningMeterLabel}>
-                  {learningPct >= 100
-                    ? 'I know you well'
-                    : 'Getting to know you'}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.knowsList}>
-              {knowsItems.length === 0 ? (
-                <View style={styles.knowsEmpty}>
-                  <Text style={styles.knowsEmptyText}>
-                    I&apos;m still getting to know you. The more you use
-                    Lumi, the more this fills in.
-                  </Text>
-                </View>
-              ) : (
-                knowsItems.map((k, i) => {
-                  const open = knowOpen === k.key;
-                  return (
-                    <View
-                      key={k.key}
-                      style={[
-                        styles.knowsRow,
-                        i > 0 && styles.knowsRowDivider,
-                      ]}
-                    >
-                      <Pressable
-                        onPress={() => toggleKnow(k.key)}
-                        style={styles.knowsHead}
-                      >
-                        {/* Dusk-tinted icon box (30×30) */}
-                        <View style={styles.knowsIconBox}>
-                          <Text style={styles.knowsIconBoxGlyph}>
-                            {k.glyph}
-                          </Text>
-                        </View>
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          {/* Label + confidence dots */}
-                          <View style={styles.knowsLabelRow}>
-                            <Text style={styles.knowsRowLabel}>
-                              {k.title}
-                            </Text>
-                            <ConfidenceDots level={k.confidence} />
-                          </View>
-                          {/* Value text */}
-                          <Text
-                            style={styles.knowsRowValue}
-                            numberOfLines={2}
-                          >
-                            {k.line}
-                          </Text>
-                          {/* Visualization — varies per insight */}
-                          {k.viz === 'curve' && (
-                            <View style={styles.knowsVizWrap}>
-                              <RhythmCurve sharp={sharpWindow} />
-                            </View>
-                          )}
-                          {k.viz === 'ribbon' && (
-                            <View style={styles.knowsVizWrap}>
-                              <MiniRibbon
-                                wakeMin={anchors.wake}
-                                sleepMin={anchors.sleep}
-                                middayHour={windowOverrides.midday}
-                                afternoonHour={windowOverrides.afternoon}
-                                eveningHour={windowOverrides.evening}
-                              />
-                            </View>
-                          )}
-                          {k.viz === 'tags' && k.tags && (
-                            <View style={styles.knowsTagsRow}>
-                              {k.tags.map((t) => (
-                                <View key={t} style={styles.knowsTag}>
-                                  <Text style={styles.knowsTagText}>{t}</Text>
-                                </View>
-                              ))}
-                            </View>
-                          )}
-                        </View>
-                        <Text
-                          style={[
-                            styles.knowsChev,
-                            open && { transform: [{ rotate: '90deg' }] },
-                          ]}
-                        >
-                          ›
-                        </Text>
-                      </Pressable>
-                      {open && (
-                        <View style={styles.knowsDetailWrap}>
-                          <Text style={styles.knowsDetail}>{k.detail}</Text>
-                          {k.action && (
-                            <Pressable
-                              onPress={() => handleInsightAction(k.action)}
-                              style={styles.knowsAction}
-                            >
-                              <Text
-                                style={[
-                                  styles.knowsActionText,
-                                  { color: accent.fg },
-                                ]}
-                              >
-                                Adjust this →
-                              </Text>
-                            </Pressable>
-                          )}
-                        </View>
-                      )}
-                    </View>
-                  );
-                })
-              )}
-            </View>
-
-            {/* Footer reassurance — dusk-tinted, calm */}
-            <View style={styles.knowsFooterWrap}>
-              <View style={styles.knowsFooterCard}>
-                <Text style={styles.knowsFooterGlyph}>✦</Text>
-                <Text style={styles.knowsFooterText}>
-                  This stays yours. Lumi learns only to lighten your
-                  load — never to judge it.
-                </Text>
-              </View>
-            </View>
-          </View>
+            <Text style={styles.knowsDoorChev}>›</Text>
+          </Pressable>
         </View>
 
         {/* ── 4 · PERSONALIZE ─────────────────────────────────────── */}
@@ -3509,6 +3049,30 @@ const makeStyles = (accent: Accent) =>
 
     // ── 2 · Lifetime snapshot ──
     sectionWrap: { marginBottom: 26 },
+    knowsDoor: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: hexA('#8EA0B4', 0.08),
+      borderWidth: 1,
+      borderColor: hexA('#8EA0B4', 0.3),
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+    },
+    knowsDoorSpark: { color: '#8EA0B4', fontSize: 16 },
+    knowsDoorTitle: {
+      fontFamily: fonts.interSemi,
+      fontSize: 15,
+      color: C.bone,
+    },
+    knowsDoorSub: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.mute,
+      marginTop: 2,
+    },
+    knowsDoorChev: { color: C.mute, fontSize: 20 },
     sectionLabel: {
       fontFamily: fonts.interSemi,
       fontSize: 10,

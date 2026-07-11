@@ -638,7 +638,7 @@ const HeroOverflowMenu = ({
                       letterSpacing: -0.1,
                     }}
                   >
-                    Edit quest
+                    Edit task
                   </Text>
                 </Pressable>
                 <View
@@ -679,7 +679,7 @@ const HeroOverflowMenu = ({
                       letterSpacing: -0.1,
                     }}
                   >
-                    Delete quest
+                    Delete task
                   </Text>
                 </Pressable>
               </View>
@@ -1043,6 +1043,7 @@ export default function Home() {
   const heyLumiEnabled = useUserStore((s) => s.heyLumiEnabled);
   const setHeyLumiEnabled = useUserStore((s) => s.setHeyLumiEnabled);
   const hintsSeen = useUserStore((s) => s.hintsSeen);
+  const tasksEverCompleted = useUserStore((s) => s.tasksEverCompleted);
   const markHintSeen = useUserStore((s) => s.markHintSeen);
 
   const quests = useQuestStore((s) => s.quests);
@@ -3541,6 +3542,31 @@ export default function Home() {
                 {waitingOpen ? '▴' : '▾'}
               </Text>
             </Pressable>
+            {/* Backlog whisper lives INSIDE the pile card now — two
+                cards two inches apart described the same pile
+                (simplification audit #6). */}
+            {backlogNudge && (
+              <View style={styles.backlogInline}>
+                <Text style={styles.backlogLine}>{backlogNudge.line}</Text>
+                <View style={styles.backlogRow}>
+                  <Pressable onPress={backlogSnooze} style={styles.backlogBtn}>
+                    <Text style={styles.backlogBtnText}>Snooze to tomorrow</Text>
+                  </Pressable>
+                  <Pressable onPress={backlogTuck} style={styles.backlogBtn}>
+                    <Text style={styles.backlogBtnText}>Tuck into someday</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      dismissBacklogNudge();
+                    }}
+                    style={styles.backlogKeep}
+                  >
+                    <Text style={styles.backlogKeepText}>keep them</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
             {waitingOpen && (
               <>
                 {rest.map((q) => (
@@ -3644,29 +3670,6 @@ export default function Home() {
             (undo, no judgment). Collapsed by default, same calm. */}
         {/* ── Backlog, offered not shamed (spec §5/§7) — an
             observation and two one-tap outs, never a red wall. */}
-        {backlogNudge && (
-          <View style={styles.backlogCard}>
-            <Text style={styles.backlogLine}>{backlogNudge.line}</Text>
-            <View style={styles.backlogRow}>
-              <Pressable onPress={backlogSnooze} style={styles.backlogBtn}>
-                <Text style={styles.backlogBtnText}>Snooze to tomorrow</Text>
-              </Pressable>
-              <Pressable onPress={backlogTuck} style={styles.backlogBtn}>
-                <Text style={styles.backlogBtnText}>Tuck into someday</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  Haptics.selectionAsync();
-                  dismissBacklogNudge();
-                }}
-                style={styles.backlogKeep}
-              >
-                <Text style={styles.backlogKeepText}>keep them</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
-
         {doneTodayList.length > 0 && (
           <View style={styles.doneTodayCard}>
             <Pressable
@@ -3791,6 +3794,29 @@ export default function Home() {
           ]}
           pointerEvents="box-none"
         >
+          {/* One-time widget intro — replaces the cut onboarding step:
+              offer it AFTER the app has proven useful (3 things
+              done), not before. */}
+          {!dymHint &&
+            !ventText &&
+            tasksEverCompleted >= 3 &&
+            !hintsSeen.includes('widgetIntro') && (
+              <View style={styles.dymHint}>
+                <Text style={[styles.dymHintText, { flex: 1 }]}>
+                  Lumi can live on your home screen — long-press your
+                  wallpaper → ＋ → search “Lumi” ✧
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    markHintSeen('widgetIntro');
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={styles.dymHintClear}>got it</Text>
+                </Pressable>
+              </View>
+            )}
           {/* One-time "Hey Lumi" intro — Pro users who haven't turned
               the wake word on. Same calm dusk surface as the
               did-you-mean card; two taps and it's live. */}
@@ -5384,6 +5410,12 @@ const makeStyles = (accent: Accent) =>
     },
 
     // ── "N more waiting — Lumi's holding them" (lumi-holding mock) ──
+    backlogInline: {
+      marginTop: 10,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: C.hair,
+    },
     backlogCard: {
       borderRadius: 16,
       borderWidth: 1,

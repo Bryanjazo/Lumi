@@ -70,6 +70,6 @@ export const useCompanionMode = (): CompanionFlags => {
  */
 export const phrasingFor = (mode: CompanionMode) => ({
   unit: mode === 'focused' ? 'things done' : 'XP',
-  task: mode === 'focused' ? 'task' : 'quest',
-  tasks: mode === 'focused' ? 'tasks' : 'quests',
+  task: 'task',
+  tasks: 'tasks',
 });

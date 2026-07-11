@@ -92,9 +92,9 @@ const TIER: Record<
   Quest['importance'],
   { color: string; sigil: string; label: string }
 > = {
-  high: { color: C.ember, sigil: '◆◆◆', label: 'Trial' },
-  medium: { color: C.honey, sigil: '◆◆', label: 'Task' },
-  low: { color: C.lichen, sigil: '◆', label: 'Whim' },
+  high: { color: C.ember, sigil: '◆◆◆', label: 'Big' },
+  medium: { color: C.honey, sigil: '◆◆', label: 'Regular' },
+  low: { color: C.lichen, sigil: '◆', label: 'Tiny' },
 };
 
 // Duration presets — same set the mockup uses.

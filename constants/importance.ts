@@ -16,21 +16,21 @@ export interface TierMeta {
 export const IMPORTANCE: Record<Importance, TierMeta> = {
   high: {
     color: '#E07A4F',
-    label: 'Trial',
+    label: 'Big',
     icon: '▲',
     sigil: '◆◆◆',
     rank: 3,
   },
   medium: {
     color: '#C9A06A',
-    label: 'Task',
+    label: 'Regular',
     icon: '■',
     sigil: '◆◆',
     rank: 2,
   },
   low: {
     color: '#869072',
-    label: 'Whim',
+    label: 'Tiny',
     icon: '●',
     sigil: '◆',
     rank: 1,

@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ROTATIONS = {
   morning: [
-    "Good morning. One small quest is enough.",
+    "Good morning. One small task is enough.",
     "Hey — today's brain doesn't have to be yesterday's brain.",
     "Pick the thing that already feels half-done.",
   ],
@@ -14,13 +14,13 @@ const ROTATIONS = {
     "Med check. Pair it with water if nothing else.",
   ],
   midday: [
-    "Quick scan — what's the one quest that's still movable?",
+    "Quick scan — what's the one task that's still movable?",
     "Halfway. No pressure — a check-in.",
     "If everything's stalled, switch to the smallest item.",
   ],
   windDown: [
     "Soft close. What worked today, even one thing?",
-    "Tomorrow's first quest — pick it now while it's easy.",
+    "Tomorrow's first task — pick it now while it's easy.",
     "Lights low. You don't owe anyone a full day.",
   ],
   recap: [
