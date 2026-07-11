@@ -43,6 +43,14 @@ export type EnergyWindowKey = 'morning' | 'midday' | 'afternoon' | 'evening';
 
 // ── Settings (lumi-settings-architecture) ──────────────────────────
 /** Notification toggles — defaults deliberately gentle. */
+export type RoomTint =
+  | 'none'
+  | 'rose'
+  | 'sage'
+  | 'sky'
+  | 'lavender'
+  | 'honey';
+
 export interface NotificationPrefs {
   /** Rare "do this now" pokes. The only proactive surface. */
   nudges: boolean;
@@ -201,6 +209,10 @@ interface UserState {
    *  (a user rightly flagged getting med copy unprompted). */
   medsNudge: boolean;
   setMedsNudge: (v: boolean) => void;
+  /** Room wall wash — a light tint the user paints Luna's room with.
+   *  'none' = the art's own cream. Free feature (small delight). */
+  roomTint: RoomTint;
+  setRoomTint: (t: RoomTint) => void;
   heyLumiEnabled: boolean;
   /** Server-granted flag (users.is_tester) — internal/TestFlight
    *  testers whose raw captures upload for parser tuning. Never
@@ -447,6 +459,7 @@ export const useUserStore = create<UserState>()(
       backlogNudgeDismissedDate: null,
       heyLumiEnabled: false,
       medsNudge: false,
+      roomTint: 'none',
       activeDaysThisMonth: 0,
       focusMinutesLifetime: 0,
       vitalitySnapshot: null,
@@ -559,6 +572,7 @@ export const useUserStore = create<UserState>()(
       setHeyLumiEnabled: (v) => set({ heyLumiEnabled: v }),
 
       setMedsNudge: (v) => set({ medsNudge: v }),
+      setRoomTint: (t) => set({ roomTint: t }),
 
       setIsTester: (v) => set({ isTester: v }),
 
@@ -746,6 +760,7 @@ export const useUserStore = create<UserState>()(
           backlogNudgeDismissedDate: null,
           heyLumiEnabled: false,
           medsNudge: false,
+          roomTint: 'none',
           activeDaysThisMonth: 0,
           focusMinutesLifetime: 0,
           vitalitySnapshot: null,

@@ -117,6 +117,19 @@ const ROOM_CABINET = require('../../assets/room/room-cabinet.png');
 const ROOM_FRAME = require('../../assets/room/room-frame.png');
 const ROOM_VASE = require('../../assets/room/room-vase.png');
 
+// Wall-wash palette — light color veils the user paints the room
+// with (Me hero swatch row). Soft enough to keep the pixel art true.
+export const ROOM_TINTS: Record<
+  Exclude<import('../../store/userStore').RoomTint, 'none'>,
+  string
+> = {
+  rose: '#D98A9E',
+  sage: '#8FAE82',
+  sky: '#7FA8C9',
+  lavender: '#9D8CC2',
+  honey: '#D9A441',
+};
+
 interface RoomState {
   t: number;
   motes: { x: number; y: number; ph: number }[];
@@ -140,6 +153,7 @@ const Room = ({
 }) => {
   const lunaMood = useAmbientLunaMood();
   const lunaSkin = useLunaSkin();
+  const roomTint = useUserStore((s) => s.roomTint);
   const [, force] = useState(0);
   const S = useRef<RoomState & { joy: number }>({
     t: 0,
@@ -159,6 +173,14 @@ const Room = ({
   }, [cheer]);
   const W = width ?? 344;
   const H = height ?? 288;
+  // The bg asset is the 172×144 art edge-extended to 200×164 so the
+  // scene sits zoomed OUT a touch (owner request) — wall and floor
+  // continue into the padding. All placement below is original art
+  // coords + the padding offset, scaled by k.
+  const kx = W / 200;
+  const ky = H / 164;
+  const OX = 14; // padding offset baked into room-bg.png
+  const OY = 10;
 
   // ── Walking animation — paces the cat left↔right across the rug,
   // showing the walk GIF while in motion and dropping back to the
@@ -222,7 +244,12 @@ const Room = ({
       setIsLicking(false);
       return;
     }
-    const RANGE = 70;
+    // Wander bounds in ART coords: the floor runs ~x40..150 in this
+    // room (window wall to the cabinet's front). Offsets are relative
+    // to the rug-center anchor at x85, so she strolls the full floor
+    // instead of pacing a fixed 70px strip of the old drawn rug.
+    const MIN_X = (40 - 85) * kx;
+    const MAX_X = (150 - 85) * kx;
     // Walk SPEED (px/sec) scales with mood; sad drags, happy zips.
     const pxPerSec =
       lunaMood === 'sad' ? 20 : lunaMood === 'happy' ? 40 : 28;
@@ -271,7 +298,7 @@ const Room = ({
         }, 1600);
         return;
       }
-      const to = (Math.random() * 2 - 1) * RANGE;
+      const to = MIN_X + Math.random() * (MAX_X - MIN_X);
       const dist = Math.abs(to - curX);
       if (dist < 22) {
         // Target too close to bother — skip this beat.
@@ -345,14 +372,6 @@ const Room = ({
   // of the score": a dim veil lifts as vitality climbs, honey warmth
   // settles in on good days, and decor pieces fade in at the same
   // thresholds the old drawn props used (vase ~30, frame ~55).
-  // The bg asset is the 172×144 art edge-extended to 200×164 so the
-  // scene sits zoomed OUT a touch (owner request) — wall and floor
-  // continue into the padding. Content coords below are original art
-  // coords + the padding offset.
-  const kx = W / 200;
-  const ky = H / 164;
-  const OX = 14; // padding offset baked into room-bg.png
-  const OY = 10;
   // The window shows the USER'S sky, not the mood — stars at noon /
   // sunshine at midnight read as a broken clock (audit B4). The art's
   // glass is painted daytime; at night a deep-blue pane with a few
@@ -370,14 +389,16 @@ const Room = ({
   // Damped from 2.5/2.6 — the tap reaction read as violent bouncing
   // rather than a happy wiggle (owner feedback, Jul 9).
   const joyAmp = 1 + S.joy * 1.1;
-  const lunaBob =
-    (excited
-      ? Math.sin(S.t * (0.1 + S.joy * 0.05)) * 1.8
-      : happy
-        ? Math.sin(S.t * 0.08) * 1.8
-        : sleeping
-          ? Math.sin(S.t * 0.025) * 0.7
-          : Math.sin(S.t * 0.05) * 1.2) * joyAmp;
+  const lunaBob = isWalking
+    ? 0 // feet glued to the floor mid-stroll — the bob under a
+    : // native-driver translate read as vertical glitching
+      (excited
+        ? Math.sin(S.t * (0.1 + S.joy * 0.05)) * 1.8
+        : happy
+          ? Math.sin(S.t * 0.08) * 1.8
+          : sleeping
+            ? Math.sin(S.t * 0.025) * 0.7
+            : Math.sin(S.t * 0.05) * 1.2) * joyAmp;
   // Rug center in the art ≈ (85, 121) — Luna lives on the rug.
   const lunaX = (85 + OX) * kx;
   const lunaY = (121 + OY) * ky - 6 + lunaBob;
@@ -431,6 +452,20 @@ const Room = ({
       }}
       resizeMode="stretch"
     />
+    {/* User-painted wall wash */}
+    {roomTint !== 'none' && (
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: W,
+          height: H,
+          backgroundColor: hexA(ROOM_TINTS[roomTint], 0.16),
+        }}
+      />
+    )}
     {/* Night pane over the window glass (art glass ≈ x18–69, y11–62) */}
     {isNightSky && (
       <View
@@ -535,53 +570,20 @@ const Room = ({
          If luna-walk.gif isn't bundled (old EAS build + new JS),
          onError flips walkAssetFailed and we render the emotion
          sprite during the walk too — cat is visible, just sliding. */}
-      {/* Walking + lick sprites render in a BIGGER, bottom-anchored,
-         aspect-correct box so the cat's visual feet plant at the
-         same Y the sitting sprites plant.
-
-         Why aspect-correct: the walk GIF is 48×45 (wider than tall).
-         With resizeMode="contain" inside a square box, the renderer
-         centers the image vertically and leaves empty padding above
-         AND below the cat — which lifts the feet off the rug. By
-         sizing the box at 48:45 we let contain fill the box edge-
-         to-edge, planting the cat's bottom row of pixels exactly at
-         box bottom. The lick GIF is 32×32 (square); inside the same
-         48:45 box, contain still aligns its bottom edge to box
-         bottom (just with small horizontal margins), so the planting
-         math works for both sprites.
-
-         The bigger box (1.35× the wrapper width) gives the user the
-         "bit bigger" cat they asked for; the negative `left` offset
-         keeps it horizontally centered on the wrapper's vertical
-         axis. The bottom: 0 anchor is what keeps walking/sitting
-         transitions seamless. */}
-      {activeSprite === 'walk' || activeSprite === 'lick' ? (
-        <Image
-          source={lunaSource(activeSprite, lunaSkin)}
-          onError={() => {
-            if (isWalking) setWalkAssetFailed(true);
-          }}
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            left: -((GIF_SIZE * 1.35 - GIF_SIZE) / 2),
-            width: GIF_SIZE * 1.35,
-            height: GIF_SIZE * 1.35 * (45 / 48),
-          }}
-          resizeMode="contain"
-          accessibilityLabel="Luna"
-        />
-      ) : (
-        <Image
-          source={lunaSource(activeSprite, lunaSkin)}
-          onError={() => {
-            if (isWalking) setWalkAssetFailed(true);
-          }}
-          style={{ width: '100%', height: '100%' }}
-          resizeMode="contain"
-          accessibilityLabel="Luna"
-        />
-      )}
+      {/* One square box for every sprite. All Luna GIFs are 512×512
+         with content normalized to the same height, so walk/lick and
+         the sitting poses render at identical scale — the old bigger
+         walk-box (pre-normalization) made her visibly jump in size
+         the moment a stroll started. */}
+      <Image
+        source={lunaSource(activeSprite, lunaSkin)}
+        onError={() => {
+          if (isWalking) setWalkAssetFailed(true);
+        }}
+        style={{ width: '100%', height: '100%' }}
+        resizeMode="contain"
+        accessibilityLabel="Luna"
+      />
     </Animated.View>
     </View>
   );
@@ -1290,6 +1292,12 @@ export default function MeTab() {
     },
     [],
   );
+  // Room paint — a tiny swatch strip over the room, toggled by the
+  // brush dot in the hero chrome. Persisted in userStore.roomTint.
+  const roomTint = useUserStore((s) => s.roomTint);
+  const setRoomTint = useUserStore((s) => s.setRoomTint);
+  const [paintOpen, setPaintOpen] = useState(false);
+
   const sitWithHer = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setCheer((c) => c + 1);
@@ -1419,8 +1427,56 @@ export default function MeTab() {
             {/* Same canonical icon as every other tab (components/
                 ProfileIcon) — Me used to draw its own honey variant
                 and the mismatch read as a bug. */}
+            <Pressable
+              onPress={() => setPaintOpen((o) => !o)}
+              hitSlop={8}
+              style={styles.paintBtn}
+              accessibilityLabel="Paint the room"
+            >
+              <View
+                style={[
+                  styles.paintDot,
+                  {
+                    backgroundColor:
+                      roomTint === 'none'
+                        ? '#E8DCC8'
+                        : ROOM_TINTS[roomTint],
+                  },
+                ]}
+              />
+            </Pressable>
             <ProfileIcon />
           </View>
+          {paintOpen && (
+            <View style={styles.paintRow}>
+              {(
+                ['none', 'rose', 'sage', 'sky', 'lavender', 'honey'] as const
+              ).map((t) => (
+                <Pressable
+                  key={t}
+                  hitSlop={6}
+                  onPress={() => {
+                    setRoomTint(t);
+                    setPaintOpen(false);
+                    void Haptics.impactAsync(
+                      Haptics.ImpactFeedbackStyle.Light,
+                    );
+                  }}
+                  style={[
+                    styles.paintSwatch,
+                    {
+                      backgroundColor:
+                        t === 'none' ? '#E8DCC8' : ROOM_TINTS[t],
+                    },
+                    roomTint === t && styles.paintSwatchOn,
+                  ]}
+                  accessibilityLabel={
+                    t === 'none' ? 'Original walls' : `${t} walls`
+                  }
+                />
+              ))}
+            </View>
+          )}
         </Pressable>
 
         {/* ═══ The two of you — a bond, not a dashboard ═══ */}
@@ -2290,6 +2346,44 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     backgroundColor: hexA(C.void, 0.5),
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  paintBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(20,14,10,0.35)',
+  },
+  paintDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,250,240,0.9)',
+  },
+  paintRow: {
+    position: 'absolute',
+    top: 96,
+    right: 22,
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: 'rgba(20,14,10,0.55)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  paintSwatch: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(255,250,240,0.35)',
+  },
+  paintSwatchOn: {
+    borderWidth: 2,
+    borderColor: 'rgba(255,250,240,0.95)',
   },
 
   // ═════ Your corner ═════
