@@ -1767,7 +1767,7 @@ export default function MeTab() {
               chevronOnly
               onToggle={() => {
                 Haptics.selectionAsync();
-                router.push('/insights');
+                router.push('/(tabs)/patterns');
               }}
             />
 

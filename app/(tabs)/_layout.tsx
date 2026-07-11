@@ -61,7 +61,7 @@ export default function TabsLayout() {
         <Tabs.Screen name="index" options={{ title: 'Home' }} />
         <Tabs.Screen name="checkin" options={{ title: 'Untangle' }} />
         <Tabs.Screen name="time" options={{ title: 'Time' }} />
-        <Tabs.Screen name="focus" options={{ title: 'Focus' }} />
+        <Tabs.Screen name="patterns" options={{ title: 'Patterns' }} />
         <Tabs.Screen name="me" options={{ title: 'Me' }} />
       </Tabs>
       <FloatingProfileIcon />

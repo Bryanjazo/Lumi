@@ -1668,13 +1668,13 @@ export default function AccountScreen() {
           <Pressable
             onPress={() => {
               Haptics.selectionAsync();
-              router.push('/insights');
+              router.push('/(tabs)/patterns');
             }}
             style={styles.knowsDoor}
           >
             <Text style={styles.knowsDoorSpark}>✦</Text>
             <View style={{ flex: 1 }}>
-              <Text style={styles.knowsDoorTitle}>What Lumi knows</Text>
+              <Text style={styles.knowsDoorTitle}>What Lumi knows — Patterns</Text>
               <Text style={styles.knowsDoorSub}>
                 your patterns, named gently — grows as you go
               </Text>

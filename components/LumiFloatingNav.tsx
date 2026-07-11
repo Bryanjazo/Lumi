@@ -69,7 +69,7 @@ const hexA = (hex: string, a: number): string => {
 // concentric circles that hint at the ember hearth without pulling
 // in the whole visual.
 
-type IconKind = 'Home' | 'Untangle' | 'Time' | 'Focus' | 'Me';
+type IconKind = 'Home' | 'Untangle' | 'Time' | 'Patterns' | 'Me';
 
 const Icon = ({ k, active }: { k: IconKind; active: boolean }) => {
   // Outline-style highlight: active icon uses the ember stroke
@@ -113,12 +113,13 @@ const Icon = ({ k, active }: { k: IconKind; active: boolean }) => {
           <Path d="M12 16.4h4.2" opacity={0.6} />
         </Svg>
       );
-    case 'Focus':
+    case 'Patterns':
       return (
         <Svg {...common}>
-          <Circle cx={12} cy={12} r={8} />
-          <Circle cx={12} cy={12} r={4.2} />
-          <Circle cx={12} cy={12} r={0.6} fill={c} stroke="none" />
+          {/* a gentle rising curve with a spark — the shape of you */}
+          <Path d="M4 17c3-1 4-7 7-7s3.6 4.5 9-4" />
+          <Circle cx={12} cy={10} r={1.1} fill={c} stroke="none" />
+          <Circle cx={19} cy={7} r={0.7} fill={c} stroke="none" />
         </Svg>
       );
     case 'Me':
@@ -160,7 +161,7 @@ const ROUTE_TO_ICON: Record<string, IconKind> = {
   index: 'Home',
   checkin: 'Untangle',
   time: 'Time',
-  focus: 'Focus',
+  patterns: 'Patterns',
   me: 'Me',
 };
 
