@@ -353,7 +353,7 @@ const Room = ({
   // stars settles over it. Day split: 6:00–19:59.
   const hourNow = new Date().getHours();
   const isNightSky = hourNow < 6 || hourNow >= 20;
-  const dimAlpha = Math.min(1, Math.max(0, (1 - v) * 0.36 + (isNightSky ? 0.12 : 0)));
+  const dimAlpha = Math.min(1, Math.max(0, (1 - v) * 0.2 + (isNightSky ? 0.08 : 0)));
   const warmAlpha = Math.min(1, Math.max(0, v * 0.1));
   const vaseFade = Math.max(0, Math.min(1, (v - 0.3) / 0.2));
   const frameFade = Math.max(0, Math.min(1, (v - 0.55) / 0.2));
@@ -1420,8 +1420,6 @@ export default function MeTab() {
                 and the mismatch read as a bug. */}
             <ProfileIcon />
           </View>
-          {/* Whisper-thin bottom fade — blends into the page, doesn't cover Luna */}
-          <View pointerEvents="none" style={styles.heroBottomFade} />
         </Pressable>
 
         {/* ═══ The two of you — a bond, not a dashboard ═══ */}
@@ -2291,15 +2289,6 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     backgroundColor: hexA(C.void, 0.5),
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  heroBottomFade: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 36,
-    backgroundColor: C.void,
-    opacity: 0.85,
   },
 
   // ═════ Your corner ═════
