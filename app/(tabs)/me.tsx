@@ -425,7 +425,7 @@ const Room = ({
       style={{
         position: 'absolute',
         left: (138 + OX) * kx,
-        top: (40 + OY) * ky,
+        top: (46 + OY) * ky,
         width: 16 * kx,
         height: 17 * ky,
       }}
