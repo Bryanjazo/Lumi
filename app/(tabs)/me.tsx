@@ -109,6 +109,14 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // (The old `Island` component is gone; the floating isle is now the
 // first XP-unlock world.)
 // ═════════════════════════════════════════════════════════════════════
+// Commissioned pixel room (assets/room). Each PNG is pre-upscaled
+// 6× with nearest-neighbor so RN's bilinear filter can't blur the
+// pixels — same trick as the Luna GIFs. Art canvas is 172×144.
+const ROOM_BG = require('../../assets/room/room-bg.png');
+const ROOM_CABINET = require('../../assets/room/room-cabinet.png');
+const ROOM_FRAME = require('../../assets/room/room-frame.png');
+const ROOM_VASE = require('../../assets/room/room-vase.png');
+
 interface RoomState {
   t: number;
   motes: { x: number; y: number; ph: number }[];
@@ -130,7 +138,6 @@ const Room = ({
   /** Tab focused — gates the 60fps loop + walk timers (audit C1). */
   active?: boolean;
 }) => {
-  const accent = useAccent();
   const lunaMood = useAmbientLunaMood();
   const lunaSkin = useLunaSkin();
   const [, force] = useState(0);
@@ -332,91 +339,24 @@ const Room = ({
 
   const v = Math.max(0, Math.min(100, S.veased)) / 100;
 
-  // ── Room palette: walls and floor warm with vitality ─────────────
-  const wallR = Math.round(lerp(28, 58, v));
-  const wallG = Math.round(lerp(24, 40, v));
-  const wallB = Math.round(lerp(26, 34, v));
-  const wallTop = `rgb(${wallR},${wallG},${wallB})`;
-  const wallBot = `rgb(${Math.round(wallR * 0.7)},${Math.round(wallG * 0.7)},${Math.round(wallB * 0.7)})`;
-  const floorY = 210;
-  const floorCol = `rgb(${Math.round(lerp(34, 52, v))},${Math.round(lerp(26, 36, v))},${Math.round(lerp(22, 28, v))})`;
-
-  // Window
-  const wx = 40;
-  const wy = 44;
-  const ww = 92;
-  const wh = 104;
-  const skyTop = `rgb(${Math.round(lerp(30, 120, v))},${Math.round(lerp(34, 96, v))},${Math.round(lerp(50, 70, v))})`;
-  const skyBot = `rgb(${Math.round(lerp(20, 200, v))},${Math.round(lerp(22, 140, v))},${Math.round(lerp(30, 90, v))})`;
+  // ── Pixel room lighting — the drawn-SVG room is gone; the art is
+  // the commissioned pixel background + decor layers. Vitality still
+  // runs the light, per the architecture's "everything is a function
+  // of the score": a dim veil lifts as vitality climbs, honey warmth
+  // settles in on good days, and decor pieces fade in at the same
+  // thresholds the old drawn props used (vase ~30, frame ~55).
+  const kx = W / 172; // all placement below is in art coords × k
+  const ky = H / 144;
   // The window shows the USER'S sky, not the mood — stars at noon /
-  // sunshine at midnight read as a broken clock (audit B4). Rough
-  // day split: 6:00–19:59 is daytime.
+  // sunshine at midnight read as a broken clock (audit B4). The art's
+  // glass is painted daytime; at night a deep-blue pane with a few
+  // stars settles over it. Day split: 6:00–19:59.
   const hourNow = new Date().getHours();
   const isNightSky = hourNow < 6 || hourNow >= 20;
-  const stars: { x: number; y: number }[] = [];
-  if (isNightSky) {
-    for (let i = 0; i < 8; i++) {
-      stars.push({
-        x: wx + 10 + ((i * 31) % ww),
-        y: wy + 8 + ((i * 23) % (wh - 20)),
-      });
-    }
-  }
-
-  // Shelf
-  const shX = 190;
-  const shY = 70;
-  const bookCols = [C.dusk, C.honey, C.lichen, C.amethyst];
-
-  // Plant
-  const px = 70;
-  const py = floorY;
-  const plantSway = Math.sin(S.t * 0.03) * (1 + v * 2);
-  const leafCol = `rgb(${Math.round(lerp(110, 120, v))},${Math.round(lerp(96, 165, v))},${Math.round(lerp(80, 96, v))})`;
-  const stems = v >= 0.3 ? Math.round(lerp(2, 5, v)) : 0;
-  const stemEnds: { tipX: number; tipY: number; angle: number }[] = [];
-  for (let i = 0; i < stems; i++) {
-    const a = (i / Math.max(1, stems - 1) - 0.5) * 1.4;
-    stemEnds.push({
-      tipX: px + Math.sin(a) * lerp(8, 20, v) + plantSway,
-      tipY: py - 14 - lerp(14, 38, v),
-      angle: a,
-    });
-  }
-  const flowers: { fx: number; fy: number }[] = [];
-  if (v > 0.7) {
-    for (let i = 0; i < 3; i++) {
-      const a = (i - 1) * 0.6;
-      flowers.push({
-        fx: px + Math.sin(a) * 14 + plantSway,
-        fy: py - 14 - lerp(20, 40, v) * 0.9,
-      });
-    }
-  }
-
-  // Lamp
-  const lx = 296;
-  const ly = floorY;
-  const lit = v > 0.25;
-  const flicker = Math.sin(S.t * 0.15) * 0.04;
-  const haloAlpha = lit ? 0.12 + v * 0.22 + flicker : 0;
-
-  // Candle (shelf flicker)
-  const candleFl = Math.sin(S.t * 0.2) * 0.5 + 0.5;
-
-  // Dust motes
-  if (v > 0.55) {
-    while (S.motes.length < 5)
-      S.motes.push({
-        x: Math.random() * W,
-        y: Math.random() * floorY,
-        ph: Math.random() * 6,
-      });
-    S.motes.length = Math.min(S.motes.length, 5);
-    S.motes.forEach((m) => (m.ph += 0.02));
-  } else {
-    S.motes.length = 0;
-  }
+  const dimAlpha = Math.min(1, Math.max(0, (1 - v) * 0.36 + (isNightSky ? 0.12 : 0)));
+  const warmAlpha = Math.min(1, Math.max(0, v * 0.1));
+  const vaseFade = Math.max(0, Math.min(1, (v - 0.3) / 0.2));
+  const frameFade = Math.max(0, Math.min(1, (v - 0.55) / 0.2));
 
   // Luna mood + position. Joy spikes (tap-to-cheer) amplify the bob
   // for ~80 frames so the cat visibly reacts to a tap.
@@ -434,267 +374,120 @@ const Room = ({
         : sleeping
           ? Math.sin(S.t * 0.025) * 0.7
           : Math.sin(S.t * 0.05) * 1.2) * joyAmp;
-  const bx = 168;
-  const by = floorY + 30;
-  const lunaX = bx;
-  const lunaY = by - 6 + lunaBob;
-  const blink = S.t % 160 < 5;
-  // Suppress unused-var warnings now that the SVG Luna sprite has
-  // been replaced with the GIF overlay (we keep the variables in
-  // case the SVG fallback returns later).
-  void blink;
+  // Rug center in the art ≈ (85, 121) — Luna lives on the rug.
+  const lunaX = 85 * kx;
+  const lunaY = 121 * ky - 6 + lunaBob;
 
-  // GIF cat sits at the same spot the SVG sprite used to draw.
-  // Position math: lunaX,lunaY are direct SVG coords (viewBox is
-  // 1:1 with rendered W×H, no scale). We anchor the GIF's center
-  // horizontally on lunaX and its FEET on lunaY+12 (the old shadow
-  // line) so the cat plants on the rug naturally.
+  // GIF cat: anchor the sprite's center on lunaX and its FEET on
+  // lunaY+12 so the cat plants on the rug naturally.
   const GIF_SIZE = 64;
   const gifLeft = lunaX - GIF_SIZE / 2;
   const gifTop = lunaY + 12 - GIF_SIZE;
 
   return (
     <View style={{ width: W, height: H }}>
-    <Svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-      <Defs>
-        <LinearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor={wallTop} />
-          <Stop offset="1" stopColor={wallBot} />
-        </LinearGradient>
-        <LinearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor={skyTop} />
-          <Stop offset="1" stopColor={skyBot} />
-        </LinearGradient>
-        <RadialGradient id="lampHalo" cx="50%" cy="50%" r="50%">
-          <Stop
-            offset="0"
-            stopColor={C.glow}
-            stopOpacity={clampAlpha(haloAlpha)}
+    {/* Base room art — stretched to the hero box; the art's 172×144
+        aspect is within ~2% of the box so distortion is invisible. */}
+    <Image
+      source={ROOM_BG}
+      style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}
+      resizeMode="stretch"
+    />
+    {/* Decor — the cabinet is furniture (always there); the vase and
+        frame are the room warming up, fading in with vitality. */}
+    <Image
+      source={ROOM_CABINET}
+      style={{
+        position: 'absolute',
+        left: 101 * kx,
+        top: 65 * ky,
+        width: 67 * kx,
+        height: 43 * ky,
+      }}
+      resizeMode="stretch"
+    />
+    <Image
+      source={ROOM_VASE}
+      style={{
+        position: 'absolute',
+        left: 110 * kx,
+        top: 48 * ky,
+        width: 16 * kx,
+        height: 18 * ky,
+        opacity: vaseFade,
+      }}
+      resizeMode="stretch"
+    />
+    <Image
+      source={ROOM_FRAME}
+      style={{
+        position: 'absolute',
+        left: 138 * kx,
+        top: 40 * ky,
+        width: 16 * kx,
+        height: 17 * ky,
+        opacity: frameFade,
+      }}
+      resizeMode="stretch"
+    />
+    {/* Night pane over the window glass (art glass ≈ x18–69, y11–62) */}
+    {isNightSky && (
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: 18 * kx,
+          top: 11 * ky,
+          width: 52 * kx,
+          height: 52 * ky,
+          backgroundColor: 'rgba(18,22,48,0.82)',
+        }}
+      >
+        {[
+          { x: 9, y: 9 },
+          { x: 30, y: 5 },
+          { x: 41, y: 21 },
+          { x: 17, y: 33 },
+        ].map((s, i2) => (
+          <View
+            key={'st' + i2}
+            style={{
+              position: 'absolute',
+              left: s.x * kx,
+              top: s.y * ky,
+              width: 2.5,
+              height: 2.5,
+              borderRadius: 1.25,
+              backgroundColor: 'rgba(240,236,220,0.85)',
+            }}
           />
-          <Stop offset="1" stopColor={C.glow} stopOpacity={0} />
-        </RadialGradient>
-      </Defs>
-
-      {/* Wall + floor */}
-      <Rect x={0} y={0} width={W} height={H} fill="url(#wall)" />
-      <Rect x={0} y={floorY} width={W} height={H - floorY} fill={floorCol} />
-      <Rect x={0} y={floorY} width={W} height={2} fill="rgba(0,0,0,0.25)" />
-      {[1, 2, 3, 4].map((i) => (
-        <Line
-          key={'fb' + i}
-          x1={0}
-          y1={floorY + i * 16}
-          x2={W}
-          y2={floorY + i * 16}
-          stroke="rgba(0,0,0,0.12)"
-          strokeWidth={1}
-        />
-      ))}
-
-      {/* Window backdrop + sky */}
-      <Rect
-        x={wx - 5}
-        y={wy - 5}
-        width={ww + 10}
-        height={wh + 10}
-        fill="#1A1410"
-      />
-      <Rect x={wx} y={wy} width={ww} height={wh} fill="url(#sky)" />
-      {!isNightSky && (
-        <Circle
-          cx={wx + ww - 26}
-          cy={wy + 28}
-          r={12 * ((v - 0.5) / 0.5)}
-          fill={hexA(C.glow, 0.9)}
-        />
-      )}
-      {stars.map((s, i) => (
-        <Rect
-          key={'st' + i}
-          x={s.x}
-          y={s.y}
-          width={1.5}
-          height={1.5}
-          fill={hexA(C.bone, 0.4)}
-        />
-      ))}
-      <Rect x={wx + ww / 2 - 2} y={wy} width={4} height={wh} fill="#2A2018" />
-      <Rect x={wx} y={wy + wh / 2 - 2} width={ww} height={4} fill="#2A2018" />
-      <Rect
-        x={wx}
-        y={wy}
-        width={ww}
-        height={wh}
-        fill="none"
-        stroke="#2A2018"
-        strokeWidth={5}
-      />
-
-      {/* Shelf */}
-      <Rect x={shX} y={shY} width={120} height={7} fill="#3A2C20" />
-      <Rect
-        x={shX}
-        y={shY + 7}
-        width={120}
-        height={3}
-        fill="rgba(0,0,0,0.2)"
-      />
-      {[0, 1, 2, 3].map((i) => (
-        <Rect
-          key={'bk' + i}
-          x={shX + 6 + i * 9}
-          y={shY - 18}
-          width={7}
-          height={18}
-          fill={hexA(bookCols[i], lerp(0.4, 1, v))}
-        />
-      ))}
-      {v > 0.4 && (
-        <G>
-          <Rect
-            x={shX + 52}
-            y={shY - 20}
-            width={18}
-            height={20}
-            fill={hexA(C.honey, lerp(0, 0.9, (v - 0.4) / 0.6))}
-          />
-          <Rect
-            x={shX + 55}
-            y={shY - 17}
-            width={12}
-            height={14}
-            fill={hexA('#1A1410', Math.max(0, v - 0.4))}
-          />
-        </G>
-      )}
-      {v > 0.6 && (
-        <G>
-          <Rect
-            x={shX + 92}
-            y={shY - 12}
-            width={6}
-            height={12}
-            fill="#3A2C20"
-          />
-          <Circle
-            cx={shX + 95}
-            cy={shY - 14}
-            r={2.5 + candleFl}
-            fill={hexA(C.glow, 0.6 + candleFl * 0.4)}
-          />
-          <Circle
-            cx={shX + 95}
-            cy={shY - 14}
-            r={12}
-            fill={hexA(C.glow, 0.12)}
-          />
-        </G>
-      )}
-
-      {/* Plant */}
-      <Rect x={px - 11} y={py - 14} width={22} height={16} fill="#5A3D2A" />
-      <Rect x={px - 11} y={py - 14} width={22} height={4} fill="#4A3526" />
-      {v < 0.3 ? (
-        <G>
-          <Path
-            d={`M ${px} ${py - 14} Q ${px + 6} ${py - 22}, ${px + 12} ${py - 16}`}
-            stroke="rgba(122,106,74,0.8)"
-            strokeWidth={2}
-            fill="none"
-          />
-          <Path
-            d={`M ${px} ${py - 14} Q ${px - 6} ${py - 20}, ${px - 11} ${py - 15}`}
-            stroke="rgba(122,106,74,0.8)"
-            strokeWidth={2}
-            fill="none"
-          />
-        </G>
-      ) : (
-        <G>
-          {stemEnds.map((s, i) => (
-            <G key={'pl' + i}>
-              <Path
-                d={`M ${px} ${py - 14} Q ${px + Math.sin(s.angle) * 8} ${py - 14 - lerp(8, 20, v)}, ${s.tipX} ${s.tipY}`}
-                stroke={leafCol}
-                strokeWidth={2}
-                fill="none"
-              />
-              <Ellipse
-                cx={s.tipX}
-                cy={s.tipY}
-                rx={4}
-                ry={6}
-                fill={leafCol}
-                transform={`rotate(${(s.angle * 180) / Math.PI} ${s.tipX} ${s.tipY})`}
-              />
-            </G>
-          ))}
-          {flowers.map((f, i) => (
-            <G key={'fl' + i}>
-              <Circle cx={f.fx} cy={f.fy} r={2.5} fill={hexA(C.bloom, 0.95)} />
-              <Circle cx={f.fx} cy={f.fy} r={1} fill={hexA(C.glow, 0.9)} />
-            </G>
-          ))}
-        </G>
-      )}
-
-      {/* Rug */}
-      <Ellipse
-        cx={170}
-        cy={floorY + 44}
-        rx={86}
-        ry={20}
-        fill={hexA(v > 0.4 ? accent.fg : '#5A4A42', lerp(0.25, 0.5, v))}
-      />
-      <Ellipse
-        cx={170}
-        cy={floorY + 44}
-        rx={74}
-        ry={16}
-        fill="none"
-        stroke={hexA(v > 0.4 ? C.glow : '#5A4A42', lerp(0.15, 0.4, v))}
-        strokeWidth={1.5}
-      />
-
-      {/* Lamp */}
-      <Line x1={lx} y1={ly} x2={lx} y2={ly - 70} stroke="#3A2C20" strokeWidth={3} />
-      <Rect x={lx - 12} y={ly} width={24} height={4} fill="#3A2C20" />
-      <Path
-        d={`M ${lx - 14} ${ly - 70} L ${lx + 14} ${ly - 70} L ${lx + 10} ${ly - 86} L ${lx - 10} ${ly - 86} Z`}
-        fill={lit ? hexA(C.glow, 0.3 + v * 0.5) : '#2A2018'}
-      />
-      {lit && <Circle cx={lx} cy={ly - 70} r={90} fill="url(#lampHalo)" />}
-
-      {/* Dust motes */}
-      {S.motes.map((m, i) => {
-        const mx = m.x + Math.sin(m.ph) * 8;
-        const my = m.y + Math.cos(m.ph * 0.7) * 6;
-        const tw = 0.3 + Math.sin(S.t * 0.06 + i) * 0.5;
-        const alpha = tw * 0.4 * ((v - 0.55) / 0.45);
-        return (
-          <Circle
-            key={'mt' + i}
-            cx={mx}
-            cy={my}
-            r={1.3}
-            fill={hexA(C.glow, alpha)}
-          />
-        );
-      })}
-
-      {/* Luna cushion */}
-      <Ellipse
-        cx={bx}
-        cy={by}
-        rx={30}
-        ry={12}
-        fill={hexA(v > 0.4 ? accent.fg : '#4A3D36', 0.5)}
-      />
-
-      {/* (Cat shadow moved OUT of the static SVG so it can ride
-         along inside the Animated.View wrapper below — keeps the
-         shadow planted under the cat as it walks across the rug.) */}
-    </Svg>
+        ))}
+      </View>
+    )}
+    {/* Vitality light — honey warmth up, dim veil down. Luna renders
+        ABOVE the veils on purpose: she's the life of the room. */}
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: W,
+        height: H,
+        backgroundColor: hexA(C.glow, warmAlpha),
+      }}
+    />
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: W,
+        height: H,
+        backgroundColor: `rgba(14,10,8,${dimAlpha.toFixed(3)})`,
+      }}
+    />
     {/* Pixel cat overlay. The outer Animated.View owns the
        transform (translateX + scaleX, both Animated values so the
        native driver runs the whole thing) and the inner Image
