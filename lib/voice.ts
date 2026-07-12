@@ -99,6 +99,10 @@ interface VoiceController {
   start: () => Promise<void>;
   stopAndTranscribe: () => Promise<string | null>;
   cancel: () => Promise<void>;
+  /** Consume the surfaced error so an identical follow-up error
+   *  re-triggers consumers' effects (two "no speech" in a row used
+   *  to surface only once). */
+  clearError: () => void;
 }
 
 export const useVoice = (): VoiceController => {
@@ -308,5 +312,6 @@ export const useVoice = (): VoiceController => {
     setState('idle');
   };
 
-  return { state, error, partial, start, stopAndTranscribe, cancel };
+  const clearError = () => setError(null);
+  return { state, error, partial, start, stopAndTranscribe, cancel, clearError };
 };

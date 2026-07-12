@@ -257,6 +257,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.4,
     lineHeight: 28,
     marginBottom: 8,
+    paddingRight: 5,
   },
   body: {
     fontFamily: fonts.inter,

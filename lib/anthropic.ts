@@ -1176,11 +1176,21 @@ export const llmUntangle = async (
     };
     // Bound history to last 8 turns to keep tokens reasonable.
     const tail = thread.slice(-8);
-    const text = await callMessages({
-      kind: 'untangle',
-      maxTokens: 700,
-      messages: [head, clock, ...tail],
-    });
+    // 15s ceiling like llmUnderstand — a hung request here used to
+    // lock the ENTIRE Untangle surface (typing dots forever, send +
+    // all four moves disabled) with no recovery short of an app
+    // restart. On timeout the caller's catch runs the deterministic
+    // fallback, which is the free-tier path anyway.
+    const text = await Promise.race([
+      callMessages({
+        kind: 'untangle',
+        maxTokens: 700,
+        messages: [head, clock, ...tail],
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('untangle-timeout')), 15_000),
+      ),
+    ]);
     const parsed = extractJson<UntangleTurnResponse>(text);
     if (!parsed || typeof parsed.say !== 'string' || parsed.say.trim().length === 0) {
       return null;

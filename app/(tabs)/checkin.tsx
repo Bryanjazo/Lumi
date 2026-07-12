@@ -15,7 +15,7 @@
 //   ember = THE USER (their message, Arrange it, completing)
 //   dusk  = LUMI (the AI moves, chat bubbles, proposed plan)
 
-import {
+import { useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -75,10 +75,13 @@ import { useLearningDigest } from '../../lib/learning';
 import {
   llmUntangle,
   type UntangleContext,
+  isAnthropicConfigured,
   type UntanglePileItem,
   type UntangleProposalItem,
   type UntangleThreadMsg,
 } from '../../lib/anthropic';
+import { useCompanionMode } from '../../lib/companion-mode';
+import { useFocusEffect } from 'expo-router';
 
 // ═════════════════════════════════════════════════════════════════════
 // Types + constants
@@ -215,7 +218,10 @@ const runMove = (
     for (const q of park)
       muts.push({ id: q.id, patch: { window: 'someday' } });
     return {
-      say: `Breathe. Nothing here is on fire. I've set ${park.length} aside for later — they'll keep, I promise. ${keep.length === 0 ? '' : 'These ' + keep.length + ' are all today needs to be.'}`,
+      say:
+        park.length > 0
+          ? `Breathe. Nothing here is on fire. I've set ${park.length} aside for later — they'll keep, I promise. ${keep.length === 0 ? '' : 'These ' + keep.length + ' are all today needs to be.'}`
+          : `Breathe. Nothing here is on fire — ${keep.length === 1 ? 'one thing' : 'these ' + keep.length} is all today needs to be.`,
       mutations: muts,
       view: 'triage',
     };
@@ -293,7 +299,7 @@ const runMove = (
     const lead = order[0];
     return {
       say: lead
-        ? `Here's an order that flows with your day: start "${lead.title}" first while you're sharp, batch the middle ones after lunch, and let the small stuff fill the gaps. Nothing stacked on top of itself.`
+        ? `Here's an order that flows with your day: start "${lead.title}" first while you're sharp, batch the middle ones after lunch, and let the small stuff fill the gaps. Nothing stacked on top of itself.${order.length > slotsByIdx.length ? ` I tucked ${order.length - slotsByIdx.length} into Later so today stays honest.` : ''}`
         : `Your plate's clear — nothing to plan right now. Capture something on Home and I'll work it in.`,
       mutations: muts,
       view: 'plan',
@@ -332,7 +338,10 @@ const talkToLumi = (text: string, active: Quest[]): TalkResult => {
   // is unreachable. Matched in priority order; first hit wins.
   const intents = {
     drop: /\b(take off|drop|skip|remove|cancel|can wait|cut|trim|less|too many|defer|park|push)\b/.test(lc),
-    tired: /\b(tired|exhausted|wiped|drained|low energy|can'?t focus|no energy|burnt out|wrecked|fried|done)\b/.test(lc),
+    // NOTE: no bare "done" — "finally got the report done!" is a win,
+    // and the old match answered it with a rest lecture that parked
+    // the user's heavy tasks.
+    tired: /\b(tired|exhausted|wiped|drained|low energy|can'?t focus|no energy|burnt out|wrecked|fried|done in)\b/.test(lc),
     first: /\b(first|start|where do i start|begin|kick off|priority|most important|matters most)\b/.test(lc),
     plan: /\b(plan my day|arrange|schedule|order|organize|line up|line them up|sort them)\b/.test(lc),
     overwhelmed: /\b(overwhelm|drowning|too much|can'?t|stressed|panic|behind|so much|a lot|freaking|losing it)\b/.test(lc),
@@ -445,11 +454,9 @@ const TaskChip = ({
   // "carried" not "overdue" (emotional-model spec §7): the task came
   // along with the user — the word never blames them for it. Dusk
   // tone, not alarm-red.
-  const tag = quest.date && quest.date < today
-    ? 'carried'
-    : quest.date === today && !onToday
-      ? 'due'
-      : '';
+  // ('due' branch removed — quest.date===today && !onToday was
+  // unsatisfiable since onToday IS date===today.)
+  const tag = quest.date && quest.date < today ? 'carried' : '';
   return (
     <View
       style={[
@@ -638,11 +645,18 @@ const ProposalCard = ({
       <View style={styles.lumiActions}>
         <Pressable
           onPress={onApprove}
+          accessibilityRole="button"
+          accessibilityLabel="Approve these changes"
           style={[styles.approveBtn, { backgroundColor: accent.fg }]}
         >
           <Text style={styles.approveBtnText}>Approve</Text>
         </Pressable>
-        <Pressable onPress={onAdjust} style={styles.adjustBtn}>
+        <Pressable
+          onPress={onAdjust}
+          accessibilityRole="button"
+          accessibilityLabel="Adjust — tell Lumi what to change"
+          style={styles.adjustBtn}
+        >
           <Text style={styles.adjustBtnText}>Adjust</Text>
         </Pressable>
       </View>
@@ -682,10 +696,17 @@ const Bubble = ({
       </View>
     );
   }
+  const { showLuna } = useCompanionMode();
   return (
     <View style={styles.lumiRow}>
+      {/* Focused mode promises a calm AI organizer, no Tamagotchi —
+          the cat avatar yields to a quiet spark. */}
       <View style={styles.lumiAvatar}>
-        <LunaMark size={24} mood={lunaMood} />
+        {showLuna ? (
+          <LunaMark size={24} mood={lunaMood} />
+        ) : (
+          <Text style={{ color: C.dusk, fontSize: 12 }}>✦</Text>
+        )}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={styles.lumiBubble}>
@@ -693,6 +714,8 @@ const Bubble = ({
           {msg.actions && (
             <View style={styles.lumiActions}>
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={msg.actions.approveLabel}
                 onPress={msg.actions.onApprove}
                 style={[
                   styles.approveBtn,
@@ -737,10 +760,15 @@ const TypingDots = ({ mood }: { mood: LunaMood }) => {
     const id = setInterval(() => setStep((s) => (s + 1) % 3), 280);
     return () => clearInterval(id);
   }, []);
+  const { showLuna } = useCompanionMode();
   return (
     <View style={styles.lumiRow}>
       <View style={styles.lumiAvatar}>
-        <LunaMark size={24} mood={mood} />
+        {showLuna ? (
+          <LunaMark size={24} mood={mood} />
+        ) : (
+          <Text style={{ color: C.dusk, fontSize: 12 }}>✦</Text>
+        )}
       </View>
       <View style={styles.typingBubble}>
         {[0, 1, 2].map((i) => (
@@ -845,8 +873,12 @@ export default function Untangle() {
   //    real tasks on first mount if today is empty.
   const [selectedDate, setSelectedDate] = useState<string>(() => todayKey());
   const didAutoJump = useRef(false);
+  const questsHydrated = useQuestStore((s) => s.hasHydrated);
   useEffect(() => {
     if (didAutoJump.current) return;
+    // Cold-starting straight into this tab used to latch against the
+    // EMPTY pre-hydration store — the jump never ran with real data.
+    if (!questsHydrated) return;
     didAutoJump.current = true;
     const today = todayKey();
     const todayActive = active.filter(
@@ -865,7 +897,7 @@ export default function Untangle() {
       ),
     ).sort();
     if (futureDates.length > 0) setSelectedDate(futureDates[0]);
-  }, [active]);
+  }, [active, questsHydrated]);
 
   const todayList = useMemo(
     () =>
@@ -907,10 +939,32 @@ export default function Untangle() {
    *  if it doesn't already have one (someday tasks usually don't). */
   const moveBackToDate = (q: Quest, dateISO: string) => {
     setDate(q.id, dateISO);
-    // Always undo someday → put it in a real part-of-day. Morning
-    // is the safest default; the user can drag it from Time later.
-    moveWindow(q.id, 'morning');
+    // Undo someday → a real part-of-day. Picking "Today" at 9pm used
+    // to land the task in a long-gone MORNING window; use the next
+    // window that's still open today (any window for future days).
+    let win: WindowKey = 'morning';
+    if (dateISO === todayKey()) {
+      const nowH = new Date().getHours() + new Date().getMinutes() / 60;
+      const openNow = (
+        ['morning', 'midday', 'afternoon', 'evening'] as WindowKey[]
+      ).find((w) => {
+        const end = effectiveWindows[w].end;
+        return end != null && nowH < end;
+      });
+      win = openNow ?? 'evening';
+    }
+    moveWindow(q.id, win);
   };
+  // App open across midnight: a stale "today" selection would write
+  // moves onto YESTERDAY (instantly "carried"). Only auto-snaps when
+  // the selection is in the past — a deliberately browsed future day
+  // stays put.
+  useFocusEffect(
+    useCallback(() => {
+      setSelectedDate((d) => (d < todayKey() ? todayKey() : d));
+    }, []),
+  );
+
   const shiftDay = (delta: number) => {
     Haptics.selectionAsync();
     setSelectedDate((d) => offsetKey(d, delta));
@@ -921,6 +975,13 @@ export default function Untangle() {
   };
 
   // ── Chat state ──
+  // busyRef: synchronous double-send latch. sendGenRef: generation
+  // fence — reset() bumps it so an in-flight reply from the OLD
+  // conversation can't land in the fresh one. msgSeqRef: id nonce
+  // (two sends in one ms used to collide on Date.now() keys).
+  const busyRef = useRef(false);
+  const sendGenRef = useRef(0);
+  const msgSeqRef = useRef(0);
   const [msgs, setMsgs] = useState<ChatMsg[]>([
     {
       id: 'init',
@@ -965,8 +1026,11 @@ export default function Untangle() {
     if (voice.error) {
       setMsgs((m) => [
         ...m,
-        { id: `err-${Date.now()}`, from: 'lumi', text: voice.error! },
-      ]);
+        { id: `err-${Date.now()}`, from: 'lumi' as const, text: voice.error! },
+      ].slice(-100));
+      // Clear so an identical error next attempt re-fires this
+      // effect (two "no speech" in a row used to surface only once).
+      voice.clearError();
     }
   }, [voice.error]);
 
@@ -987,21 +1051,36 @@ export default function Untangle() {
   // approved proposal snapshots the pre-mutation state; the
   // confirmation message carries a one-tap restore. Moves used to be
   // irreversible at the user's most fragile moment.
-  const moveUndoRef = useRef<
-    Array<{
-      id: string;
-      date: string;
-      window: WindowKey;
-      scheduledHour: number | null;
-      scheduledMinute: number | null;
-      completed: boolean;
-    }>
-  >([]);
+  // Token-based undo bank. The old design was ONE global snapshot
+  // slot behind many immortal buttons: a stale "Put it back" undid
+  // the WRONG proposal, a double-tap posted a false confirmation,
+  // and undoing after the user completed the task UN-completed it.
+  // Now: each apply banks its own token; banking a new one expires
+  // all older buttons; undo is one-shot; completed tasks are never
+  // touched; created tasks are removed.
+  type UndoSnap = {
+    id: string;
+    date: string;
+    window: WindowKey;
+    scheduledHour: number | null;
+    scheduledMinute: number | null;
+    completed: boolean;
+  };
+  const undoBankRef = useRef<
+    Map<string, { snaps: UndoSnap[]; created: string[] }>
+  >(new Map());
+  const undoDraftRef = useRef<{ snaps: UndoSnap[]; created: string[] }>({
+    snaps: [],
+    created: [],
+  });
+  const beginUndoDraft = () => {
+    undoDraftRef.current = { snaps: [], created: [] };
+  };
   const snapshotForUndo = (id: string) => {
-    if (moveUndoRef.current.some((s) => s.id === id)) return;
+    if (undoDraftRef.current.snaps.some((s) => s.id === id)) return;
     const q = useQuestStore.getState().quests.find((x) => x.id === id);
     if (!q) return;
-    moveUndoRef.current.push({
+    undoDraftRef.current.snaps.push({
       id: q.id,
       date: q.date,
       window: q.window,
@@ -1010,26 +1089,73 @@ export default function Untangle() {
       completed: q.completed,
     });
   };
-  const putItBack = () => {
-    const snaps = moveUndoRef.current;
-    moveUndoRef.current = [];
+  const recordCreatedForUndo = (id: string) => {
+    undoDraftRef.current.created.push(id);
+  };
+  /** Bank the current draft under a fresh token. Newer mutations
+   *  expire every older token AND strip their buttons — one honest
+   *  restore point at a time. Returns null when nothing changed. */
+  const bankUndo = (): string | null => {
+    const d = undoDraftRef.current;
+    if (d.snaps.length === 0 && d.created.length === 0) return null;
+    if (undoBankRef.current.size > 0) {
+      undoBankRef.current.clear();
+      setMsgs((m) =>
+        m.map((x) => (x.actions ? { ...x, actions: undefined } : x)),
+      );
+    }
+    const token = `undo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    undoBankRef.current.set(token, d);
+    undoDraftRef.current = { snaps: [], created: [] };
+    return token;
+  };
+  const putItBack = (token: string) => {
+    const bank = undoBankRef.current.get(token);
+    undoBankRef.current.delete(token);
+    // One-shot: strip the button(s) immediately so a second tap
+    // can't post a false "put back" confirmation.
+    setMsgs((m) =>
+      m.map((x) => (x.actions ? { ...x, actions: undefined } : x)),
+    );
+    if (!bank) return;
     const st = useQuestStore.getState();
-    for (const s of snaps) {
+    let restored = 0;
+    let keptDone = 0;
+    for (const s of bank.snaps) {
       const live = st.quests.find((x) => x.id === s.id);
       if (!live) continue;
-      if (live.completed !== s.completed) st.toggle(s.id);
+      if (live.completed !== s.completed) {
+        // Never un-complete from an undo — the user finished it
+        // AFTER this move; that win stands (ledger stays honest).
+        keptDone += 1;
+        continue;
+      }
       if (live.date !== s.date) setDate(s.id, s.date);
       if (s.scheduledHour != null && s.scheduledMinute != null) {
         anchor(s.id, s.scheduledHour, s.scheduledMinute);
       } else if (live.window !== s.window || live.scheduledHour != null) {
         moveWindow(s.id, s.window); // also clears a new anchor
       }
+      restored += 1;
     }
-    pushLumi('Put back exactly how it was. 💛');
+    for (const id of bank.created) {
+      const live = st.quests.find((x) => x.id === id);
+      if (live && !live.completed) {
+        st.remove(id);
+        restored += 1;
+      }
+    }
+    pushLumi(
+      restored > 0
+        ? keptDone > 0
+          ? 'Put back — except what you already finished. Those stand. 💛'
+          : 'Put back exactly how it was. 💛'
+        : 'Nothing needed putting back — it already changed shape. 💛',
+    );
   };
 
   const applyMutations = (muts: QuestMutation[]) => {
-    moveUndoRef.current = [];
+    beginUndoDraft();
     for (const m of muts) {
       // ANCHOR SAFETY (audit C1): setDate/moveWindow wipe scheduled
       // times AND delete calendar mirrors. A no-op date patch used
@@ -1212,7 +1338,7 @@ export default function Untangle() {
             ? new Date().getHours() * 60 + new Date().getMinutes()
             : null,
       });
-    moveUndoRef.current = [];
+    beginUndoDraft();
     let applied = 0;
     // The prompt says "never duplicate a task in a proposal" — this
     // is the client backstop (finding: duplicate complete ids paid
@@ -1296,7 +1422,7 @@ export default function Untangle() {
             m >= 0 &&
             m <= 59
           ) {
-            useQuestStore.getState().addQuest({
+            const minted = useQuestStore.getState().addQuest({
               title: p.title.trim(),
               difficulty,
               importance: imp,
@@ -1305,6 +1431,7 @@ export default function Untangle() {
               durationMinutes: safeDur,
               ...(p.date ? { date: p.date } : { date: selectedDate }),
             });
+            recordCreatedForUndo(minted.id);
             applied += 1;
             continue;
           }
@@ -1319,7 +1446,7 @@ export default function Untangle() {
                 : 'midday';
         const createISO = p.date ?? selectedDate;
         const createSlot = slotFor(win, createISO, safeDur);
-        useQuestStore.getState().addQuest({
+        const minted2 = useQuestStore.getState().addQuest({
           title: p.title.trim(),
           difficulty,
           importance: imp,
@@ -1331,6 +1458,7 @@ export default function Untangle() {
           }),
           date: createISO,
         });
+        recordCreatedForUndo(minted2.id);
         applied += 1;
         continue;
       }
@@ -1346,18 +1474,30 @@ export default function Untangle() {
       snapshotForUndo(p.taskId);
       if (p.action === 'schedule') {
         if (!p.window || p.window === 'someday') continue;
-        // Schedule onto the selected day if it's not already there.
+        // ANCHOR SAFETY (audit): setDate/moveWindow wipe a fixed
+        // clock time + its calendar mirror. A quest the user pinned
+        // to 3pm must keep 3pm — only unanchored quests get the
+        // cascade slot.
+        const hadAnchor = q.scheduledHour != null;
+        const hadH = q.scheduledHour ?? 0;
+        const hadM = q.scheduledMinute ?? 0;
         if (q.date !== selectedDate) setDate(p.taskId, selectedDate);
-        moveWindow(p.taskId, p.window as WindowKey);
-        // Cascade: give it a real seat in the window instead of
-        // stacking at the window's start with everything else.
-        const schedSlot = slotFor(
-          p.window as WindowKey,
-          selectedDate,
-          q.durationMinutes ?? 30,
-        );
-        if (schedSlot != null) {
-          anchor(p.taskId, Math.floor(schedSlot / 60), schedSlot % 60);
+        if (q.window !== (p.window as WindowKey) || q.date !== selectedDate) {
+          moveWindow(p.taskId, p.window as WindowKey);
+        }
+        if (hadAnchor) {
+          anchor(p.taskId, hadH, hadM);
+        } else {
+          // Cascade: give it a real seat in the window instead of
+          // stacking at the window's start with everything else.
+          const schedSlot = slotFor(
+            p.window as WindowKey,
+            selectedDate,
+            q.durationMinutes ?? 30,
+          );
+          if (schedSlot != null) {
+            anchor(p.taskId, Math.floor(schedSlot / 60), schedSlot % 60);
+          }
         }
         applied += 1;
       } else if (p.action === 'reschedule') {
@@ -1365,7 +1505,18 @@ export default function Untangle() {
         // Round-trip validation — the sanitizer regex admits
         // "2026-13-45", which setDate would write verbatim.
         if (localYmd(localDateFromISO(p.date)) !== p.date) continue;
-        setDate(p.taskId, p.date);
+        // No-op reschedule (same day, no new time) must not strip
+        // the quest's anchor + calendar event via setDate.
+        if (p.date === q.date && !p.at) continue;
+        const rHadAnchor = q.scheduledHour != null;
+        const rHadH = q.scheduledHour ?? 0;
+        const rHadM = q.scheduledMinute ?? 0;
+        if (p.date !== q.date) setDate(p.taskId, p.date);
+        if (!p.at && rHadAnchor && p.date !== q.date) {
+          // Moving days with a fixed time and no new time from the
+          // LLM — carry the anchor across (setDate wiped it).
+          anchor(p.taskId, rHadH, rHadM);
+        }
         if (p.at) {
           const [hStr, mStr] = p.at.split(':');
           const h = parseInt(hStr, 10);
@@ -1391,11 +1542,26 @@ export default function Untangle() {
         moveWindow(p.taskId, 'someday');
         applied += 1;
       } else if (p.action === 'surface') {
-        setDate(p.taskId, selectedDate);
+        // Surfacing must not strip a fixed clock time — setDate AND
+        // moveWindow both wipe anchors + calendar mirrors, so the
+        // original anchor is restored LAST (anchor() also re-derives
+        // a coherent window from the time).
+        const sHadAnchor = q.scheduledHour != null;
+        const sHadH = q.scheduledHour ?? 0;
+        const sHadM = q.scheduledMinute ?? 0;
+        const dateChanged = q.date !== selectedDate;
+        if (dateChanged) setDate(p.taskId, selectedDate);
         if (p.window && p.window !== 'someday') {
           moveWindow(p.taskId, p.window as WindowKey);
         } else if (q.window === 'someday') {
           moveWindow(p.taskId, 'morning'); // lift out of Later
+        }
+        if (sHadAnchor) {
+          anchor(p.taskId, sHadH, sHadM);
+        } else if (!dateChanged && !p.window && q.window !== 'someday') {
+          // True no-op surface — nothing was touched above; skip the
+          // applied count so the confirmation stays honest.
+          continue;
         }
         applied += 1;
       }
@@ -1443,10 +1609,21 @@ export default function Untangle() {
     ]);
     setView(res.view);
     setHighlightIds(res.highlightIds ?? []);
-    pushLumi(res.say);
     if (res.mutations.length > 0) {
-      // Apply after the reply lands so the user reads what changed.
-      setTimeout(() => applyMutations(res.mutations), 700);
+      // Apply BEFORE the reply lands (the old 700ms delay let a
+      // second move interleave against the pre-mutation pile), and
+      // hand the one-tap moves the same "Put it back" every other
+      // path carries — they were the only irreversible surface.
+      applyMutations(res.mutations);
+      const tk = bankUndo();
+      pushLumi(
+        res.say,
+        tk
+          ? { approveLabel: 'Put it back', onApprove: () => putItBack(tk) }
+          : undefined,
+      );
+    } else {
+      pushLumi(res.say);
     }
   };
 
@@ -1465,18 +1642,25 @@ export default function Untangle() {
   //    need without us narrating a "broken" state. ──
   const fallbackTurn = (t: string) => {
     const res = talkToLumi(t, activeForMove);
+    const arrangeOnce = { done: false };
     setBusy(true);
     setTimeout(() => {
       setBusy(false);
+      busyRef.current = false;
       setMsgs((m) => [
         ...m,
         {
-          id: `l-${Date.now()}`,
-          from: 'lumi',
+          id: `l-${Date.now()}-${++msgSeqRef.current}`,
+          from: 'lumi' as const,
           text: res.say,
           actions: {
             approveLabel: 'Arrange it',
             onApprove: () => {
+              // Latch — same double-tap hazard the LLM path fixed:
+              // a second tap re-applied against mutated state and
+              // corrupted the undo snapshot.
+              if (arrangeOnce.done) return;
+              arrangeOnce.done = true;
               const today = selectedDate;
               const muts: QuestMutation[] = [];
               const slotsByIdx: WindowKey[] = [
@@ -1497,13 +1681,24 @@ export default function Untangle() {
               for (const id of res.parkIds)
                 muts.push({ id, patch: { window: 'someday' } });
               applyMutations(muts);
+              const tk = bankUndo();
               setView('plan');
               setMsgs((m2) =>
                 m2.map((x) => (x.actions ? { ...x, actions: undefined } : x)),
               );
+              // Honest confirmation — with an empty/settled pile the
+              // old copy claimed "it's on your day now" for zero
+              // actual changes.
               pushLumi(
-                `Done — it's on your day now, spaced out so nothing piles up. You can see it on Home and Time too.`,
-                { approveLabel: 'Put it back', onApprove: putItBack },
+                tk
+                  ? `Done — it's on your day now, spaced out so nothing piles up. You can see it on Home and Time too.`
+                  : `Everything's already where it should be — nothing needed moving. 💛`,
+                tk
+                  ? {
+                      approveLabel: 'Put it back',
+                      onApprove: () => putItBack(tk),
+                    }
+                  : undefined,
               );
             },
             onAdjust: () => {
@@ -1516,7 +1711,7 @@ export default function Untangle() {
             },
           },
         },
-      ]);
+      ].slice(-100));
       setThread((th) => [...th, { role: 'assistant', content: res.say }]);
     }, 600);
   };
@@ -1526,18 +1721,43 @@ export default function Untangle() {
     // One turn at a time — the guard must run BEFORE the user bubble
     // echoes, or the message renders in chat but never reaches the
     // thread (audit B1: visible words, no reply, silently eaten).
-    if (busy) return;
+    // busyRef is the SYNCHRONOUS latch: two submits in one tick both
+    // saw busy=false via state.
+    if (busy || busyRef.current) return;
+    busyRef.current = true;
     const t = (overrideText ?? text).trim();
-    if (!t) return;
+    if (!t) {
+      busyRef.current = false;
+      return;
+    }
+    const gen = sendGenRef.current;
     Haptics.selectionAsync();
-    const userMsgId = `u-${Date.now()}`;
-    setMsgs((m) => [...m, { id: userMsgId, from: 'user', text: t }]);
+    const userMsgId = `u-${Date.now()}-${++msgSeqRef.current}`;
+    setMsgs((m) =>
+      [...m, { id: userMsgId, from: 'user' as const, text: t }].slice(-100),
+    );
     setText('');
     if (active.length === 0) {
-      pushLumi(
-        `Your plate's empty right now — capture what's weighing on you from Home and I'll cluster it.`,
-      );
-      return;
+      // Day-1 first-conversation state. A vent must be MET, not
+      // answered with capture instructions; and when the LLM is
+      // reachable it handles an empty pile fine ("I forgot I have a
+      // meeting at 8" → create). Only the offline non-vent case gets
+      // the capture nudge — and every turn still joins the thread so
+      // later turns keep context.
+      const ventish =
+        /\b(ugh+|tired|exhausted|overwhelm\w*|stress\w*|drowning|anxious|awful|terrible|crying|falling apart|hate (?:this|everything|myself)|can'?t (?:do this|even))\b/i.test(
+          t,
+        );
+      if (!isAnthropicConfigured) {
+        setThread((th) => [...th, { role: 'user', content: t }]);
+        pushLumi(
+          ventish
+            ? `That sounds heavy — I'm here. You don't have to turn it into tasks. If any of it becomes a to-do later, capture it on Home and I'll carry it with you.`
+            : `Your plate's empty right now — capture what's weighing on you from Home and I'll cluster it.`,
+        );
+        return;
+      }
+      // fall through to the LLM with the empty pile
     }
 
     // Append the user turn to the LLM thread and call.
@@ -1550,6 +1770,8 @@ export default function Untangle() {
     const ctx = buildLlmContext();
     llmUntangle(nextThread, ctx)
       .then((res) => {
+        busyRef.current = false;
+        if (gen !== sendGenRef.current) return; // reset() happened
         if (!res) {
           setBusy(false);
           fallbackTurn(t);
@@ -1558,9 +1780,9 @@ export default function Untangle() {
         setBusy(false);
         // Persist Lumi's reply to the thread so the next turn has it.
         setThread((th) => [...th, { role: 'assistant', content: res.say }]);
-        const llmMsgId = `l-${Date.now()}`;
+        const llmMsgId = `l-${Date.now()}-${++msgSeqRef.current}`;
         setMsgs((m) => [
-          ...m,
+          ...m.slice(-99),
           {
             id: llmMsgId,
             from: 'lumi',
@@ -1579,6 +1801,16 @@ export default function Untangle() {
                       if (approvedOnce) return;
                       approvedOnce = true;
                       const applied = applyProposal(res.proposal);
+                      const tk = bankUndo();
+                      // Tell the MODEL the proposal landed — without
+                      // this, "undo that" next turn confused it.
+                      setThread((th) => [
+                        ...th,
+                        {
+                          role: 'user' as const,
+                          content: `[system: user approved — ${applied} change${applied === 1 ? '' : 's'} applied]`,
+                        },
+                      ]);
                       // Dismiss the card on this message.
                       setMsgs((m2) =>
                         m2.map((x) =>
@@ -1592,8 +1824,11 @@ export default function Untangle() {
                         applied > 0
                           ? `Done. ${applied} move${applied === 1 ? '' : 's'} applied — you can see it on Home and Time too.`
                           : `Hmm — those tasks moved or finished before I could apply. Have a fresh look and tell me what you'd like.`,
-                        applied > 0
-                          ? { approveLabel: 'Put it back', onApprove: putItBack }
+                        applied > 0 && tk
+                          ? {
+                              approveLabel: 'Put it back',
+                              onApprove: () => putItBack(tk),
+                            }
                           : undefined,
                       );
                     },
@@ -1617,6 +1852,8 @@ export default function Untangle() {
         ]);
       })
       .catch(() => {
+        busyRef.current = false;
+        if (gen !== sendGenRef.current) return; // reset() happened
         setBusy(false);
         fallbackTurn(t);
       });
@@ -1624,6 +1861,11 @@ export default function Untangle() {
 
   const reset = () => {
     Haptics.selectionAsync();
+    // Fence any in-flight turn: its reply must not land in the fresh
+    // conversation (and busy must not stay stuck under "Fresh start").
+    sendGenRef.current += 1;
+    busyRef.current = false;
+    setBusy(false);
     setView('pile');
     setHighlightIds([]);
     setThread([]);
@@ -1712,7 +1954,12 @@ export default function Untangle() {
               Feeling the pile? Let&apos;s sort it out together.
             </Text>
           </View>
-          <Pressable onPress={reset} hitSlop={10}>
+          <Pressable
+            onPress={reset}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Start a fresh conversation"
+          >
             <Text style={styles.resetLink}>reset</Text>
           </Pressable>
         </View>
@@ -1722,6 +1969,8 @@ export default function Untangle() {
         <View style={styles.dayNav}>
           <Pressable
             onPress={() => shiftDay(-1)}
+            accessibilityRole="button"
+            accessibilityLabel="Previous day"
             style={styles.dayArrow}
             hitSlop={8}
           >
@@ -1732,6 +1981,8 @@ export default function Untangle() {
           </View>
           <Pressable
             onPress={() => shiftDay(1)}
+            accessibilityRole="button"
+            accessibilityLabel="Next day"
             style={styles.dayArrow}
             hitSlop={8}
           >
@@ -1928,7 +2179,11 @@ export default function Untangle() {
             ]}
           >
             <TextInput
-              value={text}
+              value={
+                voice.state === 'recording' && voice.partial
+                  ? voice.partial
+                  : text
+              }
               onChangeText={setText}
               onSubmitEditing={() => send()}
               placeholder={
@@ -1946,6 +2201,12 @@ export default function Untangle() {
             {!text.trim() ? (
               <Pressable
                 onPress={handleMic}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  voice.state === 'recording'
+                    ? 'Stop recording'
+                    : 'Speak to Lumi'
+                }
                 style={[
                   styles.micBtn,
                   {
@@ -1968,6 +2229,8 @@ export default function Untangle() {
             ) : (
               <Pressable
                 onPress={() => send()}
+                accessibilityRole="button"
+                accessibilityLabel="Send"
                 style={[styles.sendBtn, { backgroundColor: accent.fg }]}
               >
                 <Text style={styles.sendGlyph}>↑</Text>
