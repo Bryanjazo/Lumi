@@ -1132,7 +1132,6 @@ export default function Home() {
   // TextInputs don't auto-grow from min/maxHeight alone; we track
   // contentSize and set an explicit height (clamped to ~5 lines,
   // scrolls internally beyond).
-  const [pillInputH, setPillInputH] = useState(0);
   // The waiting card ("N more waiting — Lumi's holding them") —
   // collapsed by default, same calm-first default as Done today.
   const [waitingOpen, setWaitingOpen] = useState(false);
@@ -2241,7 +2240,6 @@ export default function Home() {
     triggerEmpathize();
     setVentText(text);
     setCapText('');
-    setPillInputH(0);
     // The vent card renders in the pill block — if the brain-dump
     // modal is open it would acknowledge into the void behind it.
     setCapOpen(false);
@@ -2288,7 +2286,6 @@ export default function Home() {
     }
     setDymHint(false);
     setDymSuggestion(null);
-    setPillInputH(0);
 
     // Parse the TIDIED text — "ok ok ok dishes" was reaching the
     // parser with the stutter intact because tidy only gated the
@@ -4195,7 +4192,6 @@ export default function Home() {
                     edited: false,
                   });
                   setCapText('');
-                  setPillInputH(0);
                 }}
                 hitSlop={8}
               >
@@ -4223,7 +4219,6 @@ export default function Home() {
               editable={voice.state !== 'recording'}
               onChangeText={(t) => {
                 setCapText(t);
-                if (!t) setPillInputH(0);
                 if (dymHint) {
                   setDymHint(false);
                   setDymSuggestion(null);
@@ -4238,25 +4233,20 @@ export default function Home() {
               style={[
                 styles.capturePillInput,
                 {
-                  // Flat single-line pill until the text actually
-                  // wraps; then grow with content to ~5 lines and
-                  // scroll inside beyond that. Empty ALWAYS means
-                  // flat — iOS doesn't emit a contentSize event on
-                  // programmatic clears (e.g. after send), so a
-                  // stale tall measurement would otherwise stick.
-                  height:
-                    !capText &&
-                    !(voice.state === 'recording' && voice.partial)
-                      ? 36
-                      : pillInputH <= 24
-                        ? 36
-                        : Math.min(130, pillInputH + 16),
+                  // Native auto-grow: no explicit height, so the
+                  // multiline input sizes itself to its content —
+                  // flat single line at minHeight, growing to five
+                  // 20px lines at maxHeight, scrolling inside past
+                  // that. (The old measured-height approach hinged
+                  // on iOS contentSize events that don't fire
+                  // reliably with a controlled value — pasted or
+                  // dictated text stayed clipped to one line.)
+                  minHeight: 36,
+                  maxHeight: 5 * 20 + 16,
+                  lineHeight: 20,
                 },
                 voice.state === 'recording' && { color: C.dusk },
               ]}
-              onContentSizeChange={(e) =>
-                setPillInputH(e.nativeEvent.contentSize.height)
-              }
               multiline
               scrollEnabled
               returnKeyType="send"
