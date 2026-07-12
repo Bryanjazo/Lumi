@@ -835,7 +835,7 @@ export const useUserStore = create<UserState>()(
     {
       name: 'lumi.user',
       storage: createJSONStorage(() => secureStorage),
-      version: 15,
+      version: 16,
       /**
        * v1 → v2: re-trigger the canonical onboarding for anyone who
        * went through the OLD terracotta-era flow. We can tell them
@@ -851,6 +851,12 @@ export const useUserStore = create<UserState>()(
         if (!persisted || typeof persisted !== 'object')
           return persisted as never;
         const state = persisted as Partial<UserState>;
+        if (version < 16) {
+          // The cat's default name was 'Luna' in early builds; the
+          // brand (and current default) is 'Lumi'. Migrate only the
+          // old DEFAULT — a name the user typed themselves stays.
+          if (state.petName === 'Luna') state.petName = 'Lumi';
+        }
         if (version < 2) {
           if (state.onboarded && !state.onboardedAt) {
             state.onboarded = false;
