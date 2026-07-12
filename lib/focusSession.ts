@@ -232,14 +232,6 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
   },
 
   resume: async () => {
-    {
-      const cur0 = get().current;
-      if (cur0) {
-        const remaining =
-          cur0.durationSec - selectElapsedSeconds({ ...cur0, pausedAt: null });
-        void scheduleFocusEnd(remaining);
-      }
-    }
     const cur = get().current;
     if (!cur || cur.pausedAt == null) return;
     // Accumulate the just-completed pause span into pauseTotalMs so
@@ -247,13 +239,16 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
     // during pause, but the SESSION time did not. Then restart the
     // tick loop so Live Activity updates flow again.
     const pausedFor = Date.now() - cur.pausedAt;
-    set({
-      current: {
-        ...cur,
-        pauseTotalMs: cur.pauseTotalMs + pausedFor,
-        pausedAt: null,
-      },
-    });
+    const next = {
+      ...cur,
+      pauseTotalMs: cur.pauseTotalMs + pausedFor,
+      pausedAt: null,
+    };
+    set({ current: next });
+    // Re-arm the session-end notification AFTER folding the pause in
+    // — computing remaining first counted the pause as elapsed and
+    // fired "the block is done" early by exactly the pause length.
+    void scheduleFocusEnd(next.durationSec - selectElapsedSeconds(next));
     stopTick();
     tickHandle = setInterval(() => {
       void get()._tick();
@@ -349,6 +344,21 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
     }
   },
 }));
+
+/**
+ * Re-arm the session-end notification from live state. Called by
+ * lib/notifications after its blanket cancelAllScheduledNotifications
+ * — which otherwise silently killed the hyperfocus goodbye whenever
+ * the nudge schedule re-synced mid-session (e.g. completing a daily
+ * habit changes recurSignature → sync → cancel-all).
+ */
+export const rearmFocusEnd = (): void => {
+  const cur = useFocusSession.getState().current;
+  if (!cur || cur.pausedAt != null) return;
+  void scheduleFocusEnd(
+    Math.max(0, cur.durationSec - selectElapsedSeconds(cur)),
+  );
+};
 
 /** Cleanup helper called from app launch — kills any orphaned
  *  Live Activities left over from a previous process (crash, kill).

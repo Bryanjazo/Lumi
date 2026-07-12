@@ -168,6 +168,15 @@ export const syncNotifications = async (opts?: {
   }
 
   await Notifications.cancelAllScheduledNotificationsAsync();
+  // The blanket cancel above also killed an in-flight focus session's
+  // end notification — re-arm it from live session state.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { rearmFocusEnd } = require('./focusSession') as typeof import('./focusSession');
+    rearmFocusEnd();
+  } catch {
+    // focus session module unavailable — nothing to re-arm
+  }
   const a = u.anchors;
   const speakable = (min: number) =>
     withinWakingHours(min, a.wake, a.sleep, prefs.quiet);

@@ -171,6 +171,8 @@ interface QuestState {
   completedToday: () => number;
   weekCompleted: () => number;
   reset: () => void;
+  /** True once async storage rehydration finished (see persist config). */
+  hasHydrated: boolean;
 }
 
 const accents: Quest['accent'][] = ['plum', 'terra', 'moss', 'caramel', 'mist'];
@@ -556,11 +558,20 @@ export const useQuestStore = create<QuestState>()(
         ).length;
       },
       reset: () => set({ quests: [] }),
+      hasHydrated: false,
     }),
     {
       name: 'lumi.quests',
       storage: createJSONStorage(() => secureStorage),
       version: 4,
+      // Consumers that ACT on the quest list at startup (notification
+      // intents, ?suggest deep links, Untangle auto-jump) must wait
+      // for this — the AES-backed storage hydrates async, and acting
+      // on the empty pre-hydration list made those features lie
+      // ("Nothing on the plate" to a rescue-notification tap).
+      onRehydrateStorage: () => () => {
+        useQuestStore.setState({ hasHydrated: true });
+      },
       migrate: (persisted: unknown, version) => {
         if (!persisted || typeof persisted !== 'object')
           return persisted as never;

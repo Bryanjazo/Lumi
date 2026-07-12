@@ -50,6 +50,11 @@ const normalize = (s: string): string =>
 // Until the nightly detector job ships, seed a handful of representative
 // patterns so the UI surface is real. The dates here are sample evidence —
 // production replaces this with rows produced by the detector.
+// Dev-only sample patterns (kept for simulator demos). Production
+// initializes EMPTY — fabricated "4 Sundays in a row" evidence must
+// never flash at a day-1 user; the on-device detector fills the list
+// from real completions.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const SEED: Suggestion[] = [
   {
     id: 'seed_groceries',
@@ -83,7 +88,7 @@ const SEED: Suggestion[] = [
 export const useSuggestionsStore = create<SuggestionsState>()(
   persist(
     (set, get) => ({
-      suggestions: SEED,
+      suggestions: [],
       suppressed: [],
       dismiss: (id) => {
         const item = get().suggestions.find((s) => s.id === id);

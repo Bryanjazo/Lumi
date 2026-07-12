@@ -119,7 +119,11 @@ export const recurBadge = (rule: RecurRule): string => {
   return CADENCE_LABEL.get(rule.every)?.toLowerCase() ?? 'repeats';
 };
 
-const ymd = (d: Date): string => d.toISOString().slice(0, 10);
+// LOCAL day, never toISOString().slice — UTC keys made every habit
+// spawn a day early east of UTC (weekly-Monday fired on Sunday in
+// Berlin/Tokyo/Sydney) and come due hours early for US evenings.
+const ymd = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const fromYmd = (s: string): Date => new Date(s + 'T00:00:00');
 const addDays = (d: Date, n: number): Date => {
   const x = new Date(d);
