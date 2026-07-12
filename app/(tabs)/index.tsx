@@ -95,6 +95,7 @@ import {
 } from '../../lib/learning/avoidance';
 import { useRescueStore } from '../../store/rescueStore';
 import { useNotifIntentStore } from '../../store/notifIntentStore';
+import { useHomeFocusStore } from '../../store/homeFocusStore';
 import { useAccessStatus } from '../../lib/subscription';
 import { RescueCard } from '../../components/RescueCard';
 import { WelcomeBackCard } from '../../components/WelcomeBackCard';
@@ -2944,6 +2945,36 @@ export default function Home() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFocused, notifIntent, questsHydrated]);
+
+  // ── Untangle → Home "focus this" handoff ────────────────────────
+  // When a conversation in Untangle switched the user onto a task
+  // (surfaced an easier one, arranged a first move), its main card
+  // here mirrors that pick the moment they come back to Home.
+  const homeFocusPick = useHomeFocusStore((s) => s.pick);
+  const consumeHomeFocus = useHomeFocusStore((s) => s.consume);
+  useEffect(() => {
+    if (!isFocused || !homeFocusPick || !questsHydrated) return;
+    const id = consumeHomeFocus();
+    if (!id) return;
+    const q = candidates.find((c) => c.id === id);
+    if (q) {
+      // Point swap at the pick. If a focus session is running the
+      // hero is locked to that task (focusQuestId override) — swap
+      // still updates, so the pick takes the card the moment the
+      // session ends, but we stay quiet rather than announce a card
+      // the user can't see change yet.
+      surfaceNow(q);
+      if (!focusQuestId && hero?.id !== id) {
+        showToast(`Starting with “${q.title}” — Lumi’s pick. 💛`);
+      }
+    } else {
+      // Not a candidate yet (the store mutation hasn't reflowed into
+      // candidates) — the pendingSurface effect promotes it once it
+      // appears. A completed/parked task simply never surfaces.
+      pendingSurfaceRef.current = id;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFocused, homeFocusPick, questsHydrated]);
 
   // Suggestion → schedule sheet → commit. The user picks cadence
   // (daily/weekly/monthly/etc.), an optional day, and an exact time

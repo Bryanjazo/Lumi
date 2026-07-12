@@ -51,6 +51,7 @@ import {
   type WindowKey,
 } from '../../constants/windows';
 import { resolveSlot } from '../../lib/slotting';
+import { useHomeFocusStore } from '../../store/homeFocusStore';
 import {
   useQuestStore,
   type Quest,
@@ -1364,6 +1365,17 @@ export default function Untangle() {
       });
     beginUndoDraft();
     let applied = 0;
+    // Home "focus this" handoff: the task Lumi steered the user onto
+    // becomes Home's main card. Surfacing is the explicit signal; a
+    // freshly created "start here" task, or a lone task scheduled into
+    // the day, are the fallbacks. Only TODAY tasks qualify (Home's
+    // hero is today-only), and a broad multi-task re-plan singles out
+    // nothing unless it explicitly surfaced one.
+    const untanglingToday = selectedDate === todayKey();
+    let surfacedId: string | null = null;
+    let createdId: string | null = null;
+    let scheduledId: string | null = null;
+    let actionableCount = 0;
     // The prompt says "never duplicate a task in a proposal" — this
     // is the client backstop (finding: duplicate complete ids paid
     // XP twice then un-completed the task).
@@ -1456,6 +1468,10 @@ export default function Untangle() {
               ...(p.date ? { date: p.date } : { date: selectedDate }),
             });
             recordCreatedForUndo(minted.id);
+            if (!createdId && (p.date ?? selectedDate) === todayKey()) {
+              createdId = minted.id;
+            }
+            actionableCount += 1;
             applied += 1;
             continue;
           }
@@ -1484,6 +1500,10 @@ export default function Untangle() {
           date: createRes?.dateISO ?? createISO,
         });
         recordCreatedForUndo(minted2.id);
+        if (!createdId && (createRes?.dateISO ?? createISO) === todayKey()) {
+          createdId = minted2.id;
+        }
+        actionableCount += 1;
         applied += 1;
         continue;
       }
@@ -1514,6 +1534,7 @@ export default function Untangle() {
           moveWindow(p.taskId, targetWin);
         }
         let gotNewSlot = false;
+        let landedISO = selectedDate;
         if (hadAnchor) {
           anchor(p.taskId, hadH, hadM);
         } else {
@@ -1524,6 +1545,7 @@ export default function Untangle() {
           if (res != null) {
             if (res.dateISO !== selectedDate) setDate(p.taskId, res.dateISO);
             anchor(p.taskId, Math.floor(res.min / 60), res.min % 60);
+            landedISO = res.dateISO;
             gotNewSlot = true;
           }
         }
@@ -1531,7 +1553,11 @@ export default function Untangle() {
         // something — a task already sitting in this window on this
         // day, still anchored, is a no-op and must not inflate the
         // "N moves applied" tally.
-        if (dateChanged || windowChanged || gotNewSlot) applied += 1;
+        if (dateChanged || windowChanged || gotNewSlot) {
+          applied += 1;
+          if (!scheduledId && landedISO === todayKey()) scheduledId = p.taskId;
+          actionableCount += 1;
+        }
       } else if (p.action === 'reschedule') {
         if (!p.date) continue;
         // Round-trip validation — the sanitizer regex admits
@@ -1596,7 +1622,23 @@ export default function Untangle() {
           continue;
         }
         applied += 1;
+        // Surface is the strongest "focus this" signal — the first
+        // one wins Home's main card (today only; surface targets the
+        // selected day).
+        if (!surfacedId && untanglingToday) surfacedId = p.taskId;
+        actionableCount += 1;
       }
+    }
+    // Hand Home the task Lumi steered onto. An explicit surface always
+    // wins. Otherwise ONLY a single-action proposal singles out a
+    // task — a multi-task re-plan (create three things, arrange the
+    // day) shouldn't yank Home's card to whichever happened to be
+    // first. All candidates are already gated to today above.
+    const focusForHome =
+      surfacedId ??
+      (actionableCount === 1 ? (createdId ?? scheduledId) : null);
+    if (focusForHome) {
+      useHomeFocusStore.getState().setPick(focusForHome);
     }
     return applied;
   };
@@ -1648,6 +1690,12 @@ export default function Untangle() {
       // path carries — they were the only irreversible surface.
       applyMutations(res.mutations);
       const tk = bankUndo();
+      // "What matters" surfaces the few that count — its top pick is
+      // the one to start on, so mirror it as Home's main card (today
+      // only). Other moves (park/defer) don't single out a focus.
+      if (res.highlightIds && res.highlightIds[0] && selectedDate === todayKey()) {
+        useHomeFocusStore.getState().setPick(res.highlightIds[0]);
+      }
       pushLumi(
         res.say,
         tk
@@ -1714,6 +1762,12 @@ export default function Untangle() {
                 muts.push({ id, patch: { window: 'someday' } });
               applyMutations(muts);
               const tk = bankUndo();
+              // Hand Home the top focus task so its main card mirrors
+              // what Lumi just arranged here — today only (Home's hero
+              // is today; arranging a future day shouldn't touch it).
+              if (res.focusIds[0] && selectedDate === todayKey()) {
+                useHomeFocusStore.getState().setPick(res.focusIds[0]);
+              }
               setView('plan');
               setMsgs((m2) =>
                 m2.map((x) => (x.actions ? { ...x, actions: undefined } : x)),
