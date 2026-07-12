@@ -137,7 +137,10 @@ import {
 import { LumiFocusCard } from '../../components/LumiFocusCard';
 import { FocusTaskPickerModal } from '../../components/FocusTaskPickerModal';
 import { HomeCaptureModal } from '../../components/HomeCaptureModal';
-import { useFocusSession } from '../../lib/focusSession';
+import {
+  useFocusSession,
+  selectRemainingSeconds,
+} from '../../lib/focusSession';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -2803,7 +2806,7 @@ export default function Home() {
         showToast('Start here — the one on top is enough. 💛');
         break;
       case 'meds':
-        showToast('Meds + something to eat. That’s the whole quest.');
+        showToast('Meds + something to eat. That’s the whole job. 💛');
         break;
       case 'smallest': {
         if (candidates.length === 0) {
@@ -2864,6 +2867,22 @@ export default function Home() {
         } else {
           showToast('That one’s already handled today. 💛');
         }
+        break;
+      }
+      case 'focusdone': {
+        // The tap usually lands while the session still reads as
+        // "running" — backgrounded JS never got to auto-end it.
+        // Settle it now so the done screen is up the moment they
+        // look, instead of 5s later when the tick loop catches up.
+        const fs = useFocusSession.getState();
+        if (fs.current && selectRemainingSeconds(fs.current) <= 0) {
+          void fs.end({ reason: 'completed' });
+        } else if (!fs.current && !fs.lastCompleted) {
+          // Session already settled and acknowledged — stale tap.
+          showToast('That block wrapped — it counted. 💛');
+        }
+        // Otherwise the focus card is already showing the truth
+        // (done screen via lastCompleted, or a still-running block).
         break;
       }
     }

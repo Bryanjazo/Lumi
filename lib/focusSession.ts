@@ -149,6 +149,10 @@ const scheduleFocusEnd = async (seconds: number) => {
       content: {
         title: 'Lumi',
         body: 'The block is done — that counts. Come stretch. 💛',
+        // Tap → Home settles the session and shows the done screen.
+        // Without an action the root tap handler ignores the response
+        // entirely — "I tapped it and nothing happened".
+        data: { action: 'focusdone' },
       },
       trigger: {
         type: 'timeInterval',

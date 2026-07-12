@@ -16,7 +16,8 @@ export type NotifAction =
   | 'tomorrow' // wind-down — set up tomorrow's first thread
   | 'rescue' // recovery — open Rescue Mode (shrink/lighten)
   | 'quest' // recurring reminder — surface THAT quest
-  | 'recap'; // Sunday — open the weekly recap
+  | 'recap' // Sunday — open the weekly recap
+  | 'focusdone'; // focus block ended — settle the session, show done
 
 export interface NotifIntent {
   action: NotifAction;
