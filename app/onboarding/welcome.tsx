@@ -813,7 +813,7 @@ export default function Onboarding() {
                 />
                 <Luna size={128}/>
               </View>
-              <Text style={styles.eyebrowGlow}>Hi, I&apos;m Luna</Text>
+              <Text style={styles.eyebrowGlow}>Hi, I&apos;m Lumi</Text>
               <Text style={styles.welcomeTitle}>
                 I&apos;m here to help your brain feel a little lighter.
               </Text>

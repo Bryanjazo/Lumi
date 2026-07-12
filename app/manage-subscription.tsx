@@ -242,7 +242,7 @@ export default function ManageSubscriptionScreen() {
       pill: 'FREE PLAN',
       pillColor: C.boneDim,
       headline: 'Free Lumi, always.',
-      body: 'The baseline is yours forever — capture, plan, and Luna’s company. No pressure to ever pay.',
+      body: 'The baseline is yours forever — capture, plan, and Lumi’s company. No pressure to ever pay.',
     };
   })();
 

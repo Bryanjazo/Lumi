@@ -88,7 +88,7 @@ export const COMPARE_ROWS = [
   { label: '“Hey Lumi” hands-free', free: '—', pro: 'Wake word' },
   { label: 'Weekly reflection', free: 'Snippet', pro: 'Full story' },
   { label: 'Calendar sync', free: 'Included', pro: 'Included' },
-  { label: "Luna's worlds & skins", free: 'Starter', pro: 'All' },
+  { label: "Lumi's worlds & skins", free: 'Starter', pro: 'All' },
 ] as const;
 
 export interface AccessStatus {

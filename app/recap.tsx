@@ -273,6 +273,7 @@ export default function RecapScreen() {
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
   const streak = useUserStore((s) => s.streak);
+  const petName = useUserStore((s) => s.petName);
   // Companion-mode phrasing — in Focused mode "quest" reads as
   // "task" so the recap matches the calm-organizer framing. Per
   // companion-mode-spec §3.
@@ -675,7 +676,7 @@ export default function RecapScreen() {
             <Text style={styles.shareStory}>
               {pro
                 ? storyText
-                : `${done > 0 ? `${done} things, done gently.` : 'A quiet week — still counts.'} Luna kept me company.`}
+                : `${done > 0 ? `${done} things, done gently.` : 'A quiet week — still counts.'} ${petName} kept me company.`}
             </Text>
             <View style={styles.shareStatsRow}>
               <View>

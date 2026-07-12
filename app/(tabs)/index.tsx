@@ -3270,7 +3270,7 @@ export default function Home() {
                   source={lunaSource(nookMood, lunaSkin)}
                   style={{ width: 52, height: 52 }}
                   resizeMode="contain"
-                  accessibilityLabel="Luna"
+                  accessibilityLabel={focusPetName}
                 />
               </>
             )}

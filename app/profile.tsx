@@ -1782,6 +1782,9 @@ export default function AccountScreen() {
                                 {(['Luna', 'Room', 'Streak', 'XP'] as const).map(
                                   (f) => {
                                     const lit = opt.feats[f];
+                                    // Data key is 'Luna' (legacy);
+                                    // the cat's NAME is Lumi.
+                                    const shown = f === 'Luna' ? 'Lumi' : f;
                                     return (
                                       <View
                                         key={f}
@@ -1823,7 +1826,7 @@ export default function AccountScreen() {
                                                 },
                                           ]}
                                         >
-                                          {f}
+                                          {shown}
                                         </Text>
                                       </View>
                                     );
