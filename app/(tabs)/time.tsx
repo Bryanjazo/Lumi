@@ -598,6 +598,7 @@ const DayTaskRow = ({
   nowMin,
   inPeak,
   styles,
+  onMove,
 }: {
   it: TItem;
   isToday: boolean;
@@ -605,6 +606,8 @@ const DayTaskRow = ({
   nowMin: number;
   inPeak: boolean;
   styles: ReturnType<typeof makeStyles>;
+  /** Alert day-picker for past rows (drag is disabled there). */
+  onMove?: (it: TItem) => void;
 }) => {
   const tierCol = it.tier ? IMPORTANCE[it.tier].color : C.boneDim;
   const done = it.done === true;
@@ -766,7 +769,10 @@ const DayTaskRow = ({
           </View>
         )}
       </View>
-      {!done && !!it.questId && !it.recurring && (
+      {/* Grip only where the drag actually works — past days disable
+          the gesture (no gaps to land in), and showing the handle
+          there read as broken. Past open tasks get a real mover. */}
+      {!done && !!it.questId && !it.recurring && !isPast && (
         <View style={[styles.peekHandle, { marginTop: 5 }]}>
           {[0, 1, 2].map((r) => (
             <View key={r} style={styles.peekHandleRow}>
@@ -775,6 +781,17 @@ const DayTaskRow = ({
             </View>
           ))}
         </View>
+      )}
+      {!done && !!it.questId && !it.recurring && isPast && onMove && (
+        <Pressable
+          onPress={() => onMove(it)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`Move ${it.title} to another day`}
+          style={[styles.peekMoveBtn, { marginTop: 5 }]}
+        >
+          <Text style={styles.peekMoveGlyph}>→</Text>
+        </Pressable>
       )}
     </Pressable>
   );
@@ -809,6 +826,7 @@ const DayView = ({
   curveSource,
   styles,
   ctl,
+  onMovePast,
 }: {
   date: Date;
   isToday: boolean;
@@ -821,6 +839,8 @@ const DayView = ({
   curveSource: 'baseline' | 'learning' | 'learned';
   styles: ReturnType<typeof makeStyles>;
   ctl: DragCtl;
+  /** Move affordance for past-day open rows (drag is off there). */
+  onMovePast?: (it: TItem) => void;
 }) => {
   const dIso = ymd(date);
   const hasQuests = items.some((i) => i.kind === 'quest');
@@ -1100,6 +1120,7 @@ const DayView = ({
                   nowMin={nowMin}
                   inPeak={inPeak}
                   styles={styles}
+                  onMove={onMovePast}
                 />
               </View>
             </DragChip>
@@ -2423,6 +2444,36 @@ export default function Time() {
           curveSource={digest.curve.source}
           styles={styles}
           ctl={dragCtl}
+          onMovePast={(it) => {
+            if (!it.questId) return;
+            const short =
+              it.title.length > 26 ? `${it.title.slice(0, 24)}…` : it.title;
+            const opts = [
+              {
+                text: 'Today',
+                onPress: () =>
+                  applyMoves(
+                    [{ id: it.questId as string, toIso: todayKey() }],
+                    `Moved “${short}” → today`,
+                  ),
+              },
+              ...[1, 7].map((n) => {
+                const target = addDays(today, n);
+                return {
+                  text: n === 1 ? 'Tomorrow' : `Next ${WD[target.getDay()]}`,
+                  onPress: () =>
+                    applyMoves(
+                      [{ id: it.questId as string, toIso: ymd(target) }],
+                      `Moved “${short}” → ${WD[target.getDay()]} ${target.getDate()}`,
+                    ),
+                };
+              }),
+            ];
+            Alert.alert('Bring it forward', `“${it.title}”`, [
+              ...opts,
+              { text: 'Cancel', style: 'cancel' as const },
+            ]);
+          }}
         />
       ) : scale === 'week' ? (
         <WeekView
