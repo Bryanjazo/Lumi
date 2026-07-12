@@ -1615,6 +1615,12 @@ const styles = StyleSheet.create({
     fontSize: 17,
     width: 22,
     textAlign: 'center',
+    // Pin the metrics: the quadrant glyphs (◔ ◕ ◑) resolve through a
+    // fallback font whose tall ascent rendered them as tiny floating
+    // dots and pushed the option label down a few px.
+    lineHeight: 20,
+    includeFontPadding: false,
+    alignSelf: 'center',
   },
   chipLabel: {
     flex: 1,

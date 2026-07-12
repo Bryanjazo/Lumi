@@ -17,6 +17,9 @@ export interface AvoidanceCluster {
   /** Plain "phone calls" / "errands" / "tasks". */
   label: string;
   items: StaleItem[];
+  /** Full cluster size — items is capped at 4 for display, and the
+   *  recap headline must not understate ("4 things" for 6). */
+  total: number;
 }
 
 const ymd = (d: Date): string => {
@@ -114,6 +117,7 @@ export const dominantStaleCluster = (
     tag: top.tag,
     label: TAG_LABEL[top.tag] ?? top.tag,
     items: top.items.slice(0, 4),
+    total: top.items.length,
   };
 };
 

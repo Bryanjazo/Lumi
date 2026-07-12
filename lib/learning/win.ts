@@ -94,7 +94,7 @@ export const findWinOfWeek = (quests: Quest[]): WinItem | null => {
   const dayCopy = DOW_NAMES[dow].toLowerCase() + ' ' + part;
   const delayCopy =
     best.delay >= 3
-      ? ` — after putting it off for ${best.delay} days`
+      ? ` — after it followed you for ${best.delay} days`
       : '';
   return {
     quest: best.quest,
@@ -103,10 +103,15 @@ export const findWinOfWeek = (quests: Quest[]): WinItem | null => {
     // moment this surface exists to celebrate.
     delayDays: best.delay,
     completedDow: dow,
-    headline: `You finally finished ${best.quest.title.toLowerCase()}${delayCopy}.`,
+    // Title keeps the user's own casing ("Email Dr. Chen" must not
+    // become "email dr. chen"); the body states the REAL carry length
+    // (the old "over a week" was false for 3-6 day carries and
+    // contradicted the headline on the same card), and no game
+    // vocabulary ("Trial") leaks into calm modes.
+    headline: `You finally finished ${best.quest.title}${delayCopy}.`,
     body:
       best.delay >= 3
-        ? `That had been sitting on your list for over a week. You did it ${dayCopy}. Worth remembering.`
-        : `Solid follow-through on a ${best.quest.importance === 'high' ? 'Trial' : 'Task'} — done ${dayCopy}.`,
+        ? `That had been sitting with you for ${best.delay} days. You did it ${dayCopy}. Worth remembering.`
+        : `Solid follow-through on a ${best.quest.importance === 'high' ? 'big one' : 'task'} — done ${dayCopy}.`,
   };
 };

@@ -420,7 +420,12 @@ export default function RootLayout() {
     //    after onboarding. Both options proceed into the app; this
     //    is NOT a gate, just the moment to surface the upfront
     //    "7 days of Pro, on us" offer.
-    if (!trialChoiceSeen) {
+    // Only offered on the way OUT of onboarding/auth — this used to
+    // yank the user to the trial screen from ANYWHERE the moment
+    // trialChoiceSeen flipped false (e.g. the cross-account wipe on
+    // a shared device resetting it mid-session), landing the "7 days
+    // of Pro" on top of the Home tour spotlight.
+    if (!trialChoiceSeen && (inOnboarding || inAuth || inTrialChoice)) {
       if (!inTrialChoice)
         router.replace('/onboarding/trial-choice' as never);
       return;

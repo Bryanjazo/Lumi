@@ -40,6 +40,7 @@ import {
   type UnlockCategory,
 } from '../../constants/unlocks';
 import { computeVitality } from '../../lib/vitality';
+import { completedForWeek } from '../../lib/week';
 import { last7DaysEnergy, useLearningDigest } from '../../lib/learning';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 import { ProfileIcon } from '../../components/ProfileIcon';
@@ -1091,24 +1092,14 @@ const FocusedSnapshot = ({ quests }: { quests: Quest[] }) => {
     return Math.max(1, Math.floor(ms / 86_400_000) + 1);
   }, [onboardedAt]);
 
+  const doneLogSnap = useUserStore((s) => s.doneLog);
   const { doneThisWeek, doneTotal } = useMemo(() => {
-    const today = new Date();
-    const weekAgo = new Date(today);
-    weekAgo.setDate(weekAgo.getDate() - 7);
-    // LOCAL ymd — the UTC slice shifted the week boundary by a day
-    // for evening use west of UTC (and disagreed with the Full-mode
-    // week count on the same page).
-    const weekAgoIso = `${weekAgo.getFullYear()}-${String(weekAgo.getMonth() + 1).padStart(2, '0')}-${String(weekAgo.getDate()).padStart(2, '0')}`;
-    let week = 0;
-    let total = 0;
-    for (const q of quests) {
-      if (!q.completed) continue;
-      total++;
-      const completedDate = (q.completedAt ?? q.date)?.slice(0, 10);
-      if (completedDate && completedDate >= weekAgoIso) week++;
-    }
+    // Same Sunday-week definition as Me's story, the recap and
+    // Patterns (this one used UTC slices over an 8-day window).
+    const week = completedForWeek(quests, doneLogSnap);
+    const total = quests.filter((q) => q.completed).length;
     return { doneThisWeek: week, doneTotal: total };
-  }, [quests]);
+  }, [quests, doneLogSnap]);
 
   return (
     <View style={styles.standingStrip}>
@@ -1404,14 +1395,13 @@ export default function MeTab() {
   // Counts completions within the last 7 days (rolling window) so a
   // fresh account doesn't crow about quests it doesn't have. Day
   // label reflects TODAY, not a hardcoded Sunday.
-  const weekQuestsDone = useMemo(() => {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 7);
-    return quests.filter(
-      (q) =>
-        q.completed && q.completedAt && new Date(q.completedAt) >= cutoff,
-    ).length;
-  }, [quests]);
+  // Shared Sunday-week definition (lib/week.ts) — this line is the
+  // DOOR into the recap; the two used to disagree on "this week".
+  const doneLogWeek = useUserStore((s) => s.doneLog);
+  const weekQuestsDone = useMemo(
+    () => completedForWeek(quests, doneLogWeek),
+    [quests, doneLogWeek],
+  );
   // This week, as ONE story line in Lumi's voice — composed from
   // real numbers only (no invented "3 focus embers" like the mock).
   const storyLine = useMemo(() => {

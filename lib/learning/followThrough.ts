@@ -209,7 +209,7 @@ export const strongWindowInsight = (
   const strong = ft.strongWindow.window;
   const weak = ft.weakWindow.window;
 
-  const headline = `You finish ${fraction(ft.strongWindow.done, ft.strongWindow.set)} ${windowLabel(strong)} quests — but only ${fraction(ft.weakWindow.done, ft.weakWindow.set)} ${windowLabel(weak)}.`;
+  const headline = `You finish ${fraction(ft.strongWindow.done, ft.strongWindow.set)} ${windowLabel(strong)} tasks — but only ${fraction(ft.weakWindow.done, ft.weakWindow.set)} ${windowLabel(weak)}.`;
   const body = `${windowLabel(strong)[0].toUpperCase()}${windowLabel(strong).slice(1)}s are your strong window (${pct(ft.strongWindow.rate)}). The hard stuff lands better there.`;
   const cta = `Schedule my Trials in the ${windowLabel(strong)} →`;
 

@@ -9,7 +9,7 @@ import {
   Easing,
   Image,
   Share,
-  Alert,
+  AccessibilityInfo,
   LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,6 +27,14 @@ import Svg, {
 } from 'react-native-svg';
 import { fonts } from '../constants/fonts';
 import { useUserStore } from '../store/userStore';
+import { useQuestStore } from '../store/questStore';
+import {
+  bestPastWeek,
+  completedByDayForWeek,
+  completedForWeek,
+  plannedForWeek,
+  sundayWeekStart,
+} from '../lib/week';
 import { useLearningDigest, formatStaleDays } from '../lib/learning';
 import { useCompanionMode, phrasingFor } from '../lib/companion-mode';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
@@ -80,6 +88,15 @@ const CountUp = ({
   useEffect(() => {
     let raf: number;
     let start: number | null = null;
+    let cancelled = false;
+    // Reduced motion: land on the number, no tween (the per-frame
+    // text churn also spammed VoiceOver).
+    void AccessibilityInfo.isReduceMotionEnabled().then((reduced) => {
+      if (reduced && !cancelled) {
+        cancelAnimationFrame(raf);
+        setN(to);
+      }
+    });
     const step = (ts: number) => {
       if (start == null) start = ts;
       const p = Math.min(1, (ts - start) / duration);
@@ -88,7 +105,10 @@ const CountUp = ({
       if (p < 1) raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
   }, [to, duration]);
   return <Text style={style}>{n}</Text>;
 };
@@ -151,11 +171,19 @@ const WeekCurve = ({
     if (!w || data.length < 2) return { line: '', fill: '', points: [] };
     const gw = w - PAD * 2;
     const gh = H - PAD * 2;
-    const pts = data.map((d, i) => ({
-      x: PAD + (i / (data.length - 1)) * gw,
-      y: PAD + (1 - Math.max(0, Math.min(100, d.v)) / 100) * gh,
-      day: d.day,
-    }));
+    // v=0 means NO check-in that day, not zero energy — drawing it
+    // plunged the curve to the floor on days with no data. The line
+    // connects reported days only; labels keep all 7 slots.
+    const pts = data
+      .map((d, i) => ({ d, i }))
+      .filter(({ d }) => d.v > 0)
+      .map(({ d, i }) => ({
+        x: PAD + (i / (data.length - 1)) * gw,
+        y: PAD + (1 - Math.max(0, Math.min(100, d.v)) / 100) * gh,
+        day: d.day,
+      }));
+    if (pts.length < 2)
+      return { line: '', fill: '', points: pts };
     let line = `M ${pts[0].x} ${pts[0].y}`;
     for (let i = 1; i < pts.length; i++) {
       const pp = pts[i - 1];
@@ -192,17 +220,17 @@ const WeekCurve = ({
           {points.map((p, i) => (
             <Circle key={'i' + i} cx={p.x} cy={p.y} r={2} fill={accent.fg} />
           ))}
-          {points.map((p, i) => (
+          {data.map((dd, i) => (
             <SvgText
               key={'d' + i}
-              x={p.x}
+              x={PAD + (i / (data.length - 1)) * (w - PAD * 2)}
               y={H - 3}
               fill={hexA(C.bone, 0.5)}
               fontSize={9}
               fontFamily={fonts.inter}
               textAnchor="middle"
             >
-              {p.day}
+              {dd.day}
             </SvgText>
           ))}
         </Svg>
@@ -214,49 +242,8 @@ const WeekCurve = ({
 // ═════════════════════════════════════════════════════════════════════
 // Helpers
 // ═════════════════════════════════════════════════════════════════════
-const DAY_NAME: Record<string, string> = {
-  M: 'Monday',
-  T: 'Tuesday',
-  W: 'Wednesday',
-  R: 'Thursday',
-  F: 'Friday',
-  S: 'Saturday',
-  U: 'Sunday',
-};
-
 const monthDay = (d: Date): string =>
   d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-
-// LOCAL YYYY-MM-DD — match the rest of the app's date bucketing so
-// today's check-ins show up on today's bar, not on tomorrow's UTC.
-const ymdLocal = (d: Date): string => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-};
-
-const isoOffsetDays = (n: number): string => {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  return ymdLocal(d);
-};
-
-// Build last 7 days ending today, with LOCAL date keys.
-const last7Days = (
-  energyByDate: Map<string, number>,
-): { day: string; v: number }[] => {
-  const out: { day: string; v: number }[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const key = ymdLocal(d);
-    const idx = d.getDay();
-    const letter = ['S', 'M', 'T', 'W', 'T', 'F', 'S'][idx];
-    out.push({ day: letter, v: energyByDate.get(key) ?? 0 });
-  }
-  return out;
-};
 
 // ═════════════════════════════════════════════════════════════════════
 // Screen
@@ -284,37 +271,62 @@ export default function RecapScreen() {
   const digest = useLearningDigest();
   const { followThrough, energyTrend, pattern, avoidance, win } = digest;
 
-  const done = followThrough.thisWeek.done;
-  const set = followThrough.thisWeek.set;
-  const lastWeekDone = followThrough.lastWeek.done;
-  const doneByDay = followThrough.doneByDay;
-  const dayLetters = followThrough.doneByDayLetters;
+  // THE shared week definition (lib/week.ts) — recap, Me's story and
+  // Patterns all count the same Sunday-anchored completion week now
+  // (they used to disagree on the same screen transition).
+  const quests = useQuestStore((s) => s.quests);
+  const doneLog = useUserStore((s) => s.doneLog);
+  const doneByDay = useMemo(
+    () => completedByDayForWeek(quests, doneLog),
+    [quests, doneLog],
+  );
+  const done = doneByDay.reduce((x, y) => x + y, 0);
+  const set = useMemo(
+    () => plannedForWeek(quests, done),
+    [quests, done],
+  );
+  const lastWeekDone = useMemo(
+    () => completedForWeek(quests, doneLog, 1),
+    [quests, doneLog],
+  );
+  const dayLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
   const trend = done - lastWeekDone;
-  // Only crow "best yet" when there's a REAL trend to crow about —
-  // a first-week user has lastWeekDone = 0 and trend = done, which
-  // isn't an improvement, it's just the starting line.
-  const showTrendBest = trend > 0 && lastWeekDone > 0;
+  // "your best yet" is now a VERIFIED claim against the full ledger
+  // (10→2→3 used to read "your best yet"); a plain improvement gets
+  // the humbler pill.
+  const bestEver = useMemo(() => bestPastWeek(doneLog), [doneLog]);
+  const showTrendPill = trend > 0 && lastWeekDone > 0;
+  const isBestYet = showTrendPill && done > bestEver;
 
-  const energyData = useMemo(
-    () => energyTrend.map((d) => ({ day: d.day, v: d.v })),
-    [energyTrend],
+  const energyData = energyTrend;
+  // Peak/dip come from REPORTED days only — zero-filled no-data days
+  // used to "win" the dip ("dipped Saturday" on a day with no
+  // check-in), and the day names now come from the real dates (the
+  // old letter map rendered Thursday as "Tuesday").
+  const reported = useMemo(
+    () => energyData.filter((d) => d.v > 0),
+    [energyData],
   );
-  const fallback = { day: 'M', v: 0 };
-  const peak = energyData.reduce(
-    (a, b) => (b.v > a.v ? b : a),
-    energyData[0] ?? fallback,
+  const peak = reported.reduce(
+    (x, y) => (y.v > x.v ? y : x),
+    reported[0] ?? { day: 'M', v: 0, date: '' },
   );
-  const low = energyData.reduce(
-    (a, b) => (b.v < a.v ? b : a),
-    energyData[0] ?? fallback,
+  const low = reported.reduce(
+    (x, y) => (y.v < x.v ? y : x),
+    reported[0] ?? { day: 'M', v: 0, date: '' },
   );
+  const dayNameOf = (iso: string): string =>
+    iso
+      ? [
+          'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+          'Friday', 'Saturday',
+        ][new Date(iso + 'T12:00').getDay()]
+      : '';
 
-  // ── Week label ─────────────────────────────────────────────────────
+  // ── Week label — matches the Sunday-anchored counting window ──────
   const weekLabel = useMemo(() => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - 6);
-    return `${monthDay(start)} – ${monthDay(end)}`;
+    const start = sundayWeekStart(0);
+    return `${monthDay(start)} – ${monthDay(new Date())}`;
   }, []);
 
   // ── Headline read of the week shape ──────────────────────────────
@@ -337,13 +349,25 @@ export default function RecapScreen() {
 
   // Strong-window CTA copy uses real windows when we have a pattern.
   const next = useMemo(() => {
-    if (pattern) {
+    if (pattern && pro) {
       const winLabel = WINDOWS[pattern.strong].label.toLowerCase();
+      // No "Lumi will set it up" — nothing automated existed behind
+      // that promise. The button below the card is the real door.
       return (
         <Text style={styles.nextBody}>
           Move your hardest {phrase.tasks} to{' '}
-          <Text style={styles.nextBodyAccent}>{winLabel}s</Text> — your proven
-          strong window. Lumi will set it up.
+          <Text style={styles.nextBodyAccent}>{winLabel}s</Text> — your
+          proven strong window.
+        </Text>
+      );
+    }
+    if (pattern && !pro) {
+      // The teaser above sells "the pattern Lumi spotted" — naming
+      // the exact window here gave it away one scroll later.
+      return (
+        <Text style={styles.nextBody}>
+          Your strongest hours deserve the big thing — keep them clear
+          of the small stuff.
         </Text>
       );
     }
@@ -363,11 +387,15 @@ export default function RecapScreen() {
         windows and quiet hours.
       </Text>
     );
-  }, [pattern, avoidance]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pattern, avoidance, pro, styles, phrase]);
 
   const close = () => {
     Haptics.selectionAsync();
-    router.back();
+    // Cold-start deep links land here with no history — bare back()
+    // stranded the user on an unclosable screen.
+    if (router.canGoBack()) router.back();
+    else router.replace('/(tabs)' as never);
   };
 
   // ── The Lumi Story (shareable) ─────────────────────────────────────
@@ -376,6 +404,19 @@ export default function RecapScreen() {
   // (zero tokens), in Lumi's voice, always ending with "I'll be here
   // next week too."
   const lunaSkin = useLunaSkin();
+  // The free card line — shared by the card AND the text-share
+  // fallback (which used to send the PRO story to free users when
+  // capture failed). Focused mode keeps it neutral.
+  const freeLine = useMemo(() => {
+    const count =
+      done === 1 ? `1 ${phrase.task}` : `${done} ${phrase.tasks}`;
+    const head =
+      done > 0 ? `${count}, done gently.` : 'A quiet week — still counts.';
+    return companion.showLuna
+      ? `${head} ${petName} kept me company.`
+      : head;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done, petName, companion.showLuna]);
   const storyText = useMemo(() => {
     const parts: string[] = [];
     if (set === 0) {
@@ -415,12 +456,17 @@ export default function RecapScreen() {
   // build that predates the view-shot/sharing modules, fall back to
   // sharing the words — never a dead button.
   const storyCardRef = useRef<View>(null);
+  const cardSizeRef = useRef<{ w: number; h: number } | null>(null);
   const shareStory = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
+      const size = cardSizeRef.current;
       const uri = await captureRef(storyCardRef, {
         format: 'png',
         quality: 1,
+        // Export at ~3× logical size so the social image is crisp
+        // instead of device-point resolution.
+        ...(size ? { width: size.w * 3, height: size.h * 3 } : {}),
       });
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, {
@@ -432,7 +478,9 @@ export default function RecapScreen() {
       throw new Error('native share unavailable');
     } catch {
       try {
-        await Share.share({ message: `${storyText}\n\n— my week with Lumi` });
+        await Share.share({
+          message: `${pro ? storyText : freeLine}\n\n— my week with Lumi`,
+        });
       } catch {
         // User cancelled or share unavailable — quiet either way.
       }
@@ -441,7 +489,13 @@ export default function RecapScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <Pressable onPress={close} style={styles.closeBtn} hitSlop={10}>
+      <Pressable
+        onPress={close}
+        style={styles.closeBtn}
+        hitSlop={10}
+        accessibilityRole="button"
+        accessibilityLabel="Close recap"
+      >
         <Text style={styles.closeBtnGlyph}>×</Text>
       </Pressable>
       <ScrollView
@@ -462,16 +516,28 @@ export default function RecapScreen() {
         {/* ── 2 · FOLLOW-THROUGH ── */}
         <Section delay={0.1} style={{ paddingHorizontal: 28, paddingTop: 56 }}>
           <Text style={styles.sectionLabel}>Follow-through</Text>
-          <View style={styles.bigCountRow}>
-            <CountUp to={done} style={styles.bigCount} />
-            <Text style={styles.bigCountDiv}>/ {set}</Text>
-          </View>
-          <Text style={styles.bigCountSub}>{phrase.tasks} cleared</Text>
-          {showTrendBest && (
+          {done === 0 && set === 0 ? (
+            // A rest week never renders "0 / 0" — zeros are the one
+            // shame the no-guilt rule forbids.
+            <Text style={styles.energyBody}>
+              Nothing was asked of this week — and nothing owed. Rest
+              is part of the rhythm.
+            </Text>
+          ) : (
+            <>
+              <View style={styles.bigCountRow}>
+                <CountUp to={done} style={styles.bigCount} />
+                <Text style={styles.bigCountDiv}>/ {set}</Text>
+              </View>
+              <Text style={styles.bigCountSub}>{phrase.tasks} cleared</Text>
+            </>
+          )}
+          {showTrendPill && (
             <View style={styles.trendPill}>
               <Text style={styles.trendUp}>▲</Text>
               <Text style={styles.trendText}>
-                {trend} more than last week — your best yet
+                {trend} more than last week
+                {isBestYet ? ' — your best week yet' : ''}
               </Text>
             </View>
           )}
@@ -532,26 +598,28 @@ export default function RecapScreen() {
               distinct points to compare. A new account with one
               check-in produced "Peaked Wednesday, dipped Wednesday."
               — same day, no story. */}
-          {peak.day !== low.day && peak.v > 0 ? (
+          {reported.length >= 2 && peak.date !== low.date ? (
             <>
               <Text style={styles.energyH1}>
                 Peaked{' '}
                 <Text style={{ color: accent.fg }}>
-                  {DAY_NAME[peak.day] ?? peak.day}
+                  {dayNameOf(peak.date)}
                 </Text>
                 , dipped{' '}
-                <Text style={{ color: C.dusk }}>
-                  {DAY_NAME[low.day] ?? low.day}
-                </Text>
+                <Text style={{ color: C.dusk }}>{dayNameOf(low.date)}</Text>
                 .
               </Text>
-              <View style={styles.curveCard}>
+              <View
+                style={styles.curveCard}
+                accessible
+                accessibilityLabel={`Energy this week: peaked ${dayNameOf(peak.date)} at ${peak.v}, dipped ${dayNameOf(low.date)} at ${low.v}.`}
+              >
                 <WeekCurve data={energyData} />
               </View>
               <Text style={styles.energyBody}>
                 Your strongest day held{' '}
-                <Text style={{ color: C.bone }}>{peak.v}</Text> — and Lumi
-                quietly lightened your weakest day for you.
+                <Text style={{ color: C.bone }}>{peak.v}</Text> — worth
+                protecting whatever that day did right.
               </Text>
             </>
           ) : (
@@ -595,8 +663,8 @@ export default function RecapScreen() {
           >
             <Text style={styles.sectionLabel}>Still waiting</Text>
             <Text style={styles.avoidH1}>
-              {avoidance.items.length} things have been waiting 5+ days.
-              They&apos;re all {avoidance.label}.
+              {avoidance.total} {avoidance.label} have been waiting 5+
+              days.
             </Text>
             <View style={{ gap: 8, marginBottom: 18 }}>
               {avoidance.items.map((a) => (
@@ -611,8 +679,8 @@ export default function RecapScreen() {
               ))}
             </View>
             <Text style={styles.avoidNote}>
-              That&apos;s a pattern, not a failure. Want to batch them into one
-              15-minute block?
+              That&apos;s a pattern, not a failure. Even one would count —
+              no rush.
             </Text>
           </Section>
         )}
@@ -639,9 +707,20 @@ export default function RecapScreen() {
             One small shift could make next week lighter.
           </Text>
           <View style={styles.nextCard}>{next}</View>
+          <Pressable
+            onPress={() => {
+              Haptics.selectionAsync();
+              router.push('/(tabs)/time' as never);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Plan next week in Time"
+            style={styles.patternBtn}
+          >
+            <Text style={styles.patternBtnText}>plan it in Time →</Text>
+          </Pressable>
         </Section>
 
-        {/* ── 8 · SHARE / CLOSE (story share = Pro) ── */}
+        {/* ── 8 · SHARE / CLOSE — card for everyone, Pro adds the narrative ── */}
         <Section delay={0.4} style={{ paddingHorizontal: 28, paddingTop: 56 }}>
           {/* The share card renders for EVERYONE — it's the app's only
               organic-growth surface and free users are most of launch.
@@ -653,6 +732,12 @@ export default function RecapScreen() {
           <View
             ref={storyCardRef}
             collapsable={false}
+            onLayout={(ev) => {
+              cardSizeRef.current = {
+                w: ev.nativeEvent.layout.width,
+                h: ev.nativeEvent.layout.height,
+              };
+            }}
             style={styles.shareCard}
           >
             <SoftGlow
@@ -664,19 +749,19 @@ export default function RecapScreen() {
               style={styles.shareGlow}
             />
             <View style={styles.shareHead}>
-              <Image
-                source={lunaSource('happy', lunaSkin)}
-                style={{ width: 40, height: 40 }}
-                resizeMode="contain"
-              />
+              {companion.showLuna && (
+                <Image
+                  source={lunaSource('happy', lunaSkin)}
+                  style={{ width: 40, height: 40 }}
+                  resizeMode="contain"
+                />
+              )}
               <Text style={styles.shareEyebrow}>
                 Lumi · {weekLabel}
               </Text>
             </View>
             <Text style={styles.shareStory}>
-              {pro
-                ? storyText
-                : `${done > 0 ? `${done} things, done gently.` : 'A quiet week — still counts.'} ${petName} kept me company.`}
+              {pro ? storyText : freeLine}
             </Text>
             <View style={styles.shareStatsRow}>
               <View>
@@ -704,15 +789,38 @@ export default function RecapScreen() {
               lumi — the companion that learns how your brain works
             </Text>
           </View>
-          <Pressable onPress={shareStory} style={styles.sharePrimary}>
+          <Pressable
+            onPress={shareStory}
+            style={styles.sharePrimary}
+            accessibilityRole="button"
+            accessibilityLabel="Share my story"
+          >
             <Text style={styles.sharePrimaryText}>Share my story</Text>
           </Pressable>
           </>
-          <Pressable onPress={close} style={styles.shareSecondary}>
+          <Pressable
+            onPress={close}
+            style={styles.shareSecondary}
+            accessibilityRole="button"
+            accessibilityLabel="Done"
+          >
             <Text style={styles.shareSecondaryText}>Done</Text>
           </Pressable>
+          {companion.showLuna && (
+            <Image
+              source={lunaSource('sleep', lunaSkin)}
+              style={{
+                width: 52,
+                height: 52,
+                alignSelf: 'center',
+                marginTop: 18,
+              }}
+              resizeMode="contain"
+            />
+          )}
           <Text style={styles.shareFoot}>
-            Every week, Lumi understands you a little better.
+            see you next Sunday ✦ — every week, Lumi understands you a
+            little better
           </Text>
         </Section>
       </ScrollView>
@@ -757,6 +865,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     fontSize: 13,
     color: C.mute,
     marginBottom: 6,
+    paddingRight: 4,
   },
   coverH1: {
     fontFamily: fonts.fraunces,
@@ -766,6 +875,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     letterSpacing: -1,
     lineHeight: 42,
     textAlign: 'center',
+    paddingRight: 10,
   },
   coverSub: {
     fontFamily: fonts.inter,
@@ -864,6 +974,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     letterSpacing: -0.5,
     lineHeight: 32,
     marginBottom: 16,
+    paddingRight: 6,
   },
   curveCard: {
     backgroundColor: C.void2,
@@ -923,6 +1034,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     letterSpacing: -0.4,
     lineHeight: 30,
     marginBottom: 14,
+    paddingRight: 6,
   },
   patternBody: {
     fontFamily: fonts.inter,
@@ -954,6 +1066,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     letterSpacing: -0.4,
     lineHeight: 30,
     marginBottom: 18,
+    paddingRight: 6,
   },
   avoidRow: {
     flexDirection: 'row',
@@ -978,6 +1091,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     fontStyle: 'italic',
     fontSize: 11.5,
     color: C.honey,
+    paddingRight: 3,
   },
   avoidNote: {
     fontFamily: fonts.fraunces,
@@ -1015,6 +1129,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     lineHeight: 34,
     marginBottom: 12,
     textAlign: 'center',
+    paddingRight: 7,
   },
   winBody: {
     fontFamily: fonts.inter,
@@ -1033,6 +1148,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     letterSpacing: -0.5,
     lineHeight: 32,
     marginBottom: 16,
+    paddingRight: 6,
   },
   nextCard: {
     backgroundColor: C.void2,
@@ -1129,7 +1245,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     fontSize: 34,
     color: C.bone,
     lineHeight: 38,
-    paddingRight: 6,
+    paddingRight: 8,
     includeFontPadding: false,
   },
   shareStatLabel: {
