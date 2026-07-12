@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
+  AccessibilityInfo,
   View,
   Text,
   StyleSheet,
@@ -11,9 +12,10 @@ import {
   LayoutChangeEvent,
   Dimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient as ExpoLinearGradient } from 'expo-linear-gradient';
 import Svg, {
   Circle,
   Defs,
@@ -143,6 +145,7 @@ const Room = ({
   width,
   height,
   active = true,
+  petLabel = 'Luna',
 }: {
   vitality: number;
   cheer?: number;
@@ -150,6 +153,8 @@ const Room = ({
   height?: number;
   /** Tab focused — gates the 60fps loop + walk timers (audit C1). */
   active?: boolean;
+  /** VoiceOver name for the cat — the user renames her. */
+  petLabel?: string;
 }) => {
   const lunaMood = useAmbientLunaMood();
   const lunaSkin = useLunaSkin();
@@ -164,11 +169,21 @@ const Room = ({
   }).current;
   // Tap Luna → joy spike (decays on each frame so the bounce eases out).
   const lastCheer = useRef(cheer);
+  // Tap reaction you can SEE: the joy bob alone was invisible if she
+  // was already bobbing — flash the happy sprite for a couple beats.
+  const [cheerBeat, setCheerBeat] = useState(false);
+  const cheerBeatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (cheer !== lastCheer.current) {
       S.joy = 1;
       lastCheer.current = cheer;
+      setCheerBeat(true);
+      if (cheerBeatTimer.current) clearTimeout(cheerBeatTimer.current);
+      cheerBeatTimer.current = setTimeout(() => setCheerBeat(false), 2000);
     }
+    return () => {
+      if (cheerBeatTimer.current) clearTimeout(cheerBeatTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cheer]);
   const W = width ?? 344;
@@ -220,6 +235,16 @@ const Room = ({
   // first onError and fall back to the emotion sprite for the rest
   // of the session so the cat is visible instead of invisible.
   const [walkAssetFailed, setWalkAssetFailed] = useState(false);
+  // Same hazard for the groom GIF (shipped the same day as walk):
+  // missing on an old binary → the cat went INVISIBLE for 1.6s per
+  // groom beat. Falls back to the emotion sprite instead.
+  const [lickAssetFailed, setLickAssetFailed] = useState(false);
+  useEffect(() => {
+    // A single broken SKIN variant must not disable animation for
+    // every skin for the rest of the session.
+    setWalkAssetFailed(false);
+    setLickAssetFailed(false);
+  }, [lunaSkin]);
 
   // Which sprite to render this frame. Precedence: walking >
   // licking > current ambient emotion. activeSprite is also used
@@ -228,12 +253,17 @@ const Room = ({
   const activeSprite: LunaMood =
     isWalking && !walkAssetFailed
       ? 'walk'
-      : isLicking
+      : isLicking && !lickAssetFailed
         ? 'lick'
-        : lunaMood;
+        : cheerBeat && lunaMood !== 'sleep'
+          ? 'happy'
+          : lunaMood;
   useEffect(() => {
     // Cat doesn't walk during the sleep window — would be jarring.
     if (lunaMood === 'sleep') {
+      // Sleep sprite must never render mirrored from an interrupted
+      // rightward stroll.
+      flipX.setValue(1);
       walkX.stopAnimation();
       Animated.timing(walkX, {
         toValue: 0,
@@ -253,11 +283,21 @@ const Room = ({
     // Walk SPEED (px/sec) scales with mood; sad drags, happy zips.
     const pxPerSec =
       lunaMood === 'sad' ? 20 : lunaMood === 'happy' ? 40 : 28;
-    if (!active) return; // audit C1 — no strolling on other tabs
+    if (!active) {
+      // Leaving the tab mid-stroll used to freeze the walking GIF
+      // (isWalking stayed true → animated GIF kept decoding in the
+      // hidden-but-mounted tab all session).
+      setIsWalking(false);
+      setIsLicking(false);
+      flipX.setValue(1);
+      return; // audit C1 — no strolling on other tabs
+    }
     // Audit B3: a mood change mid-stroll used to freeze the walking
-    // sprite in place and desync the position origin.
+    // sprite in place and desync the position origin. flipX resets
+    // too — sitting sprites must never inherit a stroll's mirror.
     setIsWalking(false);
     setIsLicking(false);
+    flipX.setValue(1);
     let stopped = false;
     let pauseTimer: ReturnType<typeof setTimeout> | null = null;
     // Track where the cat is so each stroll can start from there —
@@ -356,7 +396,9 @@ const Room = ({
       S.t++;
       S.veased += (vitality - S.veased) * 0.06;
       S.joy = Math.max(0, S.joy - 0.012);
-      force((n) => (n + 1) % 1_000_000);
+      // Re-render every OTHER frame — 30fps is indistinguishable for
+      // a ~2px bob and halves the JS work of this whole subtree.
+      if (S.t % 2 === 0) force((n) => (n + 1) % 1_000_000);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -378,7 +420,7 @@ const Room = ({
   // stars settles over it. Day split: 6:00–19:59.
   const hourNow = new Date().getHours();
   const isNightSky = hourNow < 6 || hourNow >= 20;
-  const dimAlpha = Math.min(1, Math.max(0, (1 - v) * 0.2 + (isNightSky ? 0.08 : 0)));
+  const dimAlpha = Math.min(1, Math.max(0, (1 - v) * 0.2 + (isNightSky ? 0.04 : 0)));
   const warmAlpha = Math.min(1, Math.max(0, v * 0.1));
 
   // Luna mood + position. Joy spikes (tap-to-cheer) amplify the bob
@@ -466,6 +508,19 @@ const Room = ({
         }}
       />
     )}
+    {/* Honey warmth rides BELOW the night pane so a good day never
+        yellows the starlit window. */}
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: W,
+        height: H,
+        backgroundColor: hexA(C.glow, warmAlpha),
+      }}
+    />
     {/* Night pane over the window glass (art glass ≈ x18–69, y11–62) */}
     {isNightSky && (
       <View
@@ -502,18 +557,7 @@ const Room = ({
     )}
     {/* Vitality light — honey warmth up, dim veil down. Luna renders
         ABOVE the veils on purpose: she's the life of the room. */}
-    <View
-      pointerEvents="none"
-      style={{
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        width: W,
-        height: H,
-        backgroundColor: hexA(C.glow, warmAlpha),
-      }}
-    />
-    <View
+        <View
       pointerEvents="none"
       style={{
         position: 'absolute',
@@ -578,11 +622,12 @@ const Room = ({
       <Image
         source={lunaSource(activeSprite, lunaSkin)}
         onError={() => {
-          if (isWalking) setWalkAssetFailed(true);
+          if (activeSprite === 'walk') setWalkAssetFailed(true);
+          else if (activeSprite === 'lick') setLickAssetFailed(true);
         }}
         style={{ width: '100%', height: '100%' }}
         resizeMode="contain"
-        accessibilityLabel="Luna"
+        accessibilityLabel={petLabel}
       />
     </Animated.View>
     </View>
@@ -1039,16 +1084,21 @@ const FocusedSnapshot = ({ quests }: { quests: Quest[] }) => {
   const styles = useMemo(() => makeStyles(accent), [accent]);
 
   const daysWithLumi = useMemo(() => {
-    if (!onboardedAt) return 0;
+    if (!onboardedAt) return 1;
     const ms = Date.now() - new Date(onboardedAt).getTime();
-    return Math.max(1, Math.floor(ms / 86_400_000));
+    // Same +1 formula as Full mode's daysTogether — switching
+    // companion modes used to change the count by one.
+    return Math.max(1, Math.floor(ms / 86_400_000) + 1);
   }, [onboardedAt]);
 
   const { doneThisWeek, doneTotal } = useMemo(() => {
     const today = new Date();
     const weekAgo = new Date(today);
     weekAgo.setDate(weekAgo.getDate() - 7);
-    const weekAgoIso = weekAgo.toISOString().slice(0, 10);
+    // LOCAL ymd — the UTC slice shifted the week boundary by a day
+    // for evening use west of UTC (and disagreed with the Full-mode
+    // week count on the same page).
+    const weekAgoIso = `${weekAgo.getFullYear()}-${String(weekAgo.getMonth() + 1).padStart(2, '0')}-${String(weekAgo.getDate()).padStart(2, '0')}`;
     let week = 0;
     let total = 0;
     for (const q of quests) {
@@ -1107,7 +1157,13 @@ const HubRow = ({
   first?: boolean;
 }) => (
   <View style={[hubRowStyles.row, first && { borderTopWidth: 0 }]}>
-    <Pressable onPress={onToggle} style={hubRowStyles.head} hitSlop={4}>
+    <Pressable
+      onPress={onToggle}
+      style={hubRowStyles.head}
+      hitSlop={4}
+      accessibilityRole="button"
+      accessibilityLabel={`${label} — ${sub}`}
+    >
       <Text style={[hubRowStyles.glyph, { color }]}>{glyph}</Text>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={hubRowStyles.label}>{label}</Text>
@@ -1185,7 +1241,6 @@ export default function MeTab() {
   const checkins = useCheckinStore((s) => s.checkins);
   const xpTotal = useUserStore((s) => s.xp);
   const streak = useUserStore((s) => s.streak);
-  const shards = useUserStore((s) => s.shards);
   // Pet name flows into every "{name} is {stage}" / "{name}'s world"
   // copy so users who renamed their cat see THEIR name, not "Luna".
   const petName = useUserStore((s) => s.petName);
@@ -1248,28 +1303,41 @@ export default function MeTab() {
   const vitalitySnapshot = useUserStore((s) => s.vitalitySnapshot);
   const setVitalitySnapshot = useUserStore((s) => s.setVitalitySnapshot);
   const vitality = useMemo(() => {
-    const yester = new Date();
-    yester.setDate(yester.getDate() - 1);
-    const yKey = `${yester.getFullYear()}-${String(yester.getMonth() + 1).padStart(2, '0')}-${String(yester.getDate()).padStart(2, '0')}`;
-    if (!vitalitySnapshot || vitalitySnapshot.date !== yKey) {
+    // Afterglow reads prevClose — yesterday's FINAL value, captured
+    // once at rollover. (The old shape compared date===yesterday,
+    // but the snapshot effect immediately rewrote date to today, so
+    // the warm morning lasted exactly one render.)
+    const snap = vitalitySnapshot;
+    if (!snap || snap.date !== todayKey() || snap.prevClose == null) {
       return rawVitality;
     }
     const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
     const wake = anchors.wake;
-    const sleep = anchors.sleep;
-    const span = Math.max(1, Math.min(sleep, 1439) - wake);
+    // After-midnight sleepers encode sleep past 1440 (or numerically
+    // before wake) — normalize so span never degenerates to 1.
+    const sleepAbs =
+      anchors.sleep <= wake ? anchors.sleep + 1440 : anchors.sleep;
+    const span = Math.max(60, sleepAbs - wake);
     const progress = Math.max(0, Math.min(1, (nowMin - wake) / span));
-    const afterglow = vitalitySnapshot.value * 0.55 * (1 - progress);
+    const afterglow = snap.prevClose * 0.55 * (1 - progress);
     return Math.max(rawVitality, Math.round(afterglow));
   }, [rawVitality, vitalitySnapshot, anchors.wake, anchors.sleep]);
-  // Snapshot today's RAW closing value (throttled to real changes).
+  // Keep today's running close fresh (throttled), and at rollover
+  // carry yesterday's close into prevClose BEFORE overwriting.
   useEffect(() => {
     const t = todayKey();
-    if (
-      vitalitySnapshot?.date !== t ||
-      Math.abs((vitalitySnapshot?.value ?? 0) - rawVitality) >= 2
-    ) {
-      setVitalitySnapshot({ date: t, value: rawVitality });
+    const snap = vitalitySnapshot;
+    if (snap?.date !== t) {
+      const yester = new Date();
+      yester.setDate(yester.getDate() - 1);
+      const yKey = `${yester.getFullYear()}-${String(yester.getMonth() + 1).padStart(2, '0')}-${String(yester.getDate()).padStart(2, '0')}`;
+      setVitalitySnapshot({
+        date: t,
+        value: rawVitality,
+        prevClose: snap?.date === yKey ? snap.value : null,
+      });
+    } else if (Math.abs(snap.value - rawVitality) >= 2) {
+      setVitalitySnapshot({ ...snap, value: rawVitality });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawVitality]);
@@ -1299,9 +1367,15 @@ export default function MeTab() {
   const [paintOpen, setPaintOpen] = useState(false);
 
   const sitWithHer = () => {
+    // Minimal mode promises a calm surface — the room stays (that's
+    // deliberate), but the cheer chrome respects showCheer.
+    if (!companion.showCheer) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setCheer((c) => c + 1);
     showCareToast("A slow blink back. That's cat for love.");
+    AccessibilityInfo.announceForAccessibility(
+      "A slow blink back. That's cat for love.",
+    );
   };
 
   // Days together — the bond, not a stat.
@@ -1358,6 +1432,7 @@ export default function MeTab() {
   // level thresholds; the road now tells the truth.)
   const road = xpProgress(xpTotal);
 
+  const insets = useSafeAreaInsets();
   const screenWidth = Dimensions.get('window').width;
   const roomHeight = Math.round(screenWidth * 0.82);
 
@@ -1408,6 +1483,8 @@ export default function MeTab() {
           // the slow-blink toast. (The care buttons are gone; the
           // interaction lives where she lives.)
           onPress={sitWithHer}
+          accessibilityRole="button"
+          accessibilityLabel={`Sit with ${petName} for a moment`}
           style={{ position: 'relative' }}
         >
           <Room
@@ -1416,12 +1493,27 @@ export default function MeTab() {
             cheer={cheer}
             width={screenWidth}
             height={roomHeight}
+            petLabel={petName}
           />
           {/* Floating chrome over the room — minimal (hearthside):
               just her room's name and the profile door. Rank moved
               down to "Your road"; shards to the care card. */}
-          <View pointerEvents="none" style={styles.heroTopScrim} />
-          <View style={styles.heroTopBar}>
+          {/* REAL scrim — the old one was transparent with zero
+              shadow (a literal no-op view): status bar + eyebrow sat
+              on bright pixel art with only a text-shadow. */}
+          <ExpoLinearGradient
+            pointerEvents="none"
+            colors={['rgba(10,7,5,0.5)', 'rgba(10,7,5,0)']}
+            style={[styles.heroTopScrim, { height: insets.top + 64 }]}
+          />
+          {/* Bottom seam — the light art melts into the void page
+              instead of ending in a hard edge. */}
+          <ExpoLinearGradient
+            pointerEvents="none"
+            colors={['rgba(18,14,12,0)', C.void]}
+            style={styles.heroBottomSeam}
+          />
+          <View style={[styles.heroTopBar, { top: insets.top + 8 }]}>
             <Text style={styles.heroEyebrow}>{petName}&apos;s room</Text>
             <View style={{ flex: 1 }} />
             {/* Same canonical icon as every other tab (components/
@@ -1646,7 +1738,10 @@ export default function MeTab() {
 
       {/* Care toast — "A slow blink back…" floats over the room. */}
       {careToast && (
-        <View style={styles.careToast} pointerEvents="none">
+        <View
+          style={[styles.careToast, { top: insets.top + 52 }]}
+          pointerEvents="none"
+        >
           <Text style={styles.careToastText}>{careToast}</Text>
         </View>
       )}
@@ -1684,6 +1779,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     color: C.bone,
     letterSpacing: -0.6,
     lineHeight: 34,
+    paddingRight: 7,
   },
   focusedHeroBody: {
     fontFamily: fonts.inter,
@@ -1765,6 +1861,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     color: C.bone,
     letterSpacing: -0.5,
     lineHeight: 29,
+    paddingRight: 6,
   },
   bondLine: {
     fontFamily: fonts.fraunces,
@@ -2312,10 +2409,13 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 110,
-    backgroundColor: 'transparent',
-    shadowColor: '#000',
-    shadowOpacity: 0,
+  },
+  heroBottomSeam: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 26,
   },
   heroTopBar: {
     position: 'absolute',
@@ -2414,6 +2514,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     fontSize: 22,
     color: C.bone,
     lineHeight: 24,
+    paddingRight: 5,
   },
   standingCellLabel: {
     fontFamily: fonts.interSemi,

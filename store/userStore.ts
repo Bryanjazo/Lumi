@@ -196,8 +196,20 @@ interface UserState {
   /** Yesterday's closing room vitality — the morning afterglow.
    *  Without it the room cold-opened dark every day, even after a
    *  perfect one (audit R1: "the daily cold-open IS the scold"). */
-  vitalitySnapshot: { date: string; value: number } | null;
-  setVitalitySnapshot: (s: { date: string; value: number }) => void;
+  /** Today's running vitality close + YESTERDAY's final close.
+   *  prevClose is captured once at day rollover — the afterglow blend
+   *  reads it all day (the old two-field shape self-destructed: the
+   *  rollover write erased yesterday's value before the fade used it). */
+  vitalitySnapshot: {
+    date: string;
+    value: number;
+    prevClose?: number | null;
+  } | null;
+  setVitalitySnapshot: (s: {
+    date: string;
+    value: number;
+    prevClose?: number | null;
+  }) => void;
   focusMinutesLifetime: number;
   tasksEverCompleted: number;
   addFocusMinutes: (m: number) => void;

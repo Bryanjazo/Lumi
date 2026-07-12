@@ -17,7 +17,7 @@
 // — its "happy" is bound to the just-completed achievement, which
 // the hook will also detect, so they agree.
 
-import { useMemo } from 'react';
+import { useMemo , useState, useEffect} from 'react';
 import { useUserStore } from '../store/userStore';
 import { useQuestStore } from '../store/questStore';
 import { type LunaMood } from './luna-source';
@@ -122,6 +122,15 @@ export const useAmbientLunaMood = (): LunaMood => {
   const anchors = useUserStore((s) => s.anchors);
   const streak = useUserStore((s) => s.streak);
   const quests = useQuestStore((s) => s.quests);
+  // Coarse clock tick — without it the memo cached the sleep/wake
+  // decision forever: the cat kept strolling past bedtime (and slept
+  // past wake) until some store write forced a re-render, visibly
+  // out of sync with the room's live night window.
+  const [minuteTick, setMinuteTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setMinuteTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   return useMemo(() => {
     // 1. Sleep window — overrides everything else. Late at night
@@ -155,5 +164,6 @@ export const useAmbientLunaMood = (): LunaMood => {
     return 'idle';
     // `quests` is referentially stable while no quest changes; the
     // useMemo dep keeps this O(n) scan from running every render.
-  }, [anchors.sleep, anchors.wake, streak, quests]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchors.sleep, anchors.wake, streak, quests, minuteTick]);
 };
