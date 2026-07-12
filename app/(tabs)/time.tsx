@@ -149,7 +149,9 @@ const SCALES: { key: Scale; label: string }[] = [
 // Helpers
 // ═════════════════════════════════════════════════════════════════════
 const fmt = (m: number): string => {
-  const h = Math.floor(m / 60);
+  // Wrap ≥24h — after-midnight anchors encode past 1440 (sleep at
+  // 1 AM = 1500) and used to print "1p" on every day thread.
+  const h = Math.floor(m / 60) % 24;
   const mm = m % 60;
   const hr = h % 12 || 12;
   const suf = h < 12 ? 'a' : 'p';
@@ -196,8 +198,14 @@ const addDays = (d: Date, n: number): Date => {
 };
 
 const addMonths = (d: Date, n: number): Date => {
+  // Day-clamped: plain setMonth overflows (Jan 31 + 1mo = Mar 3,
+  // which made February UNREACHABLE from a 31st).
   const x = new Date(d);
+  const day = x.getDate();
+  x.setDate(1);
   x.setMonth(x.getMonth() + n);
+  const last = new Date(x.getFullYear(), x.getMonth() + 1, 0).getDate();
+  x.setDate(Math.min(day, last));
   return x;
 };
 
@@ -235,6 +243,8 @@ interface TItem {
   done?: boolean;
   questId?: string;
   recurring?: boolean;
+  /** Recurring-template projection (not a spawned instance). */
+  ghost?: boolean;
 }
 
 const anchorItems = (anchors: DailyAnchors): TItem[] => [
@@ -256,23 +266,46 @@ const anchorItems = (anchors: DailyAnchors): TItem[] => [
  * status renders). On past dates we don't backfill — those would
  * have been completed historical instances and the moat lives there.
  */
-const recurMatches = (rule: RecurRule, date: Date, today: Date): boolean => {
+// DST-safe local day count — raw getTime()/86400000 mis-buckets
+// across the spring-forward 23-hour day.
+const dayNumber = (d: Date): number => {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12);
+  return Math.round(x.getTime() / 86400000);
+};
+
+const recurMatches = (
+  rule: RecurRule,
+  date: Date,
+  anchorISO: string | undefined,
+): boolean => {
   const dow = date.getDay();
+  const n = Math.max(1, Math.round(rule.interval ?? 1));
+  // The habit's own schedule anchor — projections used to anchor to
+  // TODAY, so monthly ghosts drifted daily and biweekly parity
+  // flipped as the week rolled over.
+  const anchor = anchorISO
+    ? new Date(anchorISO + 'T12:00:00')
+    : new Date();
   switch (rule.every) {
     case 'day':
-      return true;
+      return (dayNumber(date) - dayNumber(anchor)) % n === 0;
     case 'weekday':
       return dow >= 1 && dow <= 5;
-    case 'week':
-      if (!rule.day) return false;
-      return WEEKDAY_TO_NUM[rule.day] === dow;
-    case '2week':
+    case 'week': {
       if (!rule.day) return false;
       if (WEEKDAY_TO_NUM[rule.day] !== dow) return false;
-      // Approximate biweekly: even-week alignment with today.
-      return Math.floor((date.getTime() - today.getTime()) / (7 * 86400000)) % 2 === 0;
+      if (n <= 1) return true;
+      const weeks = Math.floor((dayNumber(date) - dayNumber(anchor)) / 7);
+      return ((weeks % n) + n) % n === 0;
+    }
+    case '2week': {
+      if (!rule.day) return false;
+      if (WEEKDAY_TO_NUM[rule.day] !== dow) return false;
+      const weeks = Math.floor((dayNumber(date) - dayNumber(anchor)) / 7);
+      return ((weeks % 2) + 2) % 2 === 0;
+    }
     case 'month':
-      return date.getDate() === today.getDate();
+      return date.getDate() === anchor.getDate();
     default:
       return false;
   }
@@ -284,7 +317,6 @@ const buildItemsForDate = (
   quests: Quest[],
   effective: ReturnType<typeof useEffectiveWindows>,
   today: Date,
-  nowMin: number = 0,
 ): TItem[] => {
   const key = ymd(date);
   const items: TItem[] = [...anchorItems(anchors)];
@@ -329,7 +361,7 @@ const buildItemsForDate = (
       if (!q.recur) continue;
       if (q.window === 'someday') continue;
       if (seen.has(q.id)) continue;
-      if (!recurMatches(q.recur, date, today)) continue;
+      if (!recurMatches(q.recur, date, q.lastSpawnedDate ?? q.date)) continue;
       const winStart = effective[q.window].start ?? 12;
       // The store spawns real instances at recur.at — projections
       // must show the same clock or the habit hops times per scale.
@@ -343,6 +375,9 @@ const buildItemsForDate = (
         done: false,
         questId: q.id,
         recurring: true,
+        // Projection of the template, not a spawned instance —
+        // completing it would mark the template done off-schedule.
+        ghost: true,
       });
     }
   }
@@ -427,6 +462,9 @@ interface DragCtl {
   overKey: string | null;
   /** questId being dragged (chips dim themselves), or null. */
   draggingId: string | null;
+  /** Source day of the drag — hovering it is a no-op, so previews
+   *  must not project +weight onto it. */
+  draggingFromIso: string | null;
   /** Live landing time while hovering a day-view gap — the finger's
    *  position INSIDE the gap picks the minute (:15-snapped). Null
    *  when not over a gap. */
@@ -578,7 +616,8 @@ const DayTaskRow = ({
   // Radio-complete works on real quest rows only. Future dates show
   // recurring TEMPLATES as ghost projections — completing one of
   // those would mark the template itself done, which is a lie.
-  const canComplete = !!it.questId && (!it.recurring || isToday || isPast);
+  const canComplete =
+    !!it.questId && !it.ghost && (!it.recurring || isToday || isPast);
 
   // ── The clip-to-thread animation ─────────────────────────────────
   // slide 1 = floating right of the line (unfinished), 0 = seated on
@@ -814,10 +853,17 @@ const DayView = ({
       .filter((s): s is NonNullable<typeof s> => s != null)
       .sort((a, b) => a.at - b.at);
 
+    let runningEnd = 6 * 60;
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       const prev = items[i - 1];
-      const prevEnd = prev ? prev.min + (prev.durMin ?? 15) : 6 * 60;
+      // RUNNING max end — checking only items[i-1] let a long task
+      // that spans later short ones paint an "open" gap inside its
+      // own duration (and drops landed overlapping it).
+      if (prev) {
+        runningEnd = Math.max(runningEnd, prev.min + (prev.durMin ?? 15));
+      }
+      const prevEnd = prev ? runningEnd : 6 * 60;
       if (isToday && !nowPlaced && it.min > nowMin) {
         out.push({ kind: 'now' });
         nowPlaced = true;
@@ -1113,7 +1159,6 @@ const WeekView = ({
           quests,
           effective,
           today,
-          nowMin,
         );
         const dayQuests = items.filter((it) => it.kind === 'quest');
         const load = loadOf(items);
@@ -1125,7 +1170,9 @@ const WeekView = ({
           ? quests.find((qq) => qq.id === ctl.draggingId)?.importance
           : null;
         const projected =
-          over && dragTier ? load + TIER_W[dragTier] : load;
+          over && dragTier && ctl.draggingFromIso !== dIso
+            ? load + TIER_W[dragTier]
+            : load;
         return (
           <View
             key={dIso}
@@ -1312,7 +1359,6 @@ const MonthView = ({
         quests,
         effective,
         today,
-        nowMin,
       ).filter((i) => i.kind === 'quest');
       const past = dayOffset(d, today) < 0;
       map.set(ymd(d), {
@@ -1323,22 +1369,35 @@ const MonthView = ({
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [y, m, anchors, quests, effective, today, nowMin]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [y, m, anchors, quests, effective, today]);
 
   // Selected day starts on today (if today's in the viewed month) or
   // on the 1st otherwise. Tracks taps so the peek panel reflects the
   // currently-focused day without opening the thread.
+  // Keyed by ymd STRING, not the Date object — `today` is a fresh
+  // reference on every minute tick, and the identity churn re-fired
+  // the reset effect: the user's tapped peek day snapped back to
+  // today every 60 seconds while they were reading it.
+  const todayYmdKey = ymd(today);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const inMonthDefault = useMemo(
     () =>
       today.getMonth() === m && today.getFullYear() === y
         ? today
         : new Date(y, m, 1),
-    [m, y, today],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [m, y, todayYmdKey],
   );
   const [sel, setSel] = useState<Date>(inMonthDefault);
   useEffect(() => {
-    setSel(inMonthDefault);
-  }, [inMonthDefault]);
+    // Only reset when the shown MONTH (or the real day) changes —
+    // never while the user's selection is still inside this month.
+    setSel((cur) =>
+      cur.getMonth() === m && cur.getFullYear() === y ? cur : inMonthDefault,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inMonthDefault, m, y]);
 
   // Month stats — planned, days with plans, days open, busiest day.
   const summary = useMemo((): {
@@ -1385,10 +1444,10 @@ const MonthView = ({
   // Selected-day peek data.
   const peekItems = useMemo(
     () =>
-      buildItemsForDate(sel, anchors, quests, effective, today, nowMin)
+      buildItemsForDate(sel, anchors, quests, effective, today)
         .filter((i) => i.kind === 'quest')
         .sort((a, b) => a.min - b.min),
-    [sel, anchors, quests, effective, today, nowMin],
+    [sel, anchors, quests, effective, today],
   );
   const selIso = ymd(sel);
   const selLoad = loadOf(peekItems);
@@ -1759,7 +1818,6 @@ const NextBar = ({
       quests,
       effective,
       today,
-      nowMin,
     );
     const todayNext = todays.find(
       (i) => i.min >= nowMin && !i.done,
@@ -1779,14 +1837,17 @@ const NextBar = ({
       effective,
       today,
     );
-    const first = tmrItems[0];
+    // First real task if one exists — tmrItems[0] is ALWAYS the wake
+    // anchor, so the bar could only ever say "tomorrow — Wake".
+    const first =
+      tmrItems.find((i) => i.kind === 'quest') ?? tmrItems[0];
     if (!first) return null;
     return {
       item: first,
       when: `tomorrow · ${fmt(first.min)}`,
       isToday: false,
     };
-  }, [anchors, quests, effective, today, nowMin]);
+  }, [anchors, quests, effective, today]);
 
   if (!nextUp) return null;
   return (
@@ -1829,7 +1890,6 @@ const NextBar = ({
 // Screen
 // ═════════════════════════════════════════════════════════════════════
 const styles2 = StyleSheet.create({
-  peekMoveBtnShared: {},
 
   dragHintCard: {
     flexDirection: 'row',
@@ -1870,8 +1930,20 @@ export default function Time() {
 
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 60 * 1000);
-    return () => clearInterval(id);
+    // Aligned to the wall-clock minute — a plain 60s interval left
+    // the "now" line up to 59s stale after mount.
+    let iv: ReturnType<typeof setInterval> | null = null;
+    const to = setTimeout(
+      () => {
+        setNow(new Date());
+        iv = setInterval(() => setNow(new Date()), 60 * 1000);
+      },
+      (60 - new Date().getSeconds()) * 1000,
+    );
+    return () => {
+      clearTimeout(to);
+      if (iv) clearInterval(iv);
+    };
   }, []);
 
   // Recurring templates re-date on Home mount only — if the user
@@ -1907,9 +1979,8 @@ export default function Time() {
         allQuests,
         effectiveWindows,
         today,
-        nowMin,
       ),
-    [date, anchors, allQuests, effectiveWindows, today, nowMin],
+    [date, anchors, allQuests, effectiveWindows, today],
   );
 
   // ── Navigation ──────────────────────────────────────────────────
@@ -1954,7 +2025,14 @@ export default function Time() {
   // Undo — snapshot of the moved quests' previous date + anchor so
   // one tap puts everything back exactly where it was.
   const undoRef = useRef<
-    { id: string; date: string; h: number | null; m: number | null }[] | null
+    {
+      id: string;
+      date: string;
+      h: number | null;
+      m: number | null;
+      win: Quest['window'];
+    }[]
+    | null
   >(null);
   const [moveToast, setMoveToast] = useState<string | null>(null);
   const moveToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1995,6 +2073,13 @@ export default function Time() {
   const hitTest = (x: number, y: number): string | null => {
     for (const [key, r] of targetRects) {
       if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        // Past days are settled — they must never light up as drop
+        // targets (the card used to glow "drop it here", then the
+        // release was silently eaten).
+        if (key.startsWith('day:')) {
+          const d = fromIsoLocal(key.slice(4));
+          if (dayOffset(d, today) < 0) return null;
+        }
         return key;
       }
     }
@@ -2013,6 +2098,7 @@ export default function Time() {
     const from = parseInt(parts[2], 10);
     const to = parseInt(parts[3], 10);
     if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    if (to - from < durMin) return null; // doesn't fit — don't pretend
     const lo = Math.ceil(from / 15) * 15;
     const hi = Math.max(lo, Math.floor((to - durMin) / 15) * 15);
     const rect = targetRects.get(key);
@@ -2057,12 +2143,28 @@ export default function Time() {
         date: q.date ?? todayKey(),
         h: q.scheduledHour ?? null,
         m: q.scheduledMinute ?? null,
+        // A gap drop re-derives window via anchor(); undo must put
+        // the WINDOW back too (an evening task returned to Friday
+        // used to come back as a morning task).
+        win: q.window,
       });
       st.setDate(mv.id, mv.toIso);
       if (mv.newT != null) {
         st.anchor(mv.id, Math.floor(mv.newT / 60), mv.newT % 60);
       } else if (q.scheduledHour != null) {
-        st.anchor(mv.id, q.scheduledHour, q.scheduledMinute ?? 0);
+        let hh = q.scheduledHour;
+        let mm2 = q.scheduledMinute ?? 0;
+        if (mv.toIso === todayKey()) {
+          const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+          if (hh * 60 + mm2 <= nowM) {
+            // Pulling tomorrow's 9 AM task into a 4 PM today used to
+            // land it already MISSED — slide to the next free :15.
+            const next = Math.min(1425, Math.ceil((nowM + 1) / 15) * 15);
+            hh = Math.floor(next / 60);
+            mm2 = next % 60;
+          }
+        }
+        st.anchor(mv.id, hh, mm2);
       }
     }
     if (!snapshot.length) return;
@@ -2078,7 +2180,14 @@ export default function Time() {
     const st = useQuestStore.getState();
     for (const s of snap) {
       st.setDate(s.id, s.date);
-      if (s.h != null) st.anchor(s.id, s.h, s.m ?? 0);
+      if (s.h != null) {
+        st.anchor(s.id, s.h, s.m ?? 0);
+      } else {
+        const live = st.quests.find((qq) => qq.id === s.id);
+        if (live && (live.window !== s.win || live.scheduledHour != null)) {
+          st.moveWindow(s.id, s.win); // clears the drag's new anchor
+        }
+      }
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
@@ -2131,6 +2240,7 @@ export default function Time() {
     remeasure: measureTargets,
     overKey,
     draggingId: dragTask?.questId ?? null,
+    draggingFromIso: dragTask?.fromIso ?? null,
     dropPreview,
   };
 
@@ -2485,6 +2595,7 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: -0.5,
       lineHeight: 26,
       includeFontPadding: false,
+      paddingRight: 6,
     },
     headerSub: {
       fontFamily: fonts.interSemi,
@@ -2872,7 +2983,6 @@ const makeStyles = (accent: Accent) =>
     // Old flex-wrap grid retired — explicit rows now own the layout
     // (see MonthView). Kept the style as a no-op to avoid churning
     // every reference outside the file.
-    monthGrid: {},
     monthCell: {
       flex: 1,
       aspectRatio: 1,
@@ -2904,6 +3014,7 @@ const makeStyles = (accent: Accent) =>
       fontSize: 19,
       lineHeight: 21,
       color: C.bone,
+      paddingRight: 5,
     },
     monthSummaryLabel: {
       fontFamily: fonts.interSemi,
@@ -3182,6 +3293,7 @@ const makeStyles = (accent: Accent) =>
       fontSize: 20,
       color: C.bone,
       letterSpacing: -0.4,
+      paddingRight: 5,
     },
     monthPeekRel: {
       fontFamily: fonts.interSemi,
