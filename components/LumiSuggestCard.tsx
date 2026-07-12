@@ -247,7 +247,15 @@ export const LumiSuggestCard = ({
             ? `Every other ${recurDay}`
             : 'Every month';
 
+  // Double-tap guard (audit): the accept button had no latch, so two
+  // taps in one frame — before this card unmounts — minted the task
+  // TWICE (the "two Gym rows" bug). The ref is instance-scoped and the
+  // card is keyed per task, so the next task gets a fresh, un-latched
+  // card automatically.
+  const acceptedRef = useRef(false);
   const handleAccept = () => {
+    if (acceptedRef.current) return;
+    acceptedRef.current = true;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const recur: RecurRule | null = repeat
       ? {

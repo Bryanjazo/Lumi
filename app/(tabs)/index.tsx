@@ -110,7 +110,11 @@ import { todayKey } from '../../lib/gamification';
 import { SoftGlow } from '../../components/SoftGlow';
 import { TwinkleMotes } from '../../components/TwinkleMotes';
 import { DayThread } from '../../components/DayThread';
-import { findWindowSlot, windowIsFull } from '../../lib/slotting';
+import {
+  findWindowSlot,
+  resolveSlot,
+  windowIsFull,
+} from '../../lib/slotting';
 import { useKeyboardHeight } from '../../lib/useKeyboard';
 import { useDeleteConfirm } from '../../components/TaskDeleteWrap';
 import { HabitScheduleSheet } from '../../components/HabitScheduleSheet';
@@ -1825,10 +1829,12 @@ export default function Home() {
     // scheduled), decided ONCE here at commit. Five "morning" tasks
     // cascade 8:15 → 8:30 → … instead of piling up at the window
     // start. Quests are read FRESH from the store (not the render
-    // closure) so batch captures see each other's slots. If the
-    // window is genuinely full, fall back to plain windowed — the
-    // pickers gray full windows out, so this stays rare.
+    // closure) so batch captures see each other's slots. Overflow is
+    // honest now: a full window crams later the same day, a full DAY
+    // moves the task to the next day with room (with a toast saying
+    // so) — never N tasks stacked on the same phantom minute.
     let derivedAt: number | null = null;
+    let derivedDate: string | null = null;
     if (
       !hasTime &&
       t.timeMode === 'windowed' &&
@@ -1836,7 +1842,7 @@ export default function Home() {
       !t.recur
     ) {
       const targetISO = t.date ?? todayKey();
-      derivedAt = findWindowSlot({
+      const res = resolveSlot({
         window: t.window,
         dateISO: targetISO,
         durationMin: effectiveDuration,
@@ -1848,6 +1854,25 @@ export default function Home() {
             ? new Date().getHours() * 60 + new Date().getMinutes()
             : null,
       });
+      if (res) {
+        derivedAt = res.min;
+        if (res.how === 'moved') {
+          derivedDate = res.dateISO;
+          const d = new Date(res.dateISO + 'T12:00');
+          const short =
+            t.title.length > 22 ? `${t.title.slice(0, 20)}…` : t.title;
+          const dayLabel =
+            res.dateISO === offsetDate(1)
+              ? 'tomorrow'
+              : d.toLocaleDateString(undefined, {
+                  weekday: 'short',
+                  day: 'numeric',
+                });
+          showToast(
+            `That day’s full — “${short}” landed ${dayLabel} ${fmtMin(res.min)}.`,
+          );
+        }
+      }
     }
     const effectiveAt = hasTime ? (t.at as number) : derivedAt;
     const writeAnchor = effectiveAt != null;
@@ -1870,9 +1895,11 @@ export default function Home() {
       }),
       ...(t.recur
         ? { date: firstDueDateFor(t.recur) }
-        : t.date
-          ? { date: t.date }
-          : {}),
+        : derivedDate
+          ? { date: derivedDate } // overflow moved it to a day with room
+          : t.date
+            ? { date: t.date }
+            : {}),
       ...(t.recur && { recur: t.recur }),
       ...(t.note ? { note: t.note } : {}),
     });
@@ -2381,8 +2408,20 @@ export default function Home() {
     return `${y}-${m}-${day}`;
   };
 
+  // Double-tap guard (audit: the "two Gym rows" bug). Accept buttons
+  // had no latch, so two taps in one frame — before previewTasks
+  // re-rendered — committed every task TWICE. The latch resets each
+  // time previewTasks changes, so stepping through the queue still
+  // works; only a synchronous double-fire is swallowed.
+  const previewCommitLatch = useRef(false);
+  useEffect(() => {
+    previewCommitLatch.current = false;
+  }, [previewTasks]);
+
   const approvePreview = () => {
     if (!previewTasks) return;
+    if (previewCommitLatch.current) return;
+    previewCommitLatch.current = true;
     for (const t of previewTasks) commitTask(t);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     showToast(
@@ -2423,9 +2462,17 @@ export default function Home() {
       setPendingScheduleTask({ task: t, idx });
       return;
     }
+    // Same double-tap latch as approvePreview — a fast double-tap on
+    // one task's accept used to commit it twice before the splice.
+    if (previewCommitLatch.current) return;
+    previewCommitLatch.current = true;
     commitTask(t);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const remaining = previewTasks.filter((_, i) => i !== idx);
+    // Explicitly release the latch alongside the state change so a
+    // future refactor that decouples the [previewTasks] effect can't
+    // leave accept wedged off (the effect still resets it too).
+    previewCommitLatch.current = false;
     if (remaining.length === 0) {
       setPreviewTasks(null);
       setEditingIdx(null);
@@ -2943,6 +2990,8 @@ export default function Home() {
   ) => {
     const s = suggestions.find((x) => x.id === sugInput.id);
     if (!s) return;
+    // Honest toast when overflow moved the task off today.
+    let movedNote: string | null = null;
     // The card's "Make it repeat" section owns the rule now — it was
     // prefilled from s.guess, so opts.recur IS the user-confirmed
     // version of Lumi's guess. Toggled off → they want it once.
@@ -2963,18 +3012,21 @@ export default function Home() {
     } else {
       // One-time accept → same auto-slot cascade as capture: no
       // pinned time means "next open :15 in the window", not "pile
-      // up at the window start".
-      const sugSlot =
-        opts.exactMinute ??
-        findWindowSlot({
-          window: opts.window,
-          dateISO: todayKey(),
-          durationMin: opts.durationMin,
-          quests: useQuestStore.getState().quests,
-          anchors,
-          effectiveWindows,
-          nowMin: now.getHours() * 60 + now.getMinutes(),
-        });
+      // up at the window start". Overflow-aware: full window crams
+      // later today, full day lands on the next day with room.
+      const sugRes =
+        opts.exactMinute == null
+          ? resolveSlot({
+              window: opts.window,
+              dateISO: todayKey(),
+              durationMin: opts.durationMin,
+              quests: useQuestStore.getState().quests,
+              anchors,
+              effectiveWindows,
+              nowMin: now.getHours() * 60 + now.getMinutes(),
+            })
+          : null;
+      const sugSlot = opts.exactMinute ?? sugRes?.min ?? null;
       addQuest({
         title: s.title,
         difficulty: 'medium',
@@ -2985,11 +3037,22 @@ export default function Home() {
           scheduledHour: Math.floor(sugSlot / 60),
           scheduledMinute: sugSlot % 60,
         }),
+        ...(sugRes?.how === 'moved' && { date: sugRes.dateISO }),
       });
+      if (sugRes?.how === 'moved') {
+        const d = new Date(sugRes.dateISO + 'T12:00');
+        movedNote = `Today’s full — it landed ${
+          sugRes.dateISO === offsetDate(1)
+            ? 'tomorrow'
+            : d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
+        } ${fmtMin(sugRes.min)}.`;
+      }
     }
     consumeSuggestion(s.id);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    showToast(opts.recur ? 'Set to repeat 🔁' : 'Added to your day 💛');
+    showToast(
+      opts.recur ? 'Set to repeat 🔁' : movedNote ?? 'Added to your day 💛',
+    );
   };
 
   const dismissSuggestionFromCard = (
@@ -3039,9 +3102,9 @@ export default function Home() {
     // commitTask; fresh store read so back-to-back accepts stack.
     // Recurring tasks skip slotting — they're templates.
     const targetISO = t.date ?? todayKey();
-    const autoSlot =
+    const autoRes =
       opts.exactMinute == null && !recur
-        ? findWindowSlot({
+        ? resolveSlot({
             window: opts.window,
             dateISO: targetISO,
             durationMin: opts.durationMin,
@@ -3054,7 +3117,8 @@ export default function Home() {
                 : null,
           })
         : null;
-    const anchorMinute = opts.exactMinute ?? autoSlot;
+    const anchorMinute = opts.exactMinute ?? autoRes?.min ?? null;
+    const movedISO = autoRes?.how === 'moved' ? autoRes.dateISO : null;
     addQuest({
       title: t.title,
       // Parity with "Accept all" (commitTask) — this path used to
@@ -3071,9 +3135,11 @@ export default function Home() {
       }),
       ...(recur
         ? { date: firstDueDateFor(recur) }
-        : t.date
-          ? { date: t.date }
-          : {}),
+        : movedISO
+          ? { date: movedISO } // overflow moved it to a day with room
+          : t.date
+            ? { date: t.date }
+            : {}),
       ...(recur && { recur }),
     });
     // Remove this task from the queue; if it was the last, close
@@ -3081,7 +3147,26 @@ export default function Home() {
     const remaining = previewTasks.filter((_, i) => i !== idx);
     setPreviewTasks(remaining.length > 0 ? remaining : null);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    showToast(remaining.length > 0 ? 'Added 💛' : 'All added 💛');
+    let movedToast: string | null = null;
+    if (movedISO) {
+      const dayLabel =
+        movedISO === offsetDate(1)
+          ? 'tomorrow'
+          : new Date(movedISO + 'T12:00').toLocaleDateString(undefined, {
+              weekday: 'short',
+              day: 'numeric',
+            });
+      // anchorMinute is always set when movedISO is (a 'moved'
+      // resolution carries its landing minute) — guard anyway so a
+      // future refactor can't produce "landed tomorrow ." with a hole.
+      movedToast =
+        anchorMinute != null
+          ? `That day’s full — it landed ${dayLabel} at ${fmtMin(anchorMinute)}.`
+          : `That day’s full — it landed ${dayLabel}.`;
+    }
+    showToast(
+      movedToast ?? (remaining.length > 0 ? 'Added 💛' : 'All added 💛'),
+    );
   };
 
   // One mis-tapped × used to silently delete a parsed task — hold the

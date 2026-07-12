@@ -12,10 +12,11 @@
 // existing rule ("the render is read-only after that"). No reflowing
 // at render time; if the user wants a task elsewhere they drag it.
 //
-// When a window can't fit the task at all, findWindowSlot returns
-// null: callers either fall back to plain windowed (renders at the
-// window start, worst case is the old behavior) or — in pickers —
-// gray the window out entirely via windowIsFull.
+// When a window can't fit the task, resolveSlot overflows honestly
+// instead of letting tasks pile up at the window start ("five tasks
+// all at 11a"): first the next open slot later the SAME day, then the
+// first future day with room. Pickers still gray full windows out via
+// windowIsFull.
 
 import type { Quest } from '../store/questStore';
 import type { DailyAnchors } from '../store/userStore';
@@ -55,17 +56,9 @@ export interface SlotQuery {
   nowMin?: number | null;
 }
 
-/** Next open start (minutes since midnight) in the window that fits
- *  `durationMin`, or null when the window is full. */
-export const findWindowSlot = (q: SlotQuery): number | null => {
-  if (q.window === 'someday') return null;
-  const win = q.effectiveWindows[q.window];
-  if (!win || win.start == null || win.end == null) return null;
-  const winStart = win.start * 60;
-  const winEnd = win.end * 60;
-
-  // Busy intervals on the target day: the routine anchors + every
-  // already-scheduled task (completed ones too — their slot is spent).
+/** Busy intervals on the target day: the routine anchors + every
+ *  already-scheduled task (completed ones too — their slot is spent). */
+const busyFor = (q: SlotQuery): { s: number; e: number }[] => {
   const busy: { s: number; e: number }[] = [
     q.anchors.wake,
     q.anchors.breakfast,
@@ -80,22 +73,94 @@ export const findWindowSlot = (q: SlotQuery): number | null => {
     const s = t.scheduledHour * 60 + (t.scheduledMinute ?? 0);
     busy.push({ s, e: s + (t.durationMinutes ?? 30) });
   }
-  busy.sort((a, b) => a.s - b.s);
+  return busy.sort((a, b) => a.s - b.s);
+};
 
-  let cand = winStart;
+/** Walk the sorted blocks forward from `from`; first :15 start where
+ *  `durationMin` fits before `end`, or null. `cand` only ever moves
+ *  right, so one pass settles it. */
+const walkSlots = (
+  q: SlotQuery,
+  from: number,
+  end: number,
+): number | null => {
+  let cand = from;
   if (q.dateISO === todayKey() && q.nowMin != null) {
     cand = Math.max(cand, q.nowMin + 5);
   }
   cand = roundUp(cand);
-
-  // Walk the sorted blocks forward. `cand` only ever moves right, so
-  // one pass settles it.
-  for (const b of busy) {
+  for (const b of busyFor(q)) {
     if (b.e <= cand) continue; // already behind us
     if (b.s >= cand + q.durationMin) break; // fits before this block
     cand = roundUp(Math.max(cand, b.e));
   }
-  return cand + q.durationMin <= winEnd ? cand : null;
+  return cand + q.durationMin <= end ? cand : null;
+};
+
+/** Next open start (minutes since midnight) in the window that fits
+ *  `durationMin`, or null when the window is full. */
+export const findWindowSlot = (q: SlotQuery): number | null => {
+  if (q.window === 'someday') return null;
+  const win = q.effectiveWindows[q.window];
+  if (!win || win.start == null || win.end == null) return null;
+  return walkSlots(q, win.start * 60, win.end * 60);
+};
+
+/** Overflow — the window is full but the DAY may not be: next open
+ *  slot from the window's start forward to the sleep anchor (never
+ *  earlier than asked — an "afternoon" task must not surprise-land
+ *  at 8 AM). Null when the rest of the day is spoken for too. */
+export const findDaySlot = (q: SlotQuery): number | null => {
+  if (q.window === 'someday') return null;
+  const win = q.effectiveWindows[q.window];
+  const from =
+    win?.start != null ? win.start * 60 : q.anchors.wake + 30;
+  return walkSlots(q, from, q.anchors.sleep);
+};
+
+export interface SlotResolution {
+  dateISO: string;
+  min: number;
+  /** 'window' — landed in the asked window. 'crammed' — window was
+   *  full, landed later the same day. 'moved' — the whole day was
+   *  full, landed on the next day with room. */
+  how: 'window' | 'crammed' | 'moved';
+}
+
+/** THE slot decision, overflow-aware. Tries, in order: the asked
+ *  window on the asked day → the next open slot later that same day
+ *  ("cram") → the first future day with room (asked window first,
+ *  then anywhere in that day). Days aren't infinite lists to walk
+ *  forever — after `maxDaysAhead` we give up and return null so the
+ *  caller can fall back to plain windowed (the pre-slotting shape). */
+export const resolveSlot = (
+  q: SlotQuery,
+  maxDaysAhead = 14,
+): SlotResolution | null => {
+  if (q.window === 'someday') return null;
+  // Defensive: a malformed dateISO would make the next-day loop below
+  // build "NaN-NaN-NaN" strings via `new Date(bad + 'T12:00')`. All
+  // real callers pass YYYY-MM-DD, but guard so a bad value fails
+  // closed (caller falls back to plain windowed) instead of writing
+  // a garbage date into the store.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(q.dateISO)) return null;
+  const inWindow = findWindowSlot(q);
+  if (inWindow != null) {
+    return { dateISO: q.dateISO, min: inWindow, how: 'window' };
+  }
+  const crammed = findDaySlot(q);
+  if (crammed != null) {
+    return { dateISO: q.dateISO, min: crammed, how: 'crammed' };
+  }
+  for (let i = 1; i <= maxDaysAhead; i++) {
+    const d = new Date(q.dateISO + 'T12:00'); // noon-anchored, DST-safe
+    d.setDate(d.getDate() + i);
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dayQ: SlotQuery = { ...q, dateISO: iso, nowMin: null };
+    const slot = findWindowSlot(dayQ) ?? findDaySlot(dayQ);
+    if (slot != null) return { dateISO: iso, min: slot, how: 'moved' };
+  }
+  return null;
 };
 
 /** True when the window can't fit a task of this length — pickers use

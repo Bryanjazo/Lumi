@@ -245,6 +245,9 @@ interface TItem {
   recurring?: boolean;
   /** Recurring-template projection (not a spawned instance). */
   ghost?: boolean;
+  /** No fixed clock time — placed at the window start, then spread by
+   *  the de-stack pass so windowed tasks never share a minute. */
+  windowed?: boolean;
 }
 
 const anchorItems = (anchors: DailyAnchors): TItem[] => [
@@ -311,6 +314,51 @@ const recurMatches = (
   }
 };
 
+// De-stack pass (audit): a windowed task with no fixed time renders
+// at its window's START minute, so several in the same window pile on
+// one clock time ("five at 11a"). This spreads them — each windowed
+// task takes the next free :15 at/after its window start, walking
+// around fixed items (anchors + clock-anchored quests) and the ones
+// already placed. Purely a DISPLAY concern: the store stays windowed
+// until the user pins a real time. Anchored quests never move.
+const ANCHOR_BLOCK = 15;
+const roundUp15 = (m: number): number => Math.ceil(m / 15) * 15;
+const destackWindowed = (items: TItem[]): TItem[] => {
+  const occupied: { s: number; e: number }[] = [];
+  for (const it of items) {
+    if (it.kind === 'anchor') {
+      occupied.push({ s: it.min, e: it.min + ANCHOR_BLOCK });
+    } else if (it.questId && !it.windowed) {
+      occupied.push({ s: it.min, e: it.min + (it.durMin ?? 30) });
+    }
+  }
+  // Windowed quests in window-start order (stable for equal starts),
+  // so the cascade reads top-to-bottom like the thread does.
+  const windowed = items
+    .map((it, i) => ({ it, i }))
+    .filter(({ it }) => it.kind === 'quest' && it.windowed)
+    .sort((a, b) => a.it.min - b.it.min || a.i - b.i);
+  // Ceiling so an absurdly packed day (>16h of tasks) can't cascade a
+  // windowed task past midnight, where fmt() would silently wrap the
+  // hour. On such a day the tail collapses at 23:45 — a rare, honest
+  // degradation, not a next-day time.
+  const DAY_END = 23 * 60 + 45;
+  for (const { it } of windowed) {
+    const len = it.durMin ?? 30;
+    let cand = roundUp15(it.min);
+    const sorted = [...occupied].sort((a, b) => a.s - b.s);
+    for (const iv of sorted) {
+      if (iv.e <= cand) continue;
+      if (iv.s >= cand + len) break;
+      cand = roundUp15(Math.max(cand, iv.e));
+    }
+    cand = Math.min(cand, DAY_END);
+    it.min = cand;
+    occupied.push({ s: cand, e: cand + len });
+  }
+  return items.sort((a, b) => a.min - b.min);
+};
+
 const buildItemsForDate = (
   date: Date,
   anchors: DailyAnchors,
@@ -350,6 +398,7 @@ const buildItemsForDate = (
       done: q.completed,
       questId: q.id,
       recurring: !!q.recur,
+      windowed: q.scheduledHour == null,
     });
     seen.add(q.id);
   }
@@ -375,6 +424,7 @@ const buildItemsForDate = (
         done: false,
         questId: q.id,
         recurring: true,
+        windowed: q.recur.at == null,
         // Projection of the template, not a spawned instance —
         // completing it would mark the template done off-schedule.
         ghost: true,
@@ -382,8 +432,7 @@ const buildItemsForDate = (
     }
   }
 
-  items.sort((a, b) => a.min - b.min);
-  return items;
+  return destackWindowed(items);
 };
 
 // ═════════════════════════════════════════════════════════════════════
@@ -469,6 +518,10 @@ interface DragCtl {
    *  position INSIDE the gap picks the minute (:15-snapped). Null
    *  when not over a gap. */
   dropPreview: number | null;
+  /** Organize mode — hovering another task row slots the dragged
+   *  task relative to it: top half 'before', bottom half 'after'.
+   *  The row draws its insertion line on this edge. */
+  dropEdge: 'before' | 'after' | null;
 }
 
 /** Wraps a chip/row to make it long-press-draggable. Long-press (not
@@ -1094,6 +1147,22 @@ const DayView = ({
           // Swapping wrappers on the done-flip remounted DayTaskRow,
           // which reset the radio's slide state and skipped the
           // clip-to-thread spring entirely (the dot just "popped").
+          // Organize — every OTHER quest row is a drop target while
+          // dragging: land the task right before or right behind it.
+          const rowKey = it.questId
+            ? `row:${dIso}:${it.min}:${it.durMin ?? 30}:${it.questId}`
+            : null;
+          const overRow = rowKey != null && ctl.overKey === rowKey;
+          const insertLine = (
+            <View style={styles.dayInsertRow}>
+              <View style={styles.dayInsertLine} />
+              {ctl.dropPreview != null && (
+                <Text style={styles.dayInsertTime}>
+                  {fmt(ctl.dropPreview)}
+                </Text>
+              )}
+            </View>
+          );
           return (
             <DragChip
               key={it.questId ?? `q${i}`}
@@ -1109,10 +1178,15 @@ const DayView = ({
               }}
             >
               <View
+                ref={(ref) => {
+                  if (rowKey && !isPast) ctl.registerTarget(rowKey, ref);
+                }}
+                collapsable={false}
                 style={
                   ctl.draggingId === it.questId ? { opacity: 0.3 } : undefined
                 }
               >
+                {overRow && ctl.dropEdge === 'before' && insertLine}
                 <DayTaskRow
                   it={it}
                   isToday={isToday}
@@ -1122,10 +1196,22 @@ const DayView = ({
                   styles={styles}
                   onMove={onMovePast}
                 />
+                {overRow && ctl.dropEdge === 'after' && insertLine}
               </View>
             </DragChip>
           );
         })}
+        {/* Organize hint — only once there are two movable tasks to
+            reorder, and never mid-drag (it would fight the ghost). */}
+        {!isPast &&
+          ctl.draggingId == null &&
+          items.filter(
+            (it) => !it.done && it.questId && !it.recurring,
+          ).length >= 2 && (
+            <Text style={styles.dayOrganizeHint}>
+              hold + drag a task onto another to reorder your day
+            </Text>
+          )}
       </View>
     </ScrollView>
   );
@@ -2101,6 +2187,20 @@ export default function Time() {
           const d = fromIsoLocal(key.slice(4));
           if (dayOffset(d, today) < 0) return null;
         }
+        // A row is not its own drop target — the dragged row dims
+        // to a ghost; lighting it up as a landing spot reads absurd.
+        // Match BOTH date and id so a future recurring instance of the
+        // same quest (should it ever become draggable) stays a valid
+        // target on other days.
+        if (key.startsWith('row:')) {
+          const kp = key.split(':'); // row : iso : min : durMin : questId
+          if (
+            kp[4] === dragTaskRef.current?.questId &&
+            kp[1] === dragTaskRef.current?.fromIso
+          ) {
+            return null;
+          }
+        }
         return key;
       }
     }
@@ -2129,20 +2229,86 @@ export default function Time() {
     return Math.max(lo, Math.min(hi, snapped));
   };
   const [dropPreview, setDropPreview] = useState<number | null>(null);
+  const [dropEdge, setDropEdge] = useState<'before' | 'after' | null>(null);
+  /** Organize — dropping ON another task slots the dragged one
+   *  relative to it: finger in the row's top half lands the task so
+   *  it ENDS where the target starts (round DOWN to fit above it),
+   *  bottom half starts it where the target ends (round UP so it
+   *  can't overlap the target). ALL clamping (today's past guard,
+   *  no-duplicate-minute nudge) happens HERE so the hover preview is
+   *  exactly what commits — no silent correction at drop time. */
+  const rowDropMinute = (
+    key: string,
+    y: number,
+    dragDur: number,
+  ): { t: number; edge: 'before' | 'after' } | null => {
+    const parts = key.split(':'); // row : iso : min : durMin : questId
+    const iso = parts[1];
+    const min = parseInt(parts[2], 10);
+    const targetDur = parseInt(parts[3], 10);
+    if (!Number.isFinite(min) || !Number.isFinite(targetDur)) return null;
+    const rect = targetRects.get(key);
+    const after = !rect || rect.h <= 0 ? true : y >= rect.y + rect.h / 2;
+    let landing = after
+      ? Math.ceil((min + targetDur) / 15) * 15
+      : Math.floor((min - dragDur) / 15) * 15;
+    // Today can't take a past time — slide to the next free :15 from
+    // now (same rule as gap drops + applyMoves), and reflect it in
+    // the preview so nothing changes between hover and commit.
+    if (iso === todayKey()) {
+      const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+      if (landing <= nowM) landing = Math.ceil((nowM + 1) / 15) * 15;
+    }
+    landing = Math.max(0, Math.min(1425, landing));
+    // No duplicate minute (the whole point of organize): if another
+    // clock-anchored task on this day already owns this minute, step
+    // forward :15 until the seat is free.
+    const excludeId = dragTaskRef.current?.questId;
+    const taken = new Set(
+      useQuestStore
+        .getState()
+        .quests.filter(
+          (q) =>
+            (q.date ?? todayKey()) === iso &&
+            q.scheduledHour != null &&
+            q.id !== excludeId,
+        )
+        .map((q) => q.scheduledHour! * 60 + (q.scheduledMinute ?? 0)),
+    );
+    let guard = 0;
+    while (taken.has(landing) && landing < 1425 && guard++ < 96) {
+      landing += 15;
+    }
+    // Day full right up to midnight — reject rather than land ON a
+    // taken minute (that's the exact duplicate-time the gesture is
+    // meant to prevent). Hover shows no insert line; the drop is a
+    // no-op, and the user still has "move to another day".
+    if (taken.has(landing)) return null;
+    return { t: landing, edge: after ? 'after' : 'before' };
+  };
   const hoverDrag = (x: number, y: number) => {
     const k = hitTest(x, y);
     setOverKey((cur) => (cur === k ? cur : k));
-    const preview =
-      k && k.startsWith('gap:')
-        ? gapDropMinute(k, y, dragTaskRef.current?.durMin ?? 30)
-        : null;
+    let preview: number | null = null;
+    let edge: 'before' | 'after' | null = null;
+    if (k && k.startsWith('gap:')) {
+      preview = gapDropMinute(k, y, dragTaskRef.current?.durMin ?? 30);
+    } else if (k && k.startsWith('row:')) {
+      const r = rowDropMinute(k, y, dragTaskRef.current?.durMin ?? 30);
+      if (r) {
+        preview = r.t;
+        edge = r.edge;
+      }
+    }
     setDropPreview((cur) => (cur === preview ? cur : preview));
+    setDropEdge((cur) => (cur === edge ? cur : edge));
   };
   const cancelDrag = () => {
     dragTaskRef.current = null;
     setDragTask(null);
     setOverKey(null);
     setDropPreview(null);
+    setDropEdge(null);
   };
 
   /** Move quests to new dates (keeping their clock time) + arm Undo.
@@ -2218,9 +2384,16 @@ export default function Time() {
     // Compute the gap landing minute BEFORE cancelDrag clears the
     // ref — same math as the hover preview, so the time the user
     // watched under their finger is exactly what commits.
+    // Compute BOTH gap and row landings BEFORE cancelDrag clears the
+    // ref — same math the hover preview used, so what the user watched
+    // under their finger is exactly what commits (no drop-time fixup).
     const gapT =
       t && k && k.startsWith('gap:')
         ? gapDropMinute(k, y, t.durMin)
+        : null;
+    const rowR =
+      t && k && k.startsWith('row:')
+        ? rowDropMinute(k, y, t.durMin)
         : null;
     cancelDrag();
     if (!t || !k) return;
@@ -2232,6 +2405,15 @@ export default function Time() {
       applyMoves(
         [{ id: t.questId, toIso, newT: gapT }],
         `“${short}” → ${fmt(gapT)}`,
+      );
+      return;
+    }
+    if (k.startsWith('row:')) {
+      if (rowR == null) return;
+      const toIso = k.split(':')[1];
+      applyMoves(
+        [{ id: t.questId, toIso, newT: rowR.t }],
+        `“${short}” → ${fmt(rowR.t)}`,
       );
       return;
     }
@@ -2263,6 +2445,7 @@ export default function Time() {
     draggingId: dragTask?.questId ?? null,
     draggingFromIso: dragTask?.fromIso ?? null,
     dropPreview,
+    dropEdge,
   };
 
   // ("Lighten this day" removed by design — it scattered tasks to
@@ -2867,6 +3050,33 @@ const makeStyles = (accent: Accent) =>
       fontSize: 11,
       color: C.mute,
     },
+    // Organize — insertion line drawn above/below a hovered row,
+    // with the live landing time riding on it.
+    dayInsertRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginLeft: MARKER_W + 10,
+      marginVertical: 2,
+    },
+    dayInsertLine: {
+      flex: 1,
+      height: 2,
+      borderRadius: 1,
+      backgroundColor: C.ember,
+      shadowColor: C.ember,
+      shadowOpacity: 0.6,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 0 },
+    },
+    dayInsertTime: {
+      fontFamily: fonts.frauncesMed,
+      fontStyle: 'italic',
+      fontSize: 14,
+      color: C.ember,
+      fontVariant: ['tabular-nums'],
+      paddingRight: 4,
+    },
     dayAnchorRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -3013,6 +3223,15 @@ const makeStyles = (accent: Accent) =>
       fontSize: 11,
       color: C.mute,
       paddingVertical: 4,
+    },
+    dayOrganizeHint: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11,
+      color: hexA(C.mute, 0.75),
+      paddingTop: 14,
+      paddingBottom: 2,
     },
 
     // ── Month view ──

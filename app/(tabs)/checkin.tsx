@@ -50,7 +50,7 @@ import {
   useEffectiveWindows,
   type WindowKey,
 } from '../../constants/windows';
-import { findWindowSlot } from '../../lib/slotting';
+import { resolveSlot } from '../../lib/slotting';
 import {
   useQuestStore,
   type Quest,
@@ -1175,6 +1175,32 @@ export default function Untangle() {
         (live.scheduledHour == null || m.patch.window === 'someday')
       ) {
         moveWindow(m.id, m.patch.window);
+        // moveWindow UN-ANCHORS — without a fresh slot the task lands
+        // at the window start, and a one-tap "focus these" move that
+        // re-windows several tasks stacks them ALL on one minute (the
+        // "five at 11a" bug). Give each a real seat, overflow-aware
+        // and identical to Home capture: next open :15 in the window,
+        // cram later the same day, else move to the next day with
+        // room. Someday stays deliberately timeless.
+        if (m.patch.window !== 'someday') {
+          const dateISO = m.patch.date ?? live.date ?? todayKey();
+          const res = resolveSlot({
+            window: m.patch.window,
+            dateISO,
+            durationMin: live.durationMinutes ?? 30,
+            quests: useQuestStore.getState().quests,
+            anchors,
+            effectiveWindows,
+            nowMin:
+              dateISO === todayKey()
+                ? new Date().getHours() * 60 + new Date().getMinutes()
+                : null,
+          });
+          if (res != null) {
+            if (res.dateISO !== dateISO) setDate(m.id, res.dateISO);
+            anchor(m.id, Math.floor(res.min / 60), res.min % 60);
+          }
+        }
       }
     }
   };
@@ -1319,14 +1345,12 @@ export default function Untangle() {
     // Auto-slot cascade (same rule as Home's capture): a windowed
     // task without an explicit time gets the NEXT OPEN :15 slot in
     // its window — five evening tasks land 5:00 → 5:30 → 6:00…
-    // instead of all piling up at "5p". Fresh store read per call so
+    // instead of all piling up at "5p". Overflow-aware (parity with
+    // Home): a full window crams later the same day, a full DAY moves
+    // to the next day with room. Fresh store read per call so
     // consecutive placements in this same loop see each other.
-    const slotFor = (
-      win: WindowKey,
-      dateISO: string,
-      durationMin: number,
-    ): number | null =>
-      findWindowSlot({
+    const resolveFor = (win: WindowKey, dateISO: string, durationMin: number) =>
+      resolveSlot({
         window: win,
         dateISO,
         durationMin,
@@ -1445,18 +1469,19 @@ export default function Untangle() {
                 ? 'evening'
                 : 'midday';
         const createISO = p.date ?? selectedDate;
-        const createSlot = slotFor(win, createISO, safeDur);
+        const createRes = resolveFor(win, createISO, safeDur);
         const minted2 = useQuestStore.getState().addQuest({
           title: p.title.trim(),
           difficulty,
           importance: imp,
           window: win,
           durationMinutes: safeDur,
-          ...(createSlot != null && {
-            scheduledHour: Math.floor(createSlot / 60),
-            scheduledMinute: createSlot % 60,
+          ...(createRes != null && {
+            scheduledHour: Math.floor(createRes.min / 60),
+            scheduledMinute: createRes.min % 60,
           }),
-          date: createISO,
+          // Overflow may land it on a later day than asked — honor it.
+          date: createRes?.dateISO ?? createISO,
         });
         recordCreatedForUndo(minted2.id);
         applied += 1;
@@ -1478,28 +1503,35 @@ export default function Untangle() {
         // clock time + its calendar mirror. A quest the user pinned
         // to 3pm must keep 3pm — only unanchored quests get the
         // cascade slot.
+        const targetWin = p.window as WindowKey;
         const hadAnchor = q.scheduledHour != null;
         const hadH = q.scheduledHour ?? 0;
         const hadM = q.scheduledMinute ?? 0;
-        if (q.date !== selectedDate) setDate(p.taskId, selectedDate);
-        if (q.window !== (p.window as WindowKey) || q.date !== selectedDate) {
-          moveWindow(p.taskId, p.window as WindowKey);
+        const dateChanged = q.date !== selectedDate;
+        const windowChanged = q.window !== targetWin;
+        if (dateChanged) setDate(p.taskId, selectedDate);
+        if (windowChanged || dateChanged) {
+          moveWindow(p.taskId, targetWin);
         }
+        let gotNewSlot = false;
         if (hadAnchor) {
           anchor(p.taskId, hadH, hadM);
         } else {
-          // Cascade: give it a real seat in the window instead of
-          // stacking at the window's start with everything else.
-          const schedSlot = slotFor(
-            p.window as WindowKey,
-            selectedDate,
-            q.durationMinutes ?? 30,
-          );
-          if (schedSlot != null) {
-            anchor(p.taskId, Math.floor(schedSlot / 60), schedSlot % 60);
+          // Cascade with overflow: a real seat in the window, cram
+          // later the same day if it's full, move to the next day
+          // with room if the whole day is (parity with Home capture).
+          const res = resolveFor(targetWin, selectedDate, q.durationMinutes ?? 30);
+          if (res != null) {
+            if (res.dateISO !== selectedDate) setDate(p.taskId, res.dateISO);
+            anchor(p.taskId, Math.floor(res.min / 60), res.min % 60);
+            gotNewSlot = true;
           }
         }
-        applied += 1;
+        // Honesty (audit): only count a move that actually changed
+        // something — a task already sitting in this window on this
+        // day, still anchored, is a no-op and must not inflate the
+        // "N moves applied" tally.
+        if (dateChanged || windowChanged || gotNewSlot) applied += 1;
       } else if (p.action === 'reschedule') {
         if (!p.date) continue;
         // Round-trip validation — the sanitizer regex admits
@@ -1691,7 +1723,7 @@ export default function Untangle() {
               // actual changes.
               pushLumi(
                 tk
-                  ? `Done — it's on your day now, spaced out so nothing piles up. You can see it on Home and Time too.`
+                  ? `Done — spaced out so nothing piles up. Open the Time tab to see the new order. 💛`
                   : `Everything's already where it should be — nothing needed moving. 💛`,
                 tk
                   ? {
@@ -1822,8 +1854,8 @@ export default function Untangle() {
                       setView('plan');
                       pushLumi(
                         applied > 0
-                          ? `Done. ${applied} move${applied === 1 ? '' : 's'} applied — you can see it on Home and Time too.`
-                          : `Hmm — those tasks moved or finished before I could apply. Have a fresh look and tell me what you'd like.`,
+                          ? `Done — ${applied} sorted into your day. Open the Time tab to see the new order. 💛`
+                          : `Everything's already where it should be — nothing needed moving. 💛`,
                         applied > 0 && tk
                           ? {
                               approveLabel: 'Put it back',
@@ -2185,7 +2217,6 @@ export default function Untangle() {
                   : text
               }
               onChangeText={setText}
-              onSubmitEditing={() => send()}
               placeholder={
                 voice.state === 'recording'
                   ? 'listening…'
@@ -2196,7 +2227,13 @@ export default function Untangle() {
               placeholderTextColor={C.mute}
               style={styles.input}
               editable={voice.state !== 'transcribing'}
-              returnKeyType="send"
+              // Grows with the text up to 5 lines (maxHeight caps it,
+              // then it scrolls internally) — a long vent no longer
+              // hides its own start behind a single-line window. Send
+              // is the ↑ button; return adds a line, which is what a
+              // multi-thought brain-dump wants.
+              multiline
+              scrollEnabled
             />
             {!text.trim() ? (
               <Pressable
@@ -2776,7 +2813,9 @@ const styles = StyleSheet.create({
   },
   inputBar: {
     flexDirection: 'row',
-    alignItems: 'center',
+    // Buttons hug the BOTTOM as the field grows — centering them
+    // floated the mic/send to the middle of a tall multi-line input.
+    alignItems: 'flex-end',
     gap: 9,
     backgroundColor: C.void2,
     borderWidth: 1.5,
@@ -2789,9 +2828,15 @@ const styles = StyleSheet.create({
     flex: 1,
     fontFamily: fonts.inter,
     fontSize: 14.5,
+    lineHeight: 20,
     color: C.bone,
     letterSpacing: -0.1,
-    paddingVertical: 4,
+    // paddingY 9 + one 20px line = 38 → matches the 38px mic/send
+    // buttons on a single line. maxHeight caps growth at 5 lines
+    // (5×20 + 18 padding); past that the field scrolls internally.
+    paddingTop: 9,
+    paddingBottom: 9,
+    maxHeight: 5 * 20 + 18,
   },
   micBtn: {
     width: 38,
