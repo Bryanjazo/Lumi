@@ -1,6 +1,7 @@
 import { syncParseMetrics } from '../lib/telemetry';
 import { installErrorReporting } from '../lib/errorReport';
 import * as Notifications from 'expo-notifications';
+import * as Updates from 'expo-updates';
 import {
   useNotifIntentStore,
   type NotifIntent,
@@ -138,6 +139,43 @@ export default function RootLayout() {
       clearTimeout(t);
       sub.remove();
     };
+  }, []);
+
+  // ── OTA updates without the two-launch dance ─────────────────────
+  // expo-updates default: launch N downloads the new bundle, launch
+  // N+1 runs it. We close the gap invisibly: every FOREGROUND checks
+  // + fetches; a downloaded bundle is applied the moment the app goes
+  // to BACKGROUND — no live session is ever interrupted, and the next
+  // open is already the new version.
+  useEffect(() => {
+    if (__DEV__ || !Updates.isEnabled) return;
+    let fetching = false;
+    let pendingReload = false;
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active' && !fetching && !pendingReload) {
+        fetching = true;
+        void (async () => {
+          try {
+            const res = await Updates.checkForUpdateAsync();
+            if (res.isAvailable) {
+              await Updates.fetchUpdateAsync();
+              pendingReload = true;
+            }
+          } catch {
+            // offline / server hiccup — the on-launch check covers it
+          } finally {
+            fetching = false;
+          }
+        })();
+      } else if (s === 'background' && pendingReload) {
+        pendingReload = false;
+        void Updates.reloadAsync().catch(() => {
+          // reload refused (e.g. iOS suspending) — the normal
+          // next-launch swap still applies it
+        });
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   const [fontsReady] = useFonts({
