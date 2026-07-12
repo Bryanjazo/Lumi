@@ -90,7 +90,28 @@ export default function RootLayout() {
       router2.navigate('/(tabs)');
     };
     const sub = Notifications.addNotificationResponseReceivedListener(act);
-    void Notifications.getLastNotificationResponseAsync().then(act);
+    // Cold-start tap: getLastNotificationResponse returns the LAST
+    // response EVER — without a persisted dedupe key, yesterday's
+    // tapped notification replayed its intent on every cold start.
+    void (async () => {
+      try {
+        const AsyncStorage = (
+          await import('@react-native-async-storage/async-storage')
+        ).default;
+        const resp = await Notifications.getLastNotificationResponseAsync();
+        if (!resp) return;
+        const key =
+          resp.notification.request.identifier +
+          String(resp.notification.date ?? '');
+        const seen = await AsyncStorage.getItem('lumi.lastNotifResponse');
+        if (seen === key) return;
+        await AsyncStorage.setItem('lumi.lastNotifResponse', key);
+        act(resp);
+      } catch {
+        // storage unavailable — skip the cold-start replay entirely
+        // rather than risk acting on a stale tap
+      }
+    })();
     return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

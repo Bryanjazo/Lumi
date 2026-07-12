@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   Animated,
   Dimensions,
   Easing,
@@ -1002,6 +1003,8 @@ export default function Home() {
       if (empathizeTimerRef.current) {
         clearTimeout(empathizeTimerRef.current);
       }
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     },
     [],
   );
@@ -1064,7 +1067,26 @@ export default function Home() {
   const recordAiMetric = useAiMetricsStore((s) => s.record);
   const updateAiMetric = useAiMetricsStore((s) => s.update);
   const lastMetricIdRef = useRef<string | null>(null);
-  const todayQuests = useMemo(() => selectTodayQuests(quests), [quests]);
+  // Day key on its own minute heartbeat — "today" memos used to bake
+  // todayKey() in with only [quests] deps, so an app left open across
+  // midnight kept showing yesterday as today until a store write.
+  // (setState with the same string bails, so this re-renders exactly
+  // once per day.)
+  const [dayKeyNow, setDayKeyNow] = useState(() => todayKey());
+  useEffect(() => {
+    const id = setInterval(() => {
+      setDayKeyNow((k) => {
+        const t = todayKey();
+        return t === k ? k : t;
+      });
+    }, 60_000);
+    return () => clearInterval(id);
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const todayQuests = useMemo(
+    () => selectTodayQuests(quests),
+    [quests, dayKeyNow],
+  );
 
   // ── Suggestions ──────────────────────────────────────────────────
   const suggestions = useSuggestionsStore((s) => s.suggestions);
@@ -1136,6 +1158,7 @@ export default function Home() {
     title: string;
   } | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Voice (Whisper) ──────────────────────────────────────────────
   const voice = useVoice();
@@ -1188,10 +1211,21 @@ export default function Home() {
   const captureRef = useTourTarget('tour-oracle');
   const tourSeen = useUserStore((s) => s.tourSeen);
   const onboardedAt = useUserStore((s) => s.onboardedAt);
+  // Recurring respawn: on hydration (mount-only used to race the async
+  // secureStorage load and run against an empty list), on each new day
+  // while the app stays open, and on tab focus.
+  const questsHydrated = useQuestStore((s) => s.hasHydrated);
   useEffect(() => {
+    if (!questsHydrated) return;
     refreshRecurring();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [questsHydrated, dayKeyNow]);
+  useFocusEffect(
+    useCallback(() => {
+      if (useQuestStore.getState().hasHydrated) refreshRecurring();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
+  );
   useEffect(() => {
     if (!onboardedAt || tourSeen) return;
     const t = setTimeout(() => tour.start(), 600);
@@ -1202,9 +1236,12 @@ export default function Home() {
   // ── Recurrence detector → suggestions (math layer, no LLM) ───────
   useEffect(() => {
     const suppressedSet = new Set(suppressed);
+    // Recurring quests AND open one-offs both suppress re-detection —
+    // accepting a suggestion as one-time used to resurrect the card
+    // instantly (completions unchanged → identical pattern re-found).
     const existingTitles = new Set(
       quests
-        .filter((q) => q.recur)
+        .filter((q) => q.recur || !q.completed)
         .map((q) => normalizeForSuppression(q.title)),
     );
     const detected = detectRecurrencePatterns(quests, {
@@ -1224,7 +1261,12 @@ export default function Home() {
     [cw],
   );
   const candidates = useMemo(() => {
-    const open = todayQuests.filter((q) => !q.completed);
+    // 'someday' is parked on purpose — a high-importance someday
+    // capture must not outrank the day's REAL tasks as hero (and
+    // DaySet's "let go" must actually let go).
+    const open = todayQuests.filter(
+      (q) => !q.completed && q.window !== 'someday',
+    );
     return [...open].sort((a, b) => {
       // IMPORTANCE first — a Trial (high) always trumps a Task
       // (medium) or a Whim (low) regardless of window. This is what
@@ -1245,8 +1287,13 @@ export default function Home() {
   }, [todayQuests, order]);
   const allDone = candidates.length === 0 && todayQuests.length > 0;
   const totallyEmpty = todayQuests.length === 0;
+  // While a focus session runs, its quest IS the hero — a fresh
+  // high-importance capture used to reorder candidates and yank the
+  // timer surface off Home mid-session.
+  const focusQuestId = useFocusSession((s) => s.current?.questId ?? null);
   const hero = candidates.length
-    ? candidates[swap % candidates.length]
+    ? (focusQuestId && candidates.find((q) => q.id === focusQuestId)) ||
+      candidates[swap % candidates.length]
     : null;
   const rest = hero ? candidates.filter((q) => q.id !== hero.id) : [];
 
@@ -1279,7 +1326,8 @@ export default function Home() {
         const tb = b.completedAt ? new Date(b.completedAt).getTime() : 0;
         return tb - ta;
       });
-  }, [todayQuests]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayQuests, dayKeyNow]);
   const doneToday = doneTodayList.length;
   const [moreDoneOpen, setMoreDoneOpen] = useState(false);
   // Whole "Done today" section collapses so it doesn't clutter Home
@@ -1414,19 +1462,26 @@ export default function Home() {
   // ── Actions ──────────────────────────────────────────────────────
   const showToast = (text: string) => {
     setToast(text);
-    setTimeout(() => setToast(null), 2400);
+    // VoiceOver hears what sighted users glimpse — toasts were silent.
+    AccessibilityInfo.announceForAccessibility(text);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 2400);
   };
 
   const completeQuest = (q: Quest) => {
-    const wasDone = q.completed;
-    if (wasDone) return;
+    // Fresh-store read — the render-closure quest goes stale between
+    // taps. A double-tap used to see completed=false twice: the 2nd
+    // toggle flipped the quest BACK open while stale xpPaid paid the
+    // economy a second time.
+    const fresh = useQuestStore.getState().quests.find((x) => x.id === q.id);
+    if (!fresh || fresh.completed) return;
     const next = toggle(q.id);
-    if (!next) return;
+    if (!next || !next.completed) return;
 
     // ECONOMY GUARD (audit C1): XP/shards pay exactly ONCE per quest,
     // ever — undo→re-complete used to farm them indefinitely.
-    const gain = q.xpReward;
-    const firstAward = !q.xpPaid;
+    const gain = fresh.xpReward;
+    const firstAward = !fresh.xpPaid;
     if (firstAward) {
       addXp(gain);
       addShard();
@@ -1461,15 +1516,19 @@ export default function Home() {
       // jumping straight to a static smile.
       triggerLick();
       triggerCelebrate();
-      const fId = q.id + '-' + Date.now();
-      setFloater({
-        id: fId,
-        amount: gain,
-        color: IMPORTANCE[q.importance].color,
-      });
-      setTimeout(() => {
-        setFloater((cur) => (cur?.id === fId ? null : cur));
-      }, 1200);
+      if (firstAward) {
+        // Only float XP the store actually paid — a re-complete after
+        // undo used to SHOW +N the economy guard refused.
+        const fId = q.id + '-' + Date.now();
+        setFloater({
+          id: fId,
+          amount: gain,
+          color: IMPORTANCE[q.importance].color,
+        });
+        setTimeout(() => {
+          setFloater((cur) => (cur?.id === fId ? null : cur));
+        }, 1200);
+      }
     }
 
     // Meaningful-win moments (emotional-model spec §4): the BIG
@@ -1477,7 +1536,10 @@ export default function Home() {
     // on checkbox volume. A task carried 5+ days = avoidance finally
     // broken — that gets NAMED. A Trial gets a nod. Routine
     // completions keep the quiet warm beat above.
-    const daysCarried = q.createdAt
+    // Recurring habits are SUPPOSED to come back — createdAt age says
+    // nothing about avoidance for them (a 47-day-old daily habit is
+    // not "finally faced").
+    const daysCarried = q.createdAt && !q.recur
       ? Math.floor(
           (Date.now() - new Date(q.createdAt).getTime()) / 86_400_000,
         )
@@ -1536,7 +1598,8 @@ export default function Home() {
     return quests.filter(
       (q) => !q.completed && q.window !== 'someday' && q.date && q.date < t,
     );
-  }, [quests]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quests, dayKeyNow]);
 
   // A tapped recovery notification ("want me to shrink today?") must
   // open Rescue Mode even when the automatic triggers wouldn't fire.
@@ -1798,7 +1861,11 @@ export default function Home() {
         scheduledHour: Math.floor(effectiveAt / 60),
         scheduledMinute: effectiveAt % 60,
       }),
-      ...(t.date && { date: t.date }),
+      ...(t.recur
+        ? { date: firstDueDateFor(t.recur) }
+        : t.date
+          ? { date: t.date }
+          : {}),
       ...(t.recur && { recur: t.recur }),
       ...(t.note ? { note: t.note } : {}),
     });
@@ -2165,11 +2232,19 @@ export default function Home() {
       /\b(ugh+|tired|exhausted|overwhelm\w*|stress\w*|drowning|anxious|screwed|hate (?:this|everything|myself)|can'?t (?:do this|even)|falling apart|done with)\b/i.test(
         text,
       );
-    if (!ventish) return;
+    if (!ventish) {
+      // Not a vent, nothing parsed — the send used to be a silent
+      // no-op that just ate the text.
+      showToast('couldn’t find a task in that — try “call mom tomorrow”');
+      return;
+    }
     triggerEmpathize();
     setVentText(text);
     setCapText('');
     setPillInputH(0);
+    // The vent card renders in the pill block — if the brain-dump
+    // modal is open it would acknowledge into the void behind it.
+    setCapOpen(false);
     recordAiMetric({
       route: 'dym',
       reason: 'vent-shown',
@@ -2198,6 +2273,10 @@ export default function Home() {
       setDymHint(true);
       setDymSuggestion(null);
       recordAiMetric({ route: 'dym', reason: 'shown', latencyMs: 0, edited: false });
+      // The dym card lives in the pill block — a hold triggered from
+      // the open capture modal was invisible (looked like a dead
+      // send button).
+      setCapOpen(false);
       if (isLlmAvailable() && access.hasPremium) {
         void llmClarify(parked).then((fixed) => {
           if (!fixed || fixed === parked) return;
@@ -2682,13 +2761,16 @@ export default function Home() {
     const wakeToday = new Date();
     wakeToday.setHours(Math.floor(anchors.wake / 60), anchors.wake % 60, 0, 0);
     const lastNightSleep = new Date(wakeToday);
-    lastNightSleep.setDate(lastNightSleep.getDate() - 1);
-    lastNightSleep.setHours(
-      Math.floor(anchors.sleep / 60),
-      anchors.sleep % 60,
-      0,
-      0,
-    );
+    const sleepMin = anchors.sleep % 1440;
+    if (anchors.sleep > 1439 || anchors.sleep < anchors.wake) {
+      // After-midnight bedtime — sleep happened TODAY, early hours.
+      // Anchoring it to yesterday opened a ~30h "overnight" window
+      // that swallowed all of yesterday's daytime captures.
+      lastNightSleep.setHours(Math.floor(sleepMin / 60), sleepMin % 60, 0, 0);
+    } else {
+      lastNightSleep.setDate(lastNightSleep.getDate() - 1);
+      lastNightSleep.setHours(Math.floor(sleepMin / 60), sleepMin % 60, 0, 0);
+    }
     if (quests.length === 0) return; // store may not be hydrated yet
     const overnight = quests.filter(
       (q) =>
@@ -2712,7 +2794,10 @@ export default function Home() {
   const notifIntent = useNotifIntentStore((s) => s.intent);
   const consumeNotifIntent = useNotifIntentStore((s) => s.consume);
   useEffect(() => {
-    if (!isFocused || !notifIntent) return;
+    // Wait for the real quest list — consuming against the empty
+    // pre-hydration store made every intent lie ("Nothing on the
+    // plate" to a rescue-notification tap) and destroyed the intent.
+    if (!isFocused || !notifIntent || !questsHydrated) return;
     const intent = consumeNotifIntent();
     if (!intent) return;
     switch (intent.action) {
@@ -2786,7 +2871,7 @@ export default function Home() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFocused, notifIntent]);
+  }, [isFocused, notifIntent, questsHydrated]);
 
   // Suggestion → schedule sheet → commit. The user picks cadence
   // (daily/weekly/monthly/etc.), an optional day, and an exact time
@@ -2807,12 +2892,21 @@ export default function Home() {
     suggest?: string;
   }>();
   useEffect(() => {
-    if (!suggestParam) return;
-    globalRouter.setParams({ suggest: undefined });
+    // Don't consume the param until the quest store hydrated AND the
+    // detector populated — the cold-start path used to clear it
+    // against an empty list and silently no-op. If the detector has
+    // run and the suggestion's gone, it was already handled.
+    if (!suggestParam || !questsHydrated) return;
     const s = suggestions.find((x) => x.id === suggestParam);
-    if (s) setScheduleSuggestion(s);
+    if (s) {
+      globalRouter.setParams({ suggest: undefined });
+      setScheduleSuggestion(s);
+    } else if (suggestions.length > 0) {
+      globalRouter.setParams({ suggest: undefined });
+      showToast('That one’s already set up 💛');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suggestParam]);
+  }, [suggestParam, suggestions, questsHydrated]);
 
   // Direct-accept from LumiSuggestCard for the recurrence-suggestion
   // surface (the "heroSuggestion" card). Maps the SuggestInput back
@@ -2838,6 +2932,7 @@ export default function Home() {
           scheduledHour: Math.floor(opts.exactMinute / 60),
           scheduledMinute: opts.exactMinute % 60,
         }),
+        date: firstDueDateFor(opts.recur),
         recur: opts.recur,
       });
     } else {
@@ -2882,6 +2977,24 @@ export default function Home() {
   // Same accept/dismiss shape, but for the brain-dump previewTask
   // surface. Each preview task already has its own window/at/recur
   // from the LLM; the user's choices in the card take precedence.
+  // First day a fresh recur rule is actually due — accepting
+  // "Sundays" on a Wednesday used to mint an open task dated
+  // Wednesday (and lastSpawnedDate locked it in for the week).
+  const firstDueDateFor = (rule: import('../../constants/recur').RecurRule): string => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    const DOW_IDX: Record<string, number> = {
+      Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    };
+    if ((rule.every === 'week' || rule.every === '2week') && rule.day) {
+      const target = DOW_IDX[rule.day] ?? d.getDay();
+      while (d.getDay() !== target) d.setDate(d.getDate() + 1);
+    } else if (rule.every === 'weekday') {
+      while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    }
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
   const acceptPreviewTaskFromCard = (
     sugInput: import('../../components/LumiSuggestCard').SuggestInput,
     opts: SuggestAcceptOptions,
@@ -2919,15 +3032,23 @@ export default function Home() {
     const anchorMinute = opts.exactMinute ?? autoSlot;
     addQuest({
       title: t.title,
-      difficulty: 'medium',
+      // Parity with "Accept all" (commitTask) — this path used to
+      // hardcode medium (different xpReward for the same task) and
+      // drop the parsed note.
+      difficulty: difficultyFromImportance(t.importance),
       importance: t.importance,
       window: opts.window,
       durationMinutes: opts.durationMin,
+      ...(t.note && { note: t.note }),
       ...(anchorMinute != null && {
         scheduledHour: Math.floor(anchorMinute / 60),
         scheduledMinute: anchorMinute % 60,
       }),
-      ...(t.date && { date: t.date }),
+      ...(recur
+        ? { date: firstDueDateFor(recur) }
+        : t.date
+          ? { date: t.date }
+          : {}),
       ...(recur && { recur }),
     });
     // Remove this task from the queue; if it was the last, close
@@ -2938,13 +3059,43 @@ export default function Home() {
     showToast(remaining.length > 0 ? 'Added 💛' : 'All added 💛');
   };
 
+  // One mis-tapped × used to silently delete a parsed task — hold the
+  // dropped one for a few seconds so it can come back.
+  const [previewDismissUndo, setPreviewDismissUndo] = useState<{
+    task: SmartTask;
+    idx: number;
+  } | null>(null);
+  const previewDismissTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const dismissPreviewTaskFromCard = (
     sugInput: import('../../components/LumiSuggestCard').SuggestInput,
   ) => {
     if (!previewTasks) return;
     const idx = Number(sugInput.id.replace('preview_', ''));
+    const dropped = previewTasks[idx];
     const remaining = previewTasks.filter((_, i) => i !== idx);
     setPreviewTasks(remaining.length > 0 ? remaining : null);
+    if (dropped) {
+      setPreviewDismissUndo({ task: dropped, idx });
+      if (previewDismissTimer.current)
+        clearTimeout(previewDismissTimer.current);
+      previewDismissTimer.current = setTimeout(
+        () => setPreviewDismissUndo(null),
+        6000,
+      );
+    }
+    Haptics.selectionAsync();
+  };
+  const restoreDismissedPreview = () => {
+    if (!previewDismissUndo) return;
+    const { task, idx } = previewDismissUndo;
+    setPreviewTasks((cur) => {
+      const list = cur ? [...cur] : [];
+      list.splice(Math.min(idx, list.length), 0, task);
+      return list;
+    });
+    setPreviewDismissUndo(null);
     Haptics.selectionAsync();
   };
 
@@ -2956,6 +3107,7 @@ export default function Home() {
       difficulty: 'medium',
       importance: s.importance,
       window: rule.part as WindowKey,
+      date: firstDueDateFor(rule),
       recur: rule,
     });
     consumeSuggestion(s.id);
@@ -3027,7 +3179,12 @@ export default function Home() {
               Marked done · {undoState.title}
             </Text>
           </View>
-          <Pressable onPress={undoComplete} hitSlop={10}>
+          <Pressable
+            onPress={undoComplete}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={`Undo — put ${undoState.title} back`}
+          >
             <Text style={[styles.undoBtnText, { color: accent.fg }]}>Undo</Text>
           </Pressable>
         </View>
@@ -3225,6 +3382,7 @@ export default function Home() {
         ) : hero ? (
           <View ref={heroRef as never} style={styles.heroWrap}>
             <LumiFocusCard
+            showXp={companion.showXp}
               quest={hero}
               petName={focusPetName}
               ambientMood={ambientMood}
@@ -3302,10 +3460,17 @@ export default function Home() {
                   >
                     {classifyKind(hero.title).label}
                   </Text>
-                  <View style={styles.metaDot} />
-                  <Text style={styles.heroXp}>
-                    <Text style={styles.heroXpNum}>+{hero.xpReward}</Text> xp
-                  </Text>
+                  {companion.showXp && (
+                    <>
+                      <View style={styles.metaDot} />
+                      <Text style={styles.heroXp}>
+                        <Text style={styles.heroXpNum}>
+                          +{hero.xpReward}
+                        </Text>{' '}
+                        xp
+                      </Text>
+                    </>
+                  )}
                 </View>
               }
             />
@@ -3394,6 +3559,18 @@ export default function Home() {
               <Text style={styles.sortingEyebrow}>Lumi is sorting…</Text>
             </View>
             <Text style={styles.sortingTitle}>reading what you said</Text>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setSortingRaw(null);
+              }}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel sorting"
+              style={{ alignSelf: 'flex-start', marginTop: 6 }}
+            >
+              <Text style={styles.dymHintClear}>never mind</Text>
+            </Pressable>
             <View style={styles.sortingDotsRow}>
               <View
                 style={[styles.sortingDot, { backgroundColor: accent.fg }]}
@@ -3431,7 +3608,7 @@ export default function Home() {
                 // model rule): when placement rolled it, the card
                 // says so and points at the fix.
                 subtitle: previewTasks[0].rolledToTomorrow
-                  ? 'moved to tomorrow — your best hours for it are done today. Tweak it to keep it today.'
+                  ? 'moved to tomorrow — your best hours for it are done today.'
                   : undefined,
                 note: previewTasks[0].note ?? undefined,
                 defaultWindow:
@@ -3439,6 +3616,11 @@ export default function Home() {
                     ? 'evening'
                     : previewTasks[0].window,
                 defaultExactMinute: previewTasks[0].at ?? null,
+                // LLM-extracted duration seeds the card — it used to
+                // reset to the 30m default on this path while
+                // "Accept all" kept it.
+                defaultDurationMin:
+                  previewTasks[0].durationMinutes ?? undefined,
                 // LLM-detected cadence prefills the repeat section —
                 // visible + editable instead of silently committed.
                 defaultRecur: previewTasks[0].recur ?? null,
@@ -3482,6 +3664,19 @@ export default function Home() {
               </View>
             )}
           </View>
+        )}
+        {previewDismissUndo && (
+          <Pressable
+            onPress={restoreDismissedPreview}
+            style={styles.dymHint}
+            accessibilityRole="button"
+            accessibilityLabel={`Put ${previewDismissUndo.task.title} back`}
+          >
+            <Text style={[styles.dymHintText, { flex: 1 }]} numberOfLines={1}>
+              dropped “{previewDismissUndo.task.title}”
+            </Text>
+            <Text style={styles.dymHintClear}>put it back</Text>
+          </Pressable>
         )}
 
 
@@ -3605,6 +3800,7 @@ export default function Home() {
                       onPress={() => completeQuest(q)}
                       hitSlop={10}
                       accessibilityRole="checkbox"
+                      accessibilityState={{ checked: false }}
                       accessibilityLabel={`Mark done: ${q.title}`}
                       style={[
                         styles.waitingCheck,
@@ -3676,6 +3872,28 @@ export default function Home() {
             )}
           </View>
         )}
+
+        {/* Evening door to the close ritual — DaySet was reachable
+            ONLY through the wind-down notification tap; users who
+            miss the notification never met it. */}
+        {!daySetOpen &&
+          now.getHours() >= 20 &&
+          todayQuests.some((q) => !q.completed && q.window !== 'someday') && (
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setDaySetOpen(true);
+              }}
+              style={styles.dymHint}
+              accessibilityRole="button"
+              accessibilityLabel="Let the day set — close out today"
+            >
+              <Text style={[styles.dymHintText, { flex: 1 }]}>
+                the day’s winding down — want to tuck the rest in? ✦
+              </Text>
+              <Text style={styles.dymHintClear}>let the day set</Text>
+            </Pressable>
+          )}
 
         {/* ── DONE TODAY — the waiting card's sibling, but lichen-lit
             and celebratory: the day's collected wins, not another
@@ -3817,8 +4035,8 @@ export default function Home() {
             !hintsSeen.includes('widgetIntro') && (
               <View style={styles.dymHint}>
                 <Text style={[styles.dymHintText, { flex: 1 }]}>
-                  Lumi can live on your home screen — long-press your
-                  wallpaper → ＋ → search “Lumi” ✧
+                  Lumi can live on your Home Screen — long-press it →
+                  ＋ → search “Lumi” ✧
                 </Text>
                 <Pressable
                   onPress={() => {
@@ -3838,7 +4056,12 @@ export default function Home() {
             access.hasPremium &&
             isVoiceConfigured &&
             !heyLumiEnabled &&
-            !hintsSeen.includes('heyLumiIntro') && (
+            !hintsSeen.includes('heyLumiIntro') &&
+            // One hint at a time — this used to stack on top of the
+            // widget card the moment both conditions held.
+            !(
+              tasksEverCompleted >= 3 && !hintsSeen.includes('widgetIntro')
+            ) && (
               <View style={styles.dymHint}>
                 <Text style={styles.dymHintText}>
                   new: say “hey Lumi” to capture hands-free ✧
@@ -4181,6 +4404,12 @@ export default function Home() {
         // the waiting rows themselves stay clean.
         onDelete={() => {
           if (!editingQuest) return;
+          // A live focus session on this quest would orphan its
+          // Dynamic Island pill — end it before the quest vanishes.
+          const fs0 = useFocusSession.getState();
+          if (fs0.current?.questId === editingQuest.id) {
+            void fs0.end({ reason: 'cancelled' });
+          }
           useQuestStore.getState().remove(editingQuest.id);
           setEditingQuest(null);
           showToast('Deleted — gone for good.');
@@ -4252,11 +4481,19 @@ export default function Home() {
         )}
         onCarry={(q) => {
           Haptics.selectionAsync();
+          const fs1 = useFocusSession.getState();
+          if (fs1.current?.questId === q.id) {
+            void fs1.end({ reason: 'cancelled' });
+          }
           setQuestDate(q.id, offsetDate(1));
           showToast(`“${q.title.slice(0, 22)}” — carried to tomorrow.`);
         }}
         onLetGo={(q) => {
           Haptics.selectionAsync();
+          const fs2 = useFocusSession.getState();
+          if (fs2.current?.questId === q.id) {
+            void fs2.end({ reason: 'cancelled' });
+          }
           moveQuestWindow(q.id, 'someday');
           showToast('Let go — it’ll wait in someday, no weight.');
         }}
@@ -4343,6 +4580,7 @@ const makeStyles = (accent: Accent) =>
       color: C.bone,
       letterSpacing: -0.3,
       marginBottom: 14,
+      paddingRight: 6,
     },
     sortingDotsRow: {
       flexDirection: 'row',
@@ -4441,6 +4679,7 @@ const makeStyles = (accent: Accent) =>
       color: C.bone,
       letterSpacing: -0.7,
       lineHeight: 32,
+      paddingRight: 8,
     },
     headerReadout: {
       fontFamily: fonts.fraunces,
@@ -4550,6 +4789,7 @@ const makeStyles = (accent: Accent) =>
       lineHeight: 30,
       textAlign: 'center',
       marginBottom: 10,
+      paddingRight: 6,
     },
     doneBody: {
       fontFamily: fonts.inter,
@@ -4691,6 +4931,7 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: -0.5,
       lineHeight: 28,
       marginBottom: 8,
+      paddingRight: 6,
     },
     emptyBody: {
       fontFamily: fonts.inter,
@@ -5196,6 +5437,7 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: -0.3,
       lineHeight: 24,
       marginBottom: 4,
+      paddingRight: 5,
     },
     previewMeta: {
       fontFamily: fonts.inter,

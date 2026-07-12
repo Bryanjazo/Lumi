@@ -113,6 +113,9 @@ export interface LumiFocusCardProps {
   ambientMood: string;
   /** XP awarded on completion (shown in the done screen's button). */
   xpReward: number;
+  /** Companion-mode flag — focused/minimal strip gamification, so
+   *  the done screen's "+N xp" must not leak there. */
+  showXp?: boolean;
   /** Called when the user taps "Mark it done" from EITHER card mode or
    *  done mode. Home's existing completeQuest flow. */
   onMarkItDone: () => void;
@@ -147,6 +150,7 @@ export function LumiFocusCard({
   petName,
   ambientMood,
   xpReward,
+  showXp = true,
   onMarkItDone,
   onOpenPicker,
   onSwap,
@@ -168,7 +172,12 @@ export function LumiFocusCard({
 
   const focusAvailable = isLiveActivityAvailable();
   const isOurSession = currentFocus?.questId === quest.id;
-  const isOurCompletion = lastCompleted?.questId === quest.id;
+  // Freshness bound — a session that finished hours ago (e.g. inside
+  // the closed picker modal) must not ambush the user with a done
+  // screen when its quest later rotates into hero.
+  const isOurCompletion =
+    lastCompleted?.questId === quest.id &&
+    Date.now() - lastCompleted.completedAt < 2 * 60 * 60 * 1000;
   const isPaused = currentFocus?.pausedAt != null;
 
   // ── Mode ──────────────────────────────────────────────────────────
@@ -321,7 +330,6 @@ export function LumiFocusCard({
 
   // ── Actions ──────────────────────────────────────────────────────
   const handleStart = async () => {
-    if (!focusAvailable) return;
     Haptics.selectionAsync();
     onFocusStart?.();
     await start({
@@ -522,6 +530,8 @@ export function LumiFocusCard({
           </Text>
           <Pressable
             onPress={handleDoneMarkIt}
+            accessibilityRole="button"
+            accessibilityLabel="Mark it done"
             style={({ pressed }) => [
               styles.doneMarkBtn,
               pressed && { opacity: 0.86 },
@@ -531,7 +541,7 @@ export function LumiFocusCard({
               <Text style={styles.markCheckGlyph}>✓</Text>
             </View>
             <Text style={styles.doneMarkText}>
-              Mark it done · +{xpReward} xp
+              {showXp ? `Mark it done · +${xpReward} xp` : 'Mark it done'}
             </Text>
           </Pressable>
           <Pressable
@@ -661,6 +671,8 @@ export function LumiFocusCard({
       {/* Mark it done — primary CTA */}
       <Pressable
         onPress={onMarkItDone}
+        accessibilityRole="button"
+        accessibilityLabel={`Mark ${quest.title} done`}
         style={({ pressed }) => [
           styles.markDoneBtn,
           pressed && { opacity: 0.86 },
@@ -672,8 +684,11 @@ export function LumiFocusCard({
         <Text style={styles.markDoneText}>Mark it done</Text>
       </Pressable>
 
-      {/* Focus picker — collapsed by default, blooms open on tap */}
-      {focusAvailable && (
+      {/* Focus picker — collapsed by default, blooms open on tap.
+          NOT gated on ActivityKit: the in-app timer + banked minutes
+          work everywhere; Live Activities are a bonus when present
+          (focus is core — never withhold it). */}
+      {(
         <View style={styles.focusPickerWrap}>
           {pickerOpen && (
             <View style={styles.pickerCard}>
@@ -848,6 +863,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.6,
     lineHeight: 36,
     marginBottom: 10,
+    paddingRight: 8,
   },
 
   // ── Mark it done ──
@@ -1094,6 +1110,7 @@ const styles = StyleSheet.create({
     textShadowColor: hexA(C.ember, 0.45),
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 22,
+    paddingRight: 10,
   },
   ringSub: {
     fontFamily: fonts.inter,
@@ -1121,6 +1138,7 @@ const styles = StyleSheet.create({
     color: C.boneDim,
     letterSpacing: -0.3,
     textAlign: 'center',
+    paddingRight: 5,
   },
   focusControls: {
     flexDirection: 'row',
@@ -1223,6 +1241,7 @@ const styles = StyleSheet.create({
     lineHeight: 32,
     textAlign: 'center',
     marginBottom: 7,
+    paddingRight: 7,
   },
   doneBody: {
     fontFamily: fonts.inter,
