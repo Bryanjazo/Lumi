@@ -146,7 +146,7 @@ const Room = ({
   width,
   height,
   active = true,
-  petLabel = 'Luna',
+  petLabel = 'Lumi',
 }: {
   vitality: number;
   cheer?: number;

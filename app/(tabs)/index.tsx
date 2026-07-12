@@ -3379,7 +3379,9 @@ export default function Home() {
             />
             <Text style={styles.doneEyebrow}>Day cleared</Text>
             <Text style={styles.doneTitle}>
-              That&apos;s everything. Luna&apos;s content.
+              {companion.showLuna
+                ? `That's everything. ${focusPetName}'s content.`
+                : 'That’s everything.'}
             </Text>
             <Text style={styles.doneBody}>
               You don&apos;t owe today anything more. Rest, or dump a thought

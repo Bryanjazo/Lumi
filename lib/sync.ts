@@ -226,7 +226,15 @@ export const useSyncStatus = create<{
   pulledFor: Record<string, true>;
 }>(() => ({ pulledFor: {} }));
 
-export const pullAll = async (userId: string): Promise<void> => {
+/**
+ * Returns true only when EVERY section pulled cleanly. Supabase
+ * queries don't throw — a dead network right after login returns
+ * `{data: null, error}` on all seven, which used to read as a
+ * "successful" pull: no quests landed, no onboarding receipt was
+ * minted, and the pulled flag was set anyway. The user stared at
+ * "Nothing on the day yet" until a manual reload re-ran the pull.
+ */
+export const pullAll = async (userId: string): Promise<boolean> => {
   const [u, q, c, eq, owned, pet, sos] = await Promise.all([
     supabase.from('users').select('*').eq('id', userId).maybeSingle(),
     supabase.from('quests').select('*').eq('user_id', userId),
@@ -458,11 +466,28 @@ export const pullAll = async (userId: string): Promise<void> => {
     });
   }
 
-  // Pull finished — the cross-account wipe may now make its call
-  // (receipt was minted above if the server knew this user).
-  useSyncStatus.setState((s) => ({
-    pulledFor: { ...s.pulledFor, [userId]: true },
-  }));
+  // The wipe gate only opens when the CORE queries (profile + quests)
+  // actually spoke — they're what mint the onboarding receipt. Setting
+  // the flag after an all-error pull let the cross-account wipe run
+  // against a receipt the server never got to send.
+  const coreOk = !u.error && !q.error;
+  if (u.error) console.warn('[sync] pull users', u.error.message);
+  if (q.error) console.warn('[sync] pull quests', q.error.message);
+  if (coreOk) {
+    // Pull finished — the cross-account wipe may now make its call
+    // (receipt was minted above if the server knew this user).
+    useSyncStatus.setState((s) => ({
+      pulledFor: { ...s.pulledFor, [userId]: true },
+    }));
+  }
+  return (
+    coreOk &&
+    !c.error &&
+    !eq.error &&
+    !owned.error &&
+    !pet.error &&
+    !sos.error
+  );
 };
 
 /**
@@ -491,14 +516,46 @@ export const useCloudSync = (session: Session | null) => {
   const userId = session?.user.id ?? null;
   const active = isSupabaseConfigured && !offlineMode && !!userId;
 
-  // Pull on first transition into authenticated state.
+  // Pull on first transition into authenticated state. Retries with
+  // backoff — the pull races the network coming up right after login
+  // (or cold start), and a silently failed pull used to leave the
+  // Home screen at "Nothing on the day yet" until a full JS reload.
+  // Merges are idempotent by id, so re-running a partial pull is safe.
   useEffect(() => {
     if (!active || !userId) return;
     if (pulledRef.current === userId) return;
     pulledRef.current = userId;
-    void pullAll(userId).catch((e) =>
-      console.warn('[sync] pullAll failed', e),
-    );
+    let cancelled = false;
+    let succeeded = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const delays = [2_000, 5_000, 15_000, 30_000, 60_000];
+    let attempt = 0;
+    const run = async () => {
+      try {
+        succeeded = await pullAll(userId);
+      } catch (e) {
+        console.warn('[sync] pullAll failed', e);
+      }
+      if (succeeded || cancelled) return;
+      // Backoff to 60s, then keep knocking — a signed-in session with
+      // no cloud data is a broken state worth 7 tiny queries a minute.
+      timer = setTimeout(
+        () => void run(),
+        delays[Math.min(attempt, delays.length - 1)],
+      );
+      attempt += 1;
+    };
+    void run();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      // Never got a clean pull — re-arm so the next activation (e.g.
+      // offline mode toggled off and on) tries again instead of
+      // trusting a guard that only ever meant "attempted".
+      if (!succeeded && pulledRef.current === userId) {
+        pulledRef.current = null;
+      }
+    };
   }, [active, userId]);
 
   // Subscribe to all stores; debounce-push.
