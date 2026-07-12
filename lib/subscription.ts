@@ -87,7 +87,7 @@ export const COMPARE_ROWS = [
   { label: '“Did you mean?” fixes', free: 'Rules', pro: 'AI-powered' },
   { label: '“Hey Lumi” hands-free', free: '—', pro: 'Wake word' },
   { label: 'Weekly reflection', free: 'Snippet', pro: 'Full story' },
-  { label: 'Calendar sync', free: '1 calendar', pro: 'Multi-cal' },
+  { label: 'Calendar sync', free: 'Included', pro: 'Included' },
   { label: "Luna's worlds & skins", free: 'Starter', pro: 'All' },
 ] as const;
 

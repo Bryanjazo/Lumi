@@ -12,6 +12,7 @@
 // personal (companion mode, theme accent) stay put.
 
 import { useQuestStore } from '../store/questStore';
+import { usePetStore } from '../store/petStore';
 import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { useCorrectionsStore } from '../store/correctionsStore';
@@ -44,6 +45,14 @@ export const resetLocalUserData = (): void => {
   useCorrectionsStore.getState().reset();
   // Routing/edit metrics describe the previous user's captures.
   useAiMetricsStore.getState().reset();
+  // Pet state carries the previous user's SOS mental-health events
+  // and meds-care timestamps — by far the most sensitive rows on the
+  // device. It must never survive into another account's session.
+  try {
+    usePetStore.getState().reset();
+  } catch {
+    // pet store unavailable — nothing to wipe
+  }
   useUserStore.setState({
     // identity
     name: '',
@@ -64,6 +73,26 @@ export const resetLocalUserData = (): void => {
     focusMinutesLifetime: 0,
     vitalitySnapshot: null,
     tasksEverCompleted: 0,
+    // Completion-history ledger — Patterns merges this into its
+    // heatmap; the next account must not inherit it.
+    doneLog: {},
+    roomTint: 'none',
+    // Calendar wiring is per-user consent — a new account silently
+    // mirroring tasks into the previous user's calendars is a leak
+    // in BOTH directions.
+    calendarEnabled: false,
+    calendarIds: [],
+    autoSyncTasksWithTimes: false,
+    // Subscription/trial state belongs to the ACCOUNT, not the
+    // device. Without these, account B inherited A's premium until
+    // the next server pull — or was blocked from its own one-shot
+    // trial by A's trialStartedAt fingerprint. The next sign-in's
+    // pullAll restores the real values from the server.
+    subscriptionStatus: 'free',
+    subscriptionTier: null,
+    subscriptionCurrentPeriodEnd: null,
+    trialStartedAt: null,
+    trialChoiceSeen: false,
     activeMonthKey: null,
     isTester: false,
     shieldAvailable: true,

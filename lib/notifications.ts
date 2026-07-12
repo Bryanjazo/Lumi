@@ -134,7 +134,24 @@ const WEEKDAY_INDEX: Record<string, number> = {
  *   recurring → one reminder per recurring quest (daily/weekly), cap 20
  *   quiet     → nothing scheduled inside the sleep window
  */
-export const syncNotifications = async (opts?: {
+let syncChain: Promise<NotifSyncResult> = Promise.resolve({
+  granted: true,
+});
+
+export const syncNotifications = (opts?: {
+  interactive?: boolean;
+}): Promise<NotifSyncResult> => {
+  // Serialized — two rapid toggle flips used to interleave their
+  // blanket-cancel + reschedule passes and could drop the OTHER
+  // pref's notifications until the next passive sync.
+  syncChain = syncChain.then(
+    () => syncNotificationsInner(opts),
+    () => syncNotificationsInner(opts),
+  );
+  return syncChain;
+};
+
+const syncNotificationsInner = async (opts?: {
   interactive?: boolean;
 }): Promise<NotifSyncResult> => {
   if (Platform.OS === 'web') return { granted: true };
@@ -147,7 +164,11 @@ export const syncNotifications = async (opts?: {
 
   const u = useUserStore.getState();
   const prefs = u.notifPrefs;
-  const anyOn = prefs.nudges || prefs.recap || prefs.recurring;
+  // medsNudge counts — it used to live INSIDE prefs.nudges, so
+  // meds-ON + gentle-nudges-OFF was a green switch that scheduled
+  // nothing (for the exact medication-critical case it exists for).
+  const anyOn =
+    prefs.nudges || prefs.recap || prefs.recurring || u.medsNudge;
 
   if (!anyOn) {
     await Notifications.cancelAllScheduledNotificationsAsync();
@@ -182,20 +203,24 @@ export const syncNotifications = async (opts?: {
     withinWakingHours(min, a.wake, a.sleep, prefs.quiet);
 
   // ── Daily nudges, anchored to the user's real day ──
+  // Meds reminder is OPT-IN only and INDEPENDENT of the gentle-nudge
+  // master switch — medication matters even when the user finds the
+  // other nudges chatty.
+  if (u.medsNudge) {
+    const medsMin = a.breakfast > 0 ? a.breakfast : a.wake + 60;
+    if (speakable(medsMin)) {
+      await schedule(
+        'meds',
+        Math.floor(medsMin / 60),
+        medsMin % 60,
+        'lumi-meds',
+        'meds',
+      );
+    }
+  }
   if (prefs.nudges) {
     const slots: Array<[Bucket, number, string, string]> = [
       ['morning', Math.max(0, a.wake + 30), 'lumi-morning', 'hero'],
-      // Meds copy is OPT-IN only — never assume medication.
-      ...(u.medsNudge
-        ? ([
-            [
-              'meds',
-              a.breakfast > 0 ? a.breakfast : a.wake + 60,
-              'lumi-meds',
-              'meds',
-            ],
-          ] as Array<[Bucket, number, string, string]>)
-        : []),
       ['midday', a.lunch, 'lumi-midday', 'smallest'],
       ['windDown', Math.max(0, a.sleep - 90), 'lumi-winddown', 'tomorrow'],
     ];
@@ -205,7 +230,20 @@ export const syncNotifications = async (opts?: {
     }
     // Come-back nudge: 48h out, re-pushed every sync (each app open
     // runs a passive sync, so it only ever fires after real absence).
-    const recoverySeconds = 60 * 60 * 48;
+    let recoverySeconds = 60 * 60 * 48;
+    {
+      // Land inside waking hours — a last-sync at 11pm used to fire
+      // the come-back nudge at 11pm two days later, inside the
+      // "nothing after wind-down" promise.
+      const landing = new Date(Date.now() + recoverySeconds * 1000);
+      const landingMin = landing.getHours() * 60 + landing.getMinutes();
+      if (!speakable(landingMin)) {
+        const target = (a.wake + 45) % 1440;
+        let delta = target - landingMin;
+        if (delta <= 0) delta += 1440;
+        recoverySeconds += delta * 60;
+      }
+    }
     const body = await nextLine('recovery');
     await Notifications.scheduleNotificationAsync({
       identifier: 'lumi-recovery',

@@ -99,9 +99,17 @@ export const EditProfileSheet = ({ visible, onClose }: EditProfileSheetProps) =>
   useEffect(() => {
     if (visible) {
       setDraftName(currentName);
-      setDraftAvatar(currentAvatar);
+      // Same lapsed-skin clamp as the initializer — this re-seed ran
+      // UNclamped on every open, so the initializer's guard was dead
+      // code and a lapsed user saw a locked cell "selected".
+      setDraftAvatar(
+        access.hasPremium || STARTER.has(currentAvatar)
+          ? currentAvatar
+          : 'default',
+      );
     }
-  }, [visible, currentName, currentAvatar]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, currentName, currentAvatar, access.hasPremium]);
 
   const trimmed = draftName.trim();
   const nameChanged = trimmed !== currentName.trim();

@@ -32,6 +32,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import Constants from 'expo-constants';
 import Svg, { Circle, Rect, Path } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { DayRibbon } from '../components/DayRibbon';
@@ -39,6 +40,7 @@ import { DayRibbon } from '../components/DayRibbon';
 import { fonts } from '../constants/fonts';
 import { skins } from '../constants/skins';
 import { syncNotifications, cancelAllReminders } from '../lib/notifications';
+import { resetLocalUserData } from '../lib/localData';
 import { lunaSource, useLunaSkin, type LunaMood } from '../lib/luna-source';
 import { skinPreview } from '../lib/skin-preview';
 import { useAmbientLunaMood } from '../lib/luna-mood';
@@ -58,7 +60,6 @@ import { useAccessStatus, STORE_URLS } from '../lib/subscription';
 import { requestHeyLumiPermission } from '../lib/heyLumi';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
 import { languageLabel } from '../lib/languages';
-import { useLearningDigest } from '../lib/learning';
 import {
   isCalendarSdkAvailable,
   requestCalendarAccess,
@@ -324,6 +325,8 @@ const Row = ({ icon, label, sub, right, onPress, danger, last }: RowProps) => {
   );
   return onPress ? (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={sub ? `${label}. ${sub}` : label}
       onPress={() => {
         Haptics.selectionAsync();
         onPress();
@@ -639,148 +642,6 @@ const PulseDot = ({ color, size = 6 }: { color: string; size?: number }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// ConfidenceDots — three dusk dots showing how sure Lumi is about
-// a given insight. Lit dots glow softly; unlit dots are faint at
-// 22% alpha. Per lumi-knows.jsx mockup.
-// ─────────────────────────────────────────────────────────────────────
-const ConfidenceDots = ({ level }: { level: 1 | 2 | 3 }) => (
-  <View style={{ flexDirection: 'row', gap: 5, alignItems: 'center' }}>
-    {[1, 2, 3].map((i) => (
-      <View
-        key={i}
-        style={{
-          width: 5,
-          height: 5,
-          borderRadius: 3,
-          backgroundColor:
-            i <= level ? '#8EA0B4' : 'rgba(142,160,180,0.22)',
-          shadowColor: '#8EA0B4',
-          shadowOpacity: i <= level ? 0.6 : 0,
-          shadowRadius: 4,
-          shadowOffset: { width: 0, height: 0 },
-        }}
-      />
-    ))}
-  </View>
-);
-
-// ─────────────────────────────────────────────────────────────────────
-// RhythmCurve — tiny SVG energy curve under the "Your rhythm" insight.
-// Lights up the peak by the user's sharpWindow: morning peak puts the
-// glow dot at index 1, midday/afternoon at 4, evening at 6. The shape
-// is a fixed gentle wave so the visual is recognizable; only the lit
-// peak position moves.
-// ─────────────────────────────────────────────────────────────────────
-const RhythmCurve = ({ sharp }: { sharp: EnergyWindowKey | null }) => {
-  const W = 240;
-  const H = 40;
-  // Sample 8 x-positions across the day. Each insight's peak fills
-  // its slot to ~0.9 height; the rest taper down. Keeps the silhouette
-  // unambiguous on a small canvas.
-  const peakIdx =
-    sharp === 'morning'
-      ? 1
-      : sharp === 'midday'
-        ? 3
-        : sharp === 'afternoon'
-          ? 5
-          : sharp === 'evening'
-            ? 6
-            : 4;
-  const pts = Array.from({ length: 8 }, (_, i) => {
-    // Gentle bell around peakIdx, floor 0.25
-    const dist = Math.abs(i - peakIdx);
-    return Math.max(0.25, 0.95 - dist * 0.16);
-  });
-  const x = (i: number) => 6 + (i / (pts.length - 1)) * (W - 12);
-  const y = (v: number) => H - 4 - v * (H - 10);
-  // Build smooth quadratic path
-  let d = `M ${x(0)} ${y(pts[0])}`;
-  for (let i = 1; i < pts.length; i++) {
-    const xc = (x(i - 1) + x(i)) / 2;
-    const yc = (y(pts[i - 1]) + y(pts[i])) / 2;
-    d += ` Q ${x(i - 1)} ${y(pts[i - 1])}, ${xc} ${yc}`;
-  }
-  d += ` L ${x(pts.length - 1)} ${y(pts[pts.length - 1])}`;
-  return (
-    <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`}>
-      <Path d={d} stroke="#8EA0B4" strokeWidth={1.6} fill="none" />
-      {/* Peak dot + halo */}
-      <Circle
-        cx={x(peakIdx)}
-        cy={y(pts[peakIdx])}
-        r={5.5}
-        fill="rgba(244,201,138,0.25)"
-      />
-      <Circle
-        cx={x(peakIdx)}
-        cy={y(pts[peakIdx])}
-        r={2.6}
-        fill="#F4C98A"
-      />
-    </Svg>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────
-// MiniRibbon — compact 12px-tall version of the DayRibbon for the
-// "Your daily anchors" insight. Same proportions and palette as the
-// full ribbon in Personalize, just thinner with no labels/markers so
-// it reads as a glanceable strip in the Knows card.
-// ─────────────────────────────────────────────────────────────────────
-const MiniRibbon = ({
-  wakeMin,
-  sleepMin,
-  middayHour,
-  afternoonHour,
-  eveningHour,
-}: {
-  wakeMin: number;
-  sleepMin: number;
-  middayHour: number;
-  afternoonHour: number;
-  eveningHour: number;
-}) => {
-  const span = Math.max(1, sleepMin - wakeMin);
-  const cls = (m: number) => Math.max(wakeMin, Math.min(sleepMin, m));
-  const fracs = [
-    Math.max(0, cls(middayHour * 60) - wakeMin) / span,
-    Math.max(0, cls(afternoonHour * 60) - cls(middayHour * 60)) / span,
-    Math.max(0, cls(eveningHour * 60) - cls(afternoonHour * 60)) / span,
-    Math.max(0, sleepMin - cls(eveningHour * 60)) / span,
-  ];
-  const colors = ['#C9A06A', '#869072', '#E07A4F', '#8EA0B4'];
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        height: 12,
-        borderRadius: 6,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: '#2A2420',
-      }}
-    >
-      {fracs.map((f, i) =>
-        f > 0 ? (
-          <View
-            key={i}
-            style={{
-              flexGrow: f,
-              flexShrink: 1,
-              flexBasis: 0,
-              backgroundColor: colors[i] + '99',
-            }}
-          />
-        ) : null,
-      )}
-    </View>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────
-// Screen
-// ─────────────────────────────────────────────────────────────────────
 export default function AccountScreen() {
   const router = useRouter();
   const { session } = useSession();
@@ -801,7 +662,6 @@ export default function AccountScreen() {
   const [windowsOpen, setWindowsOpen] = useState(false);
 
   // Insight panel + anchors disclosure
-  const [knowOpen, setKnowOpen] = useState<string | null>(null);
   const [anchorsOpen, setAnchorsOpen] = useState(false);
   // Refs for the "Adjust this →" affordance in the Knows section.
   // When the user taps Adjust on the anchors insight we expand the
@@ -931,10 +791,6 @@ export default function AccountScreen() {
   // Real history → digests
   const quests = useQuestStore((s) => s.quests);
   const checkins = useCheckinStore((s) => s.checkins);
-  // Chronotype is now auto-derived inside useLearningDigest from
-  // sharpWindow + foggyWindow — passing nothing here mirrors every
-  // other surface (Time, Home, Untangle, Recap, Insights).
-  const digest = useLearningDigest();
 
   // Stores for export + delete
   const resetUser = useUserStore((s) => s.reset);
@@ -967,8 +823,22 @@ export default function AccountScreen() {
         access.trialDaysLeft === 1 ? '' : 's'
       } left`;
     }
+    // Cancelled/past_due but paid-through: access.hasPremium is true
+    // while status isn't 'active' — this used to fall through to
+    // "Free" beside a card titled "Premium · active" (three surfaces,
+    // three answers, exactly where a churning payer decides).
+    if (access.hasPremium && subscriptionEnd) {
+      const d = new Date(subscriptionEnd);
+      return `Premium · ends ${d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })}`;
+    }
+    if (access.hasPremium) return 'Premium';
     return 'Free';
   }, [
+    access.hasPremium,
     subscriptionStatus,
     subscriptionTier,
     subscriptionEnd,
@@ -1047,127 +917,20 @@ export default function AccountScreen() {
   );
 
   // ── Weekly archive ───────────────────────────────────────────────
-  const weeks = useMemo(() => buildWeekBuckets(quests).slice(0, 4), [quests]);
-  const totalWeeks = useMemo(() => buildWeekBuckets(quests).length, [quests]);
+  // One pass — this used to run the full bucket build twice per render.
+  const allWeeks = useMemo(() => buildWeekBuckets(quests), [quests]);
+  const weeks = useMemo(() => allWeeks.slice(0, 4), [allWeeks]);
+  const totalWeeks = allWeeks.length;
 
   // ── "What Lumi knows" insights — real, only show if we have data ─
   // Each item now carries:
   //   - confidence: 1..3 dots (how sure Lumi is about this insight)
   //   - viz: 'curve' | 'ribbon' | 'tags' | undefined — what to render
   //   - tags: optional list for the 'tags' viz
-  const knowsItems = useMemo(() => {
-    const items: {
-      key: string;
-      glyph: string;
-      title: string;
-      line: string;
-      detail: string;
-      confidence: 1 | 2 | 3;
-      viz?: 'curve' | 'ribbon' | 'tags';
-      tags?: string[];
-      action?: 'anchors' | 'windows';
-    }[] = [];
-
-    // Rhythm — confidence 3 if we have a sharpWindow seed; curve viz
-    if (sharpWindow) {
-      const label =
-        sharpWindow === 'morning'
-          ? 'mornings'
-          : sharpWindow === 'evening'
-            ? 'evenings'
-            : 'middays';
-      items.push({
-        key: 'rhythm',
-        glyph: '◔',
-        title: 'Your rhythm',
-        line: `Sharpest in the ${label}`,
-        detail: `You're at your best in the ${label}. I front-load your hardest tasks there and keep the other windows lighter.`,
-        confidence: 3,
-        viz: 'curve',
-        action: 'windows',
-      });
-    }
-
-    // Pattern Lumi noticed — confidence based on how many recurring
-    // titles we've seen (1 → 1 dot, 2-3 → 2 dots, 4+ → 3 dots)
-    if (digest.recurrence[0]) {
-      const p = digest.recurrence[0];
-      const recCount = digest.recurrence.length;
-      items.push({
-        key: 'pattern',
-        glyph: '🔁',
-        title: 'A pattern I noticed',
-        line: p.title,
-        detail: `You've done "${p.title}" — ${p.span.toLowerCase()}. Want me to surface it on its rhythm so it never sneaks up on you?`,
-        confidence: recCount >= 4 ? 3 : recCount >= 2 ? 2 : 1,
-      });
-    }
-
-    // Daily anchors — always confidence 3 (we know these from onboarding)
-    // + mini-ribbon viz that mirrors the full DayRibbon
-    items.push({
-      key: 'anchors',
-      glyph: '❖',
-      title: 'Your daily anchors',
-      line: `Wake ${fmtTime(anchors.wake)} · Sleep ${fmtTime(anchors.sleep)}`,
-      detail: `Wake ${fmtTime(anchors.wake)} · Breakfast ${fmtTime(
-        anchors.breakfast,
-      )} · Lunch ${fmtTime(anchors.lunch)} · Dinner ${fmtTime(
-        anchors.dinner,
-      )} · Sleep ${fmtTime(
-        anchors.sleep,
-      )}. These frame every day so there's always a shape to land in.`,
-      confidence: 3,
-      viz: 'ribbon',
-      action: 'anchors',
-    });
-
-    // What you find hard — confidence by struggle count (1→1, 2-3→2, 4+→3)
-    if (struggles.length > 0) {
-      const tags = struggles
-        .slice(0, 3)
-        .map((s) => STRUGGLE_LABELS[s] ?? s);
-      items.push({
-        key: 'hard',
-        glyph: '❍',
-        title: 'What you find hard',
-        line: tags.slice(0, 2).join(' · '),
-        detail: `${tags.join(' · ')} — so I hand you one small first step, and keep your plate to a doable few.`,
-        confidence:
-          struggles.length >= 4 ? 3 : struggles.length >= 2 ? 2 : 1,
-        viz: 'tags',
-        tags,
-      });
-    }
-
-    // Focus pattern from follow-through stats — confidence depends on
-    // whether we have enough quest history to compute it (digest.pattern
-    // is non-null only after a threshold of completed quests)
-    if (digest.pattern) {
-      items.push({
-        key: 'focus',
-        glyph: '◈',
-        title: 'How you focus best',
-        line: digest.pattern.headline,
-        detail: digest.pattern.body,
-        confidence: 2,
-      });
-    }
-
-    return items;
-  }, [sharpWindow, anchors, struggles, digest]);
 
   // Learning meter — how much of Lumi's picture is filled in. Each
   // source the user has seeded adds 20%. Anchors are always there
   // (free), so the floor is 20%.
-  const learningPct = useMemo(() => {
-    let pct = 20; // anchors floor
-    if (sharpWindow) pct += 20;
-    if (struggles.length > 0) pct += 20;
-    if (digest.pattern) pct += 20;
-    if (digest.recurrence.length > 0) pct += 20;
-    return Math.min(100, pct);
-  }, [sharpWindow, struggles, digest]);
 
   // ── Handlers ─────────────────────────────────────────────────────
   const handleChangeEmail = () => {
@@ -1227,7 +990,7 @@ export default function AccountScreen() {
         style: 'destructive',
         onPress: async () => {
           await signOut();
-          router.replace('/auth/sign-up');
+          router.replace('/auth/sign-in');
         },
       },
     ]);
@@ -1252,7 +1015,11 @@ export default function AccountScreen() {
       'Add your existing tasks?',
       `You have ${candidates.length} already-timed task${
         candidates.length === 1 ? '' : 's'
-      } that ${candidates.length === 1 ? "isn't" : "aren't"} on your calendar yet.`,
+      } that ${candidates.length === 1 ? "isn't" : "aren't"} on your calendar yet.${
+        candidates.length > 30
+          ? ' The soonest 30 go first — the rest sync as they come up.'
+          : ''
+      }`,
       [
         {
           text: 'Add them',
@@ -1298,6 +1065,16 @@ export default function AccountScreen() {
       captureLang,
       theme,
       avatar: useUserStore.getState().avatar,
+      // "Everything" means everything — these were missing while the
+      // copy promised a full export.
+      petName: useUserStore.getState().petName,
+      xp: useUserStore.getState().xp,
+      streak: useUserStore.getState().streak,
+      tasksEverCompleted: useUserStore.getState().tasksEverCompleted,
+      focusMinutesLifetime: useUserStore.getState().focusMinutesLifetime,
+      doneLog: useUserStore.getState().doneLog,
+      roomTint: useUserStore.getState().roomTint,
+      medsNudge: useUserStore.getState().medsNudge,
     };
     const blob = {
       app: 'Lumi',
@@ -1321,10 +1098,6 @@ export default function AccountScreen() {
   };
 
   const handleDelete = () => {
-    // A deleted user must never get another nudge — the signOut path
-    // only cancels reminders when the final cloud push succeeds,
-    // which it can't after the auth row is gone (audit).
-    void cancelAllReminders().catch(() => {});
     Alert.alert(
       'Delete account?',
       'This permanently erases everything: your quests, your check-ins, what Lumi has learned about you. There is no undo.',
@@ -1343,6 +1116,11 @@ export default function AccountScreen() {
                   text: 'Permanently erase everything',
                   style: 'destructive',
                   onPress: async () => {
+                    // Reminders die ONLY once the user actually
+                    // confirms — this used to run at the first tap,
+                    // so tapping Delete then "Cancel" silently
+                    // killed every scheduled nudge.
+                    void cancelAllReminders().catch(() => {});
                     let serverPurged = true;
                     try {
                       await deleteAccount();
@@ -1353,10 +1131,11 @@ export default function AccountScreen() {
                         e instanceof Error ? e.message : e,
                       );
                     }
-                    resetQuests();
-                    resetCheckins();
-                    resetSuggestions();
-                    resetUser();
+                    // The COMPLETE wipe registry — the piecemeal
+                    // resets left corrections, AI metrics, and the
+                    // pet store (SOS events, meds timestamps) on
+                    // device after "permanently erase everything".
+                    resetLocalUserData();
                     await signOut().catch(() => {});
                     router.replace('/onboarding/welcome');
                     if (!serverPurged) {
@@ -1404,10 +1183,6 @@ export default function AccountScreen() {
     useUserStore.setState({ sharpWindow: sharpWindowFromRhythm(k) });
   };
 
-  const toggleKnow = (key: string) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setKnowOpen((cur) => (cur === key ? null : key));
-  };
 
   const toggleAnchors = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -1432,9 +1207,22 @@ export default function AccountScreen() {
     let cancelled = false;
     listWritableCalendars()
       .then((list) => {
-        if (!cancelled) setCalendarList(list);
+        if (!cancelled) {
+          setCalendarList(list);
+          setCalendarError(null);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        // Permission revoked in iOS Settings after connecting — the
+        // swallowed error left "Looking for calendars…" pulsing
+        // forever with no way out.
+        if (!cancelled) {
+          setCalendarList([]);
+          setCalendarError(
+            'Calendar access was turned off in iOS Settings. Re-enable it there, or disconnect and connect again.',
+          );
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -1515,50 +1303,6 @@ export default function AccountScreen() {
     setAnchor(k, cur + delta);
   };
 
-  const handleInsightAction = (action?: 'anchors' | 'windows') => {
-    if (action === 'anchors') {
-      // Expand the Anchors collapsible AND scroll the user to it —
-      // without the scroll, "Adjust this →" appears to do nothing
-      // because the affected section is way below the Knows card.
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setAnchorsOpen(true);
-      // Defer the scroll by a beat so the LayoutAnimation has time
-      // to commit the expanded body, then measure + scroll.
-      setTimeout(() => {
-        const scrollNode = scrollRef.current;
-        const target = anchorsTriggerRef.current;
-        if (!scrollNode || !target) return;
-        // measureLayout against the ScrollView's inner content so
-        // the y we get is in scroll-content coordinates.
-        const scrollInner = (scrollNode as unknown as {
-          getInnerViewNode?: () => number;
-        }).getInnerViewNode;
-        const handle =
-          typeof scrollInner === 'function'
-            ? scrollInner.call(scrollNode)
-            : null;
-        if (handle == null) return;
-        (target as unknown as {
-          measureLayout: (
-            ref: number,
-            ok: (x: number, y: number) => void,
-            fail: () => void,
-          ) => void;
-        }).measureLayout(
-          handle,
-          (_x, y) => {
-            scrollNode.scrollTo({
-              y: Math.max(0, y - 20),
-              animated: true,
-            });
-          },
-          () => {},
-        );
-      }, 120);
-    } else if (action === 'windows') {
-      setWindowsOpen(true);
-    }
-  };
 
   const rhythm = rhythmFromSharpWindow(sharpWindow);
 
@@ -1569,9 +1313,13 @@ export default function AccountScreen() {
   // now a Pro perk, and Pro gets ALL of them instantly.)
   const skinChoices = useMemo(() => {
     const starter = new Set(['default', 'cream']);
+    // 'default' is the tan ORIGINAL cat — it was labeled "Cream"
+    // while the real free cream recolor was filtered out entirely,
+    // so free users saw one starter skin (mislabeled) instead of
+    // their promised two. Labels now match EditProfileSheet.
     const all = [
-      { id: 'default', label: 'Cream' },
-      ...skins.filter((s) => s.id !== 'cream').map((s) => ({ id: s.id, label: s.name })),
+      { id: 'default', label: 'Original' },
+      ...skins.map((s) => ({ id: s.id, label: s.name })),
     ];
     return all.map((s) => ({
       ...s,
@@ -1583,7 +1331,12 @@ export default function AccountScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Top bar */}
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
+        <Pressable
+          onPress={() => router.back()}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <View style={styles.backCircle}>
             <Text style={styles.backGlyph}>‹</Text>
           </View>
@@ -1826,6 +1579,9 @@ export default function AccountScreen() {
                       <Pressable
                         onPress={() => nudgeAnchor(a.key, -15)}
                         style={styles.anchorStepBtn}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${a.label} 15 minutes earlier`}
                       >
                         <Text style={styles.anchorStepText}>−</Text>
                       </Pressable>
@@ -1840,6 +1596,9 @@ export default function AccountScreen() {
                       <Pressable
                         onPress={() => nudgeAnchor(a.key, 15)}
                         style={styles.anchorStepBtn}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${a.label} 15 minutes later`}
                       >
                         <Text style={styles.anchorStepText}>+</Text>
                       </Pressable>
@@ -2300,6 +2059,7 @@ export default function AccountScreen() {
                                 </Text>
                               </View>
                               <Switch
+                                accessibilityLabel="Automatically add tasks with times to your calendar"
                                 value={autoSyncTasksWithTimes}
                                 onValueChange={(v) => {
                                   Haptics.selectionAsync();
@@ -2633,13 +2393,21 @@ export default function AccountScreen() {
               <View style={styles.premiumHead}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.premiumTitle}>
-                    {trialActive ? 'Free trial' : 'Premium · active'}
+                    {trialActive
+                      ? 'Free trial'
+                      : subscriptionStatus === 'active'
+                        ? 'Premium · active'
+                        : 'Premium · ending'}
                   </Text>
                   <Text style={styles.premiumSub}>{planLabel}</Text>
                 </View>
                 <View style={styles.premiumStatusPill}>
                   <Text style={styles.premiumStatusText}>
-                    {trialActive ? 'Trial' : 'Active'}
+                    {trialActive
+                      ? 'Trial'
+                      : subscriptionStatus === 'active'
+                        ? 'Active'
+                        : 'Ends soon'}
                   </Text>
                 </View>
               </View>
@@ -2706,10 +2474,24 @@ export default function AccountScreen() {
             right={
               <Switch
                 value={medsNudge}
+                accessibilityLabel="Morning meds nudge"
                 onValueChange={(v) => {
                   Haptics.selectionAsync();
                   setMedsNudge(v);
-                  void syncNotifications({ interactive: true });
+                  // Same contract as every other notif toggle: prompt
+                  // only on ENABLE, and revert the switch if iOS says
+                  // no — it used to stay green with nothing scheduled.
+                  void syncNotifications({ interactive: v }).then(
+                    ({ granted }) => {
+                      if (!granted && v) {
+                        setMedsNudge(false);
+                        Alert.alert(
+                          'Notifications are off',
+                          'Enable them for Lumi in Settings → Notifications, then flip this back on.',
+                        );
+                      }
+                    },
+                  );
                 }}
                 trackColor={{ false: C.surface, true: accent.fg }}
                 thumbColor={medsNudge ? C.void : C.boneDim}
@@ -2752,6 +2534,7 @@ export default function AccountScreen() {
             sub="talk out your brain-dumps"
             right={
               <Switch
+                accessibilityLabel="Voice input"
                 value={voiceEnabled}
                 onValueChange={(v) => {
                   Haptics.selectionAsync();
@@ -2775,6 +2558,7 @@ export default function AccountScreen() {
             right={
               access.hasPremium ? (
                 <Switch
+                  accessibilityLabel="“Hey Lumi” wake word"
                   value={heyLumiEnabled}
                   onValueChange={(v) => void changeHeyLumi(v)}
                   trackColor={{ false: C.surface, true: accent.fg }}
@@ -2820,11 +2604,12 @@ export default function AccountScreen() {
             icon="✦"
             label="Subscription"
             sub={
-              access.hasActiveSubscription
-                ? `Pro · ${subscriptionTier === 'annual' ? 'Annual' : 'Monthly'}`
-                : access.inTrial
-                  ? `Trial · ${access.trialDaysLeft} day${access.trialDaysLeft === 1 ? '' : 's'} left`
-                  : 'Free · upgrade any time'
+              // One derived truth with the Membership card (planLabel)
+              // — this row used to say "Free · upgrade any time" to a
+              // cancelled-but-paid-through Premium user.
+              access.hasPremium || access.inTrial
+                ? planLabel
+                : 'Free · upgrade any time'
             }
             onPress={() => router.push('/manage-subscription')}
           />
@@ -2872,7 +2657,9 @@ export default function AccountScreen() {
           <Text style={styles.deleteLink}>Delete account</Text>
         </Pressable>
 
-        <Text style={styles.footerVersion}>Lumi · v1.0 · made gently</Text>
+        <Text style={styles.footerVersion}>
+          Lumi · v{Constants.expoConfig?.version ?? '1.0'} · made gently
+        </Text>
       </ScrollView>
 
       <EditProfileSheet visible={editOpen} onClose={() => setEditOpen(false)} />
@@ -2914,6 +2701,7 @@ const NotifRow = ({
       right={
         <Switch
           value={value}
+          accessibilityLabel={label}
           onValueChange={(v) => {
             Haptics.selectionAsync();
             onChange(v);
@@ -3007,6 +2795,7 @@ const makeStyles = (accent: Accent) =>
       fontSize: 24,
       color: C.bone,
       letterSpacing: -0.4,
+      paddingRight: 6,
     },
     nameEdit: { fontSize: 12, color: C.mute },
     nameInput: {
@@ -3018,6 +2807,7 @@ const makeStyles = (accent: Accent) =>
       paddingBottom: 3,
       borderBottomWidth: 1.5,
       borderBottomColor: accent.fg,
+      paddingRight: 6,
     },
     memberSince: {
       fontFamily: fonts.inter,
@@ -3496,6 +3286,7 @@ const makeStyles = (accent: Accent) =>
       fontSize: 20,
       color: C.bone,
       letterSpacing: -0.3,
+      paddingRight: 5,
     },
     playfulRadio: {
       width: 22,
@@ -4101,6 +3892,7 @@ const makeStyles = (accent: Accent) =>
       fontSize: 20,
       color: C.bone,
       marginBottom: 6,
+      paddingRight: 5,
     },
     upgradeBody: {
       fontFamily: fonts.inter,
