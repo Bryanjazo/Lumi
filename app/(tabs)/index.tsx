@@ -1186,6 +1186,11 @@ export default function Home() {
   // deterministic preview and then re-render into the correct LLM
   // one — one clean sorting → done transition instead.
   const [sortingRaw, setSortingRaw] = useState<string | null>(null);
+  // Generation counter for in-flight sorts. "never mind" bumps it, so
+  // an LLM promise that resolves later finds its gen stale and drops
+  // the result — hiding the card alone let the preview appear seconds
+  // after the user cancelled.
+  const sortGenRef = useRef(0);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [editingDate, setEditingDate] = useState<'today' | 'tomorrow'>('today');
@@ -2178,7 +2183,9 @@ export default function Home() {
       const startedAt = Date.now();
       setSortingRaw(text);
       setAiPending(true);
+      const gen = ++sortGenRef.current;
       void runLlmUnderstand(text).then((llmTasks) => {
+        if (sortGenRef.current !== gen) return; // "never mind" won
         setSortingRaw(null);
         setAiPending(false);
         if (llmTasks && llmTasks.length > 0) {
@@ -2327,8 +2334,10 @@ export default function Home() {
       Haptics.selectionAsync();
       setSortingRaw(parseText);
       setAiPending(true);
+      const spellGen = ++sortGenRef.current;
       const spellStarted = Date.now();
       void llmClarify(parseText).then((fixed) => {
+        if (sortGenRef.current !== spellGen) return; // "never mind" won
         setSortingRaw(null);
         setAiPending(false);
         recordAiMetric({
@@ -3575,20 +3584,28 @@ export default function Home() {
                 ✦
               </Text>
               <Text style={styles.sortingEyebrow}>Lumi is sorting…</Text>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  // REAL cancel — invalidate the in-flight LLM call so
+                  // its result can't plant a preview seconds after the
+                  // user said never mind. Their words go back to the
+                  // pill: cancelled ≠ eaten.
+                  sortGenRef.current += 1;
+                  const raw = sortingRaw;
+                  setSortingRaw(null);
+                  setAiPending(false);
+                  if (raw) setCapText(raw);
+                }}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel sorting"
+                style={styles.sortingCancelBtn}
+              >
+                <Text style={styles.dymHintClear}>never mind</Text>
+              </Pressable>
             </View>
             <Text style={styles.sortingTitle}>reading what you said</Text>
-            <Pressable
-              onPress={() => {
-                Haptics.selectionAsync();
-                setSortingRaw(null);
-              }}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Cancel sorting"
-              style={{ alignSelf: 'flex-start', marginTop: 6 }}
-            >
-              <Text style={styles.dymHintClear}>never mind</Text>
-            </Pressable>
             <View style={styles.sortingDotsRow}>
               <View
                 style={[styles.sortingDot, { backgroundColor: accent.fg }]}
@@ -4573,6 +4590,13 @@ const makeStyles = (accent: Accent) =>
       alignItems: 'center',
       gap: 8,
       marginBottom: 8,
+      // Card is alignItems flex-start; stretch so the cancel link's
+      // marginLeft:'auto' can reach the far edge.
+      alignSelf: 'stretch',
+    },
+    sortingCancelBtn: {
+      marginLeft: 'auto',
+      paddingLeft: 12,
     },
     sortingSpark: {
       fontFamily: fonts.inter,
