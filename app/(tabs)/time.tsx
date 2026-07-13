@@ -2216,12 +2216,26 @@ export default function Time() {
     durMin: number,
   ): number | null => {
     const parts = key.split(':'); // gap : iso : from : to
+    const iso = parts[1];
     const from = parseInt(parts[2], 10);
     const to = parseInt(parts[3], 10);
     if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
     if (to - from < durMin) return null; // doesn't fit — don't pretend
-    const lo = Math.ceil(from / 15) * 15;
+    let lo = Math.ceil(from / 15) * 15;
     const hi = Math.max(lo, Math.floor((to - durMin) / 15) * 15);
+    // Today can't accept a past landing even when the gap's `from` was
+    // built against a `nowMin` that has since ticked forward (state
+    // updates on the wall-clock minute, so a drag that crosses the
+    // boundary leaves a stale rect). Re-clamp the floor to the next free
+    // :15 after a FRESH now — same rule as rowDropMinute + applyMoves, so
+    // the hover preview is exactly what commits. If that floor is past
+    // the gap's top there's no legal non-past seat: reject (no-op drop).
+    if (iso === todayKey()) {
+      const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+      const earliest = Math.ceil((nowM + 1) / 15) * 15;
+      if (earliest > hi) return null;
+      lo = Math.max(lo, earliest);
+    }
     const rect = targetRects.get(key);
     if (!rect || rect.h <= 0) return lo;
     const rel = Math.max(0, Math.min(1, (y - rect.y) / rect.h));
@@ -2337,7 +2351,15 @@ export default function Time() {
       });
       st.setDate(mv.id, mv.toIso);
       if (mv.newT != null) {
-        st.anchor(mv.id, Math.floor(mv.newT / 60), mv.newT % 60);
+        // gapDropMinute / rowDropMinute already refuse a past landing on
+        // today; re-assert it at the commit so NO path can anchor before
+        // now even if a caller ever passes a raw newT.
+        let t = mv.newT;
+        if (mv.toIso === todayKey()) {
+          const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+          if (t <= nowM) t = Math.min(1425, Math.ceil((nowM + 1) / 15) * 15);
+        }
+        st.anchor(mv.id, Math.floor(t / 60), t % 60);
       } else if (q.scheduledHour != null) {
         let hh = q.scheduledHour;
         let mm2 = q.scheduledMinute ?? 0;
@@ -2634,21 +2656,28 @@ export default function Time() {
             const opts = [
               {
                 text: 'Today',
-                onPress: () =>
+                onPress: () => {
                   applyMoves(
                     [{ id: it.questId as string, toIso: todayKey() }],
                     `Moved “${short}” → today`,
-                  ),
+                  );
+                  // Follow the task to where it landed — staying on the
+                  // (now-empty) past day is exactly what read as "lost".
+                  // The move toast rides along and still offers Undo.
+                  pickDate(today);
+                },
               },
               ...[1, 7].map((n) => {
                 const target = addDays(today, n);
                 return {
                   text: n === 1 ? 'Tomorrow' : `Next ${WD[target.getDay()]}`,
-                  onPress: () =>
+                  onPress: () => {
                     applyMoves(
                       [{ id: it.questId as string, toIso: ymd(target) }],
                       `Moved “${short}” → ${WD[target.getDay()]} ${target.getDate()}`,
-                    ),
+                    );
+                    pickDate(target);
+                  },
                 };
               }),
             ];

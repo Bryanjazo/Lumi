@@ -863,7 +863,10 @@ const styles = StyleSheet.create({
     letterSpacing: -0.6,
     lineHeight: 36,
     marginBottom: 10,
-    paddingRight: 8,
+    // Reserve the top-right ⋯ overflow menu's footprint (28px button at
+    // right:12, whose 28px height spills down over the title's first
+    // line) so a long title wraps before it instead of running under it.
+    paddingRight: 44,
   },
 
   // ── Mark it done ──
