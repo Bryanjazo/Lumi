@@ -423,12 +423,15 @@ const ModePreview = ({
           locations={[0, 0.6, 1]}
           style={previewStyles.fill}
         />
-        {/* Window */}
+        {/* Window — a soft dusk-lit pane, not a bright sticker (the
+            old high-contrast blue→cream read as a floating square). */}
         <View style={previewStyles.window}>
           <LinearGradient
-            colors={['#8a96b0', '#e8c886']}
+            colors={['#46506c', '#b58e63']}
             style={previewStyles.fill}
           />
+          {/* muntin bar so it reads as a window, not a card */}
+          <View style={previewStyles.windowBar} />
         </View>
         {/* Luna on the floor */}
         <Image
@@ -513,14 +516,24 @@ const previewStyles = StyleSheet.create({
   },
   window: {
     position: 'absolute',
-    top: 8,
+    top: 9,
     left: 21,
     width: 22,
-    height: 24,
+    height: 22,
     borderRadius: 3,
-    borderWidth: 2,
-    borderColor: '#2A2018',
+    borderWidth: 1.5,
+    borderColor: '#1E1712',
     overflow: 'hidden',
+  },
+  windowBar: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: '50%',
+    width: 1.5,
+    marginLeft: -0.75,
+    backgroundColor: '#1E1712',
+    opacity: 0.7,
   },
   fullLuna: {
     position: 'absolute',
@@ -1706,21 +1719,21 @@ export default function AccountScreen() {
                             k: 'full' as const,
                             title: 'Full',
                             tag: 'cozy companion',
-                            desc: `${petName} + the room + XP — a companion that organizes you.`,
+                            desc: `The whole world — ${petName}, the room, and the game (points, streaks, unlocks).`,
                             feats: { Luna: true, Room: true, Streak: true, XP: true },
                           },
                           {
                             k: 'minimal' as const,
                             title: 'Minimal',
                             tag: 'warm & clean',
-                            desc: `A small, quiet ${petName}. Streak kept; XP & unlocks tucked away.`,
+                            desc: `Just ${petName} and your streak. The room and points step back.`,
                             feats: { Luna: true, Room: false, Streak: true, XP: false },
                           },
                           {
                             k: 'focused' as const,
                             title: 'Focused',
                             tag: 'pure calm',
-                            desc: 'No cat, no game — a clean AI organizer, nothing else.',
+                            desc: 'A clean organizer — no cat, no room, no game. Only your tasks.',
                             feats: { Luna: false, Room: false, Streak: false, XP: false },
                           },
                         ] as const
@@ -1826,6 +1839,7 @@ export default function AccountScreen() {
                                                 },
                                           ]}
                                         >
+                                          {lit ? '✓ ' : ''}
                                           {shown}
                                         </Text>
                                       </View>
@@ -2322,6 +2336,9 @@ export default function AccountScreen() {
                         </View>
                       )}
                       <Text
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.75}
                         style={[
                           styles.skinLabel,
                           {
@@ -3322,11 +3339,12 @@ const makeStyles = (accent: Accent) =>
     playfulPillsRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 6,
+      rowGap: 7,
+      columnGap: 7,
     },
     playfulPill: {
-      paddingVertical: 3,
-      paddingHorizontal: 8,
+      paddingVertical: 4,
+      paddingHorizontal: 10,
       borderRadius: 100,
       borderWidth: 1,
     },
@@ -3777,6 +3795,9 @@ const makeStyles = (accent: Accent) =>
   skinLabel: {
       fontSize: 10.5,
       marginTop: 2,
+      width: '100%',
+      textAlign: 'center',
+      letterSpacing: -0.2,
     },
     moreSkinsLink: {
       fontFamily: fonts.interSemi,
