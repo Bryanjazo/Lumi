@@ -6028,6 +6028,10 @@ const makeStyles = (accent: Accent) =>
       // Breathing room BELOW the action pills too — without it the
       // buttons sat flush on the task-list divider and read cramped.
       paddingBottom: 16,
+      // Match the header + task rows' 16px inset. Without it the nudge
+      // text and buttons ran flush to the card edges — misaligned with
+      // everything else and crowding the sides (the real "off" spacing).
+      paddingHorizontal: 16,
       borderTopWidth: 1,
       borderTopColor: C.hair,
     },

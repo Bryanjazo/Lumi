@@ -655,12 +655,15 @@ export function LumiFocusCard({
   // ═════════════════════════════════════════════════════════════════
   return (
     <Shell glow>
+      {/* Overflow ⋯ — a direct child of the Shell so its own
+          absolute top:12/right:12 anchors to the CARD corner, not to
+          the header row (which sits ~22px down under the padding and
+          made the button read low). */}
+      {headerRight}
       {/* Header */}
       <View style={styles.cardHeader}>
         <Text style={styles.cardHeaderGlyph}>✦</Text>
         <Text style={styles.cardHeaderLabel}>Lumi suggests</Text>
-        <View style={{ flex: 1 }} />
-        {headerRight}
       </View>
 
       {aboveTitleSlot}
@@ -863,10 +866,10 @@ const styles = StyleSheet.create({
     letterSpacing: -0.6,
     lineHeight: 36,
     marginBottom: 10,
-    // Reserve the top-right ⋯ overflow menu's footprint (28px button at
-    // right:12, whose 28px height spills down over the title's first
-    // line) so a long title wraps before it instead of running under it.
-    paddingRight: 44,
+    // ⋯ now lives up in the eyebrow band (Shell corner), above the
+    // title — so the title reclaims its full width; a small inset just
+    // keeps the last glyph off the rounded edge.
+    paddingRight: 8,
   },
 
   // ── Mark it done ──
