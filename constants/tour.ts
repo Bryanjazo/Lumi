@@ -44,6 +44,6 @@ export const TOUR_STEPS: TourStep[] = [
     targetId: 'tour-nav-me',
     scope: 'tabbar',
     caption:
-      "Luna's room lives here — plus your road, your week's story, and everything I've learned about you.",
+      "Lumi's room lives here — plus your road, your week's story, and everything I've learned about you.",
   },
 ];

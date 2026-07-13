@@ -70,7 +70,7 @@ export const awayStateFor = (
       daysAway,
       stage: 'tea',
       line: "Welcome back. We don't have to do everything — just tell me what's on your mind.",
-      scene: 'Luna made tea while she waited.',
+      scene: 'Lumi made tea while she waited.',
     };
   }
   if (daysAway >= 3) {
@@ -78,7 +78,7 @@ export const awayStateFor = (
       daysAway,
       stage: 'window',
       line: "I've been thinking about your projects. Want to untangle them together?",
-      scene: 'Luna was watching the window when you came in.',
+      scene: 'Lumi was watching the window when you came in.',
     };
   }
   // 2 days — gentle, barely ceremonial.
@@ -86,7 +86,7 @@ export const awayStateFor = (
     daysAway,
     stage: 'reading',
     line: 'I saved your place.',
-    scene: 'Luna kept a book open on your page.',
+    scene: 'Lumi kept a book open on your page.',
   };
 };
 

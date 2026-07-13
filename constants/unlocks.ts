@@ -15,7 +15,7 @@ export interface UnlockCategoryMeta {
 export const UNLOCK_CATS: Record<UnlockCategory, UnlockCategoryMeta> = {
   world: { label: 'Worlds', glyph: '◉', color: '#7FA06A' },
   pet: { label: 'Companions', glyph: '❉', color: '#E0A0B4' },
-  skin: { label: 'Luna skins', glyph: '✦', color: '#C9A06A' },
+  skin: { label: 'Lumi skins', glyph: '✦', color: '#C9A06A' },
   feature: { label: 'Powers', glyph: '◆', color: '#8EA0B4' },
 };
 
@@ -38,7 +38,7 @@ export const UNLOCKS: Unlock[] = [
   // ── worlds ──
   // Cozy Room is the default world every account starts with (0 XP).
   // Other worlds are aspirational unlocks the player works toward.
-  { id: 'room', cat: 'world', name: 'Cozy Room', sub: "Luna's home", xp: 0, art: 'room' },
+  { id: 'room', cat: 'world', name: 'Cozy Room', sub: "Lumi's home", xp: 0, art: 'room' },
   { id: 'isle', cat: 'world', name: 'Floating Isle', sub: 'a little world in the sky', xp: 1500, art: 'isle' },
   { id: 'meadow', cat: 'world', name: 'Sunlit Meadow', sub: 'open fields & long grass', xp: 3000, art: 'meadow' },
   { id: 'tide', cat: 'world', name: 'Tide Pools', sub: 'a quiet shore at dusk', xp: 5000, art: 'tide' },

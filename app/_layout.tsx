@@ -237,6 +237,18 @@ export default function RootLayout() {
     }
   }, []);
 
+  // One-shot heal: the store migration renamed persisted 'Luna' →
+  // 'Lumi', but a cloud pull could re-adopt the legacy value AFTER
+  // the version-gated migration already ran, so a returning user was
+  // stuck seeing "Luna" across every surface. This normalizes the
+  // live value on each launch (cheap no-op once healed); the sync
+  // pull now maps it too, and the next push writes 'Lumi' to cloud.
+  useEffect(() => {
+    if (useUserStore.getState().petName === 'Luna') {
+      useUserStore.setState({ petName: 'Lumi' });
+    }
+  }, []);
+
   useEffect(() => {
     const uid = session?.user.id;
     // identifyRC / logOutRC are async and may reject if the native

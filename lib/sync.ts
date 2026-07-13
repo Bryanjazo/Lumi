@@ -281,7 +281,15 @@ export const pullAll = async (userId: string): Promise<boolean> => {
 
     useUserStore.setState({
       name: userRow.name ?? localState.name,
-      petName: userRow.pet_name ?? localState.petName,
+      // The cat is "Lumi" everywhere user-visible. Older rows still
+      // carry the legacy 'Luna' pet_name; adopting it verbatim was
+      // re-corrupting the local value the store migration had already
+      // healed (why "Luna's look" / "LUNA'S ROOM" kept coming back).
+      // Map on the way in; the next push writes 'Lumi' back to heal
+      // the cloud permanently.
+      petName:
+        (userRow.pet_name === 'Luna' ? 'Lumi' : userRow.pet_name) ??
+        localState.petName,
       adhdType: userRow.adhd_type ?? localState.adhdType,
       xp: Math.max(localState.xp, userRow.xp ?? 0),
       streak: Math.max(localState.streak, userRow.streak ?? 0),
