@@ -23,6 +23,11 @@ export interface NotifIntent {
   action: NotifAction;
   questId?: string;
   questTitle?: string;
+  /** The tapped notification's body line ("what's the one task still
+   *  movable?"). Home shows it in a persistent origin banner so the
+   *  action is anchored to the notification that caused it — the fix
+   *  for "I tapped it and have no idea what it did". */
+  bodySnippet?: string;
 }
 
 interface NotifIntentState {

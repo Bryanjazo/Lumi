@@ -86,6 +86,9 @@ export default function RootLayout() {
         action: data.action,
         questId: data.questId,
         questTitle: data.questTitle,
+        // Carry the notification's own words so Home can show which
+        // notification this action came from.
+        bodySnippet: resp.notification.request.content.body ?? undefined,
       });
       // Home consumes every non-recap intent.
       router2.navigate('/(tabs)');

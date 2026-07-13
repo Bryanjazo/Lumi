@@ -1013,6 +1013,7 @@ export default function Home() {
       }
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      if (notifBannerTimer.current) clearTimeout(notifBannerTimer.current);
     },
     [],
   );
@@ -1166,6 +1167,49 @@ export default function Home() {
   } | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Notification-origin banner ──────────────────────────────────
+  // A tapped notification used to fire its action and vanish behind a
+  // 2.4s toast, so the change felt like it came from nowhere. This
+  // persistent (dismissible) banner names WHICH notification and what
+  // Lumi did, sitting above the capture pill until dismissed.
+  const [notifBanner, setNotifBanner] = useState<{
+    origin: string;
+    label: string;
+    undo?: () => void;
+  } | null>(null);
+  const notifBannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showNotifBanner = (
+    origin: string,
+    label: string,
+    undo?: () => void,
+  ) => {
+    setNotifBanner({ origin, label, undo });
+    AccessibilityInfo.announceForAccessibility(`${origin}. ${label}`);
+    if (notifBannerTimer.current) clearTimeout(notifBannerTimer.current);
+    // Long enough to read + act on undo without being sticky forever.
+    notifBannerTimer.current = setTimeout(() => setNotifBanner(null), 9000);
+  };
+  // Soft highlight pulse on the hero card so a notification-driven swap
+  // is perceivable (setSwap changes the card silently otherwise).
+  const heroFlash = useRef(new Animated.Value(0)).current;
+  const flashHero = () => {
+    heroFlash.stopAnimation();
+    heroFlash.setValue(0);
+    Animated.sequence([
+      Animated.timing(heroFlash, {
+        toValue: 1,
+        duration: 90,
+        useNativeDriver: false,
+      }),
+      Animated.delay(520),
+      Animated.timing(heroFlash, {
+        toValue: 0,
+        duration: 260,
+        useNativeDriver: false,
+      }),
+    ]).start();
+  };
 
   // ── Voice (Whisper) ──────────────────────────────────────────────
   const voice = useVoice();
@@ -1477,7 +1521,9 @@ export default function Home() {
     // VoiceOver hears what sighted users glimpse — toasts were silent.
     AccessibilityInfo.announceForAccessibility(text);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => setToast(null), 2400);
+    // 4.5s — 2.4s was below a comfortable read time; a glance away
+    // and the only trace of what happened was already gone.
+    toastTimerRef.current = setTimeout(() => setToast(null), 4500);
   };
 
   const completeQuest = (q: Quest) => {
@@ -2857,17 +2903,46 @@ export default function Home() {
     if (!isFocused || !notifIntent || !questsHydrated) return;
     const intent = consumeNotifIntent();
     if (!intent) return;
+    // A physical "something happened" cue the instant they arrive —
+    // the action no longer feels like it already vanished.
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // Which notification this came from — prefer its own words, so the
+    // banner closes the loop between the tap and the result on screen.
+    const ORIGIN: Record<string, string> = {
+      hero: 'From your morning nudge',
+      meds: 'From your meds reminder',
+      smallest: 'From your midday check-in',
+      tomorrow: 'From your wind-down',
+      rescue: 'From your check-in',
+      quest: 'From your reminder',
+      focusdone: 'Your focus block',
+    };
+    // Short phrase for the uppercase eyebrow (a full bodySnippet
+    // sentence would read badly in caps; it stays plumbed for a11y).
+    const origin = ORIGIN[intent.action] ?? 'From your notification';
     switch (intent.action) {
-      case 'hero':
-        setSwap(0);
-        showToast('Start here — the one on top is enough. 💛');
+      case 'hero': {
+        if (candidates.length === 0) {
+          showNotifBanner(origin, 'Nothing on the plate — rest counts. 💛');
+          break;
+        }
+        const already = swap % candidates.length === 0;
+        if (!already) setSwap(0);
+        flashHero();
+        showNotifBanner(
+          origin,
+          already
+            ? `Your top task is already up — “${candidates[0].title}”.`
+            : `Brought your top task up — “${candidates[0].title}”.`,
+        );
         break;
+      }
       case 'meds':
-        showToast('Meds + something to eat. That’s the whole job. 💛');
+        showNotifBanner(origin, 'Meds + a bite — that’s the whole job. 💛');
         break;
       case 'smallest': {
         if (candidates.length === 0) {
-          showToast('Nothing waiting — that’s a win, not a stall.');
+          showNotifBanner(origin, 'Nothing waiting — that’s a win, not a stall.');
           break;
         }
         // Smallest = lowest tier, then shortest. Momentum first.
@@ -2885,8 +2960,15 @@ export default function Home() {
             idx = i;
           }
         }
-        setSwap(idx);
-        showToast('Switched you to the smallest thing — momentum first.');
+        const already = idx === swap % candidates.length;
+        if (!already) setSwap(idx);
+        flashHero();
+        showNotifBanner(
+          origin,
+          already
+            ? `“${candidates[idx].title}” is your smallest — momentum starts here.`
+            : `Switched to your smallest — “${candidates[idx].title}”.`,
+        );
         break;
       }
       case 'tomorrow': {
@@ -2895,19 +2977,25 @@ export default function Home() {
         );
         if (leftovers.length > 0) {
           // The soft close the notification promised: triage the
-          // day's leftovers, then Luna curls up.
+          // day's leftovers, then Lumi curls up.
           setDaySetOpen(true);
+          showNotifBanner(origin, 'Let’s line up tomorrow’s first thread.');
         } else {
           pillInputRef.current?.focus();
-          showToast('Tuck tomorrow’s first thing here — it’ll be waiting.');
+          showNotifBanner(origin, 'Tuck tomorrow’s first thing below — it’ll wait.');
         }
         break;
       }
       case 'rescue':
         if (totallyEmpty) {
-          showToast('Nothing on the plate — that IS the small win today.');
+          showNotifBanner(origin, 'Nothing on the plate — that IS today’s win.');
         } else {
           setForceRescue(true);
+          showNotifBanner(
+            origin,
+            'Opened Rescue Mode — let’s lighten today.',
+            () => setForceRescue(false),
+          );
         }
         break;
       case 'quest': {
@@ -2919,27 +3007,32 @@ export default function Home() {
             (intent.questTitle && norm(q.title) === norm(intent.questTitle)),
         );
         if (idx >= 0) {
-          setSwap(idx);
-          showToast(`Here it is — “${candidates[idx].title}”.`);
+          const already = idx === swap % candidates.length;
+          if (!already) setSwap(idx);
+          flashHero();
+          showNotifBanner(
+            origin,
+            already
+              ? `“${candidates[idx].title}” is already your card.`
+              : `Here it is — “${candidates[idx].title}”.`,
+          );
         } else {
-          showToast('That one’s already handled today. 💛');
+          // Honest: it isn't in today's list — could be done, moved, or
+          // reparked. Don't assert "already handled".
+          showNotifBanner(origin, 'That one’s off today’s list — done or moved. 💛');
         }
         break;
       }
       case 'focusdone': {
         // The tap usually lands while the session still reads as
-        // "running" — backgrounded JS never got to auto-end it.
-        // Settle it now so the done screen is up the moment they
-        // look, instead of 5s later when the tick loop catches up.
+        // "running" — backgrounded JS never got to auto-end it. Settle
+        // it so the done screen is up immediately, and ALWAYS confirm
+        // (every path used to be able to end silently).
         const fs = useFocusSession.getState();
         if (fs.current && selectRemainingSeconds(fs.current) <= 0) {
           void fs.end({ reason: 'completed' });
-        } else if (!fs.current && !fs.lastCompleted) {
-          // Session already settled and acknowledged — stale tap.
-          showToast('That block wrapped — it counted. 💛');
         }
-        // Otherwise the focus card is already showing the truth
-        // (done screen via lastCompleted, or a still-running block).
+        showNotifBanner(origin, 'That focus block counted. 💛');
         break;
       }
     }
@@ -3331,6 +3424,50 @@ export default function Home() {
         </View>
       )}
 
+      {notifBanner && (
+        <View style={styles.notifBanner}>
+          <Text style={[styles.notifBannerSpark, { color: accent.fg }]}>✦</Text>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.notifBannerOrigin} numberOfLines={1}>
+              {notifBanner.origin}
+            </Text>
+            <Text style={styles.notifBannerLabel}>{notifBanner.label}</Text>
+          </View>
+          {notifBanner.undo && (
+            <Pressable
+              onPress={() => {
+                notifBanner.undo?.();
+                if (notifBannerTimer.current) {
+                  clearTimeout(notifBannerTimer.current);
+                }
+                setNotifBanner(null);
+                Haptics.selectionAsync();
+              }}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Undo this"
+            >
+              <Text style={[styles.undoBtnText, { color: accent.fg }]}>
+                Undo
+              </Text>
+            </Pressable>
+          )}
+          <Pressable
+            onPress={() => {
+              if (notifBannerTimer.current) {
+                clearTimeout(notifBannerTimer.current);
+              }
+              setNotifBanner(null);
+            }}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss"
+          >
+            <Text style={styles.notifBannerClose}>×</Text>
+          </Pressable>
+        </View>
+      )}
+
       <ScrollView
         contentContainerStyle={[
           styles.scroll,
@@ -3622,6 +3759,13 @@ export default function Home() {
                 <XpFloater amount={floater.amount} color={floater.color} />
               </View>
             )}
+            {/* Notification-driven swap flash — a soft ember outline
+                that ramps in and fades, so a silent setSwap is
+                perceivable as "this card just changed". */}
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.heroFlashOverlay, { opacity: heroFlash }]}
+            />
           </View>
         ) : null}
 
@@ -4807,6 +4951,53 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: 0.2,
       textTransform: 'uppercase',
     },
+    // ── Notification-origin banner ──
+    notifBanner: {
+      position: 'absolute',
+      bottom: FLOATING_NAV_CLEARANCE + 72,
+      left: 22,
+      right: 22,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      backgroundColor: C.void2,
+      borderWidth: 1,
+      borderColor: hexA(C.ember, 0.35),
+      borderRadius: 16,
+      paddingLeft: 15,
+      paddingRight: 12,
+      paddingVertical: 12,
+      zIndex: 70,
+      shadowColor: '#000',
+      shadowOpacity: 0.5,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+    },
+    notifBannerSpark: {
+      fontFamily: fonts.inter,
+      fontSize: 13,
+    },
+    notifBannerOrigin: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9.5,
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+      color: C.mute,
+      marginBottom: 3,
+    },
+    notifBannerLabel: {
+      fontFamily: fonts.inter,
+      fontSize: 13,
+      color: C.bone,
+      letterSpacing: -0.1,
+      lineHeight: 18,
+    },
+    notifBannerClose: {
+      fontFamily: fonts.inter,
+      fontSize: 20,
+      color: C.mute,
+      paddingHorizontal: 2,
+    },
 
     // ── Header ──
     headerRow: {
@@ -5096,6 +5287,20 @@ const makeStyles = (accent: Accent) =>
     // the FOLLOWER brings the 14px gap. (Mixed owner margins kept
     // producing 2px-vs-30px gaps as cards conditionally appeared.)
     heroWrap: { marginBottom: 2 },
+    heroFlashOverlay: {
+      position: 'absolute',
+      top: -2,
+      left: -2,
+      right: -2,
+      bottom: -2,
+      borderRadius: 26,
+      borderWidth: 2,
+      borderColor: C.ember,
+      shadowColor: C.ember,
+      shadowOpacity: 0.5,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 0 },
+    },
     heroCard: {
       borderRadius: 24,
       paddingHorizontal: 20,
