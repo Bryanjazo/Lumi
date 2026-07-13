@@ -419,8 +419,8 @@ const ModePreview = ({
     return (
       <View style={previewStyles.frame}>
         <LinearGradient
-          colors={['#2a3550', '#5a3d2a', '#1a1410']}
-          locations={[0, 0.6, 1]}
+          colors={['#2a3550', '#5a3d2a', '#161009']}
+          locations={[0, 0.52, 1]}
           style={previewStyles.fill}
         />
         {/* Window — a soft dusk-lit pane, not a bright sticker (the
@@ -433,13 +433,20 @@ const ModePreview = ({
           {/* muntin bar so it reads as a window, not a card */}
           <View style={previewStyles.windowBar} />
         </View>
-        {/* Luna on the floor */}
+        {/* Warm floor + hearth glow ground the scene so the cat isn't
+            floating on a flat gradient (the "looks basic" read). */}
+        <LinearGradient
+          colors={['rgba(90,61,42,0)', '#3a2a1b']}
+          style={previewStyles.floor}
+        />
+        <View style={previewStyles.warmGlow} />
         <Image
           source={lunaSource('idle', lunaSkin)}
           style={previewStyles.fullLuna}
         />
-        {/* Streak ember */}
-        <Text style={previewStyles.streakGlyph}>🔥</Text>
+        {/* Streak hearth — a small warm ember on the floor, not a
+            floating emoji. */}
+        <View style={previewStyles.hearthEmber} />
       </View>
     );
   }
@@ -537,10 +544,41 @@ const previewStyles = StyleSheet.create({
   },
   fullLuna: {
     position: 'absolute',
-    bottom: 0,
-    left: 16,
+    bottom: 2,
+    left: '50%',
+    marginLeft: -16,
     width: 32,
     height: 32,
+  },
+  floor: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 22,
+  },
+  warmGlow: {
+    position: 'absolute',
+    bottom: -6,
+    left: '50%',
+    marginLeft: -22,
+    width: 44,
+    height: 30,
+    borderRadius: 22,
+    backgroundColor: 'rgba(224,150,80,0.22)',
+  },
+  hearthEmber: {
+    position: 'absolute',
+    bottom: 6,
+    right: 9,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#E8834A',
+    shadowColor: '#E8834A',
+    shadowOpacity: 0.9,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
   },
   streakGlyph: {
     position: 'absolute',

@@ -6046,15 +6046,19 @@ const makeStyles = (accent: Accent) =>
       flexDirection: 'row',
       alignItems: 'center',
       flexWrap: 'wrap',
-      gap: 8,
-      marginTop: 11,
+      // The two long-label pills nearly span the row; a small gap read
+      // as "touching". Generous column gap + slimmer pills so they
+      // breathe (and wrap cleanly to their own lines when they must).
+      rowGap: 10,
+      columnGap: 14,
+      marginTop: 14,
     },
     backlogBtn: {
       borderWidth: 1,
       borderColor: hexA(C.dusk, 0.35),
       borderRadius: 999,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
+      paddingHorizontal: 13,
+      paddingVertical: 8,
     },
     backlogBtnText: {
       fontFamily: fonts.interSemi,
