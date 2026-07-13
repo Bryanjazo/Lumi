@@ -6023,8 +6023,11 @@ const makeStyles = (accent: Accent) =>
 
     // ── "N more waiting — Lumi's holding them" (lumi-holding mock) ──
     backlogInline: {
-      marginTop: 10,
-      paddingTop: 10,
+      marginTop: 12,
+      paddingTop: 12,
+      // Breathing room BELOW the action pills too — without it the
+      // buttons sat flush on the task-list divider and read cramped.
+      paddingBottom: 16,
       borderTopWidth: 1,
       borderTopColor: C.hair,
     },
