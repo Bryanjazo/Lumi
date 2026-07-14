@@ -367,7 +367,9 @@ export const AuthDoor = ({ initialMode }: Props) => {
   const isUp = mode === 'signup';
   const ready =
     email.trim().includes('@') &&
-    pw.length >= 4 &&
+    // Match validate()'s real requirement (>= 8 on sign-up) so the CTA
+    // doesn't light up on a password the submit will then reject.
+    pw.length >= (isUp ? 8 : 4) &&
     (!isUp || name.trim().length > 0);
 
   const clearOn = (k: keyof Errors) => {

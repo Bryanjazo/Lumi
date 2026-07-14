@@ -1529,12 +1529,21 @@ export default function Untangle() {
         const hadM = q.scheduledMinute ?? 0;
         const dateChanged = q.date !== selectedDate;
         const windowChanged = q.window !== targetWin;
+        // Snapshot the REAL before-state so we can count only genuine
+        // changes (audit): scheduling an anchored 3pm task into
+        // "morning" un-anchors then re-anchors 3pm, which re-derives
+        // the original window — a true no-op that used to inflate the
+        // applied count and yank Home's hero to a task that didn't move.
+        const before = {
+          date: q.date,
+          window: q.window,
+          sh: q.scheduledHour ?? null,
+          sm: q.scheduledMinute ?? null,
+        };
         if (dateChanged) setDate(p.taskId, selectedDate);
         if (windowChanged || dateChanged) {
           moveWindow(p.taskId, targetWin);
         }
-        let gotNewSlot = false;
-        let landedISO = selectedDate;
         if (hadAnchor) {
           anchor(p.taskId, hadH, hadM);
         } else {
@@ -1545,17 +1554,27 @@ export default function Untangle() {
           if (res != null) {
             if (res.dateISO !== selectedDate) setDate(p.taskId, res.dateISO);
             anchor(p.taskId, Math.floor(res.min / 60), res.min % 60);
-            landedISO = res.dateISO;
-            gotNewSlot = true;
           }
         }
-        // Honesty (audit): only count a move that actually changed
-        // something — a task already sitting in this window on this
-        // day, still anchored, is a no-op and must not inflate the
-        // "N moves applied" tally.
-        if (dateChanged || windowChanged || gotNewSlot) {
+        // FINAL-vs-initial diff — count (and hand Home the hero) only
+        // when something actually changed.
+        const after = useQuestStore.getState().quests.find(
+          (x) => x.id === p.taskId,
+        );
+        const reallyChanged =
+          !!after &&
+          (after.date !== before.date ||
+            after.window !== before.window ||
+            (after.scheduledHour ?? null) !== before.sh ||
+            (after.scheduledMinute ?? null) !== before.sm);
+        if (reallyChanged) {
           applied += 1;
-          if (!scheduledId && landedISO === todayKey()) scheduledId = p.taskId;
+          if (
+            !scheduledId &&
+            (after!.date ?? todayKey()) === todayKey()
+          ) {
+            scheduledId = p.taskId;
+          }
           actionableCount += 1;
         }
       } else if (p.action === 'reschedule') {
@@ -1841,6 +1860,10 @@ export default function Untangle() {
             ? `That sounds heavy — I'm here. You don't have to turn it into tasks. If any of it becomes a to-do later, capture it on Home and I'll carry it with you.`
             : `Your plate's empty right now — capture what's weighing on you from Home and I'll cluster it.`,
         );
+        // Release the send latch — this early return used to leave
+        // busyRef stuck true, silently eating every later send for the
+        // rest of the session.
+        busyRef.current = false;
         return;
       }
       // fall through to the LLM with the empty pile

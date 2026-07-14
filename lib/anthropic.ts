@@ -703,6 +703,9 @@ const safeCtx = (s: string, max = 80): string =>
   s
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+    // Neutralize double-quotes so a value rendered inside a "quoted"
+    // context field can't visually terminate it and inject text.
+    .replace(/"/g, '’')
     .trim()
     .slice(0, max);
 
@@ -1146,7 +1149,11 @@ export const llmUntangle = async (
     const pileLines = ctx.pile
       .map(
         (p) =>
-          `- ${p.id} · "${p.title}" · ${p.importance} · ${p.status}${
+          // Task titles are user-controlled — run them through safeCtx
+          // (strip control chars, cap length) like every other
+          // untrusted string, so a crafted title can't inject
+          // instructions into the pile block sent to the model.
+          `- ${p.id} · "${safeCtx(p.title, 120)}" · ${p.importance} · ${p.status}${
             p.overdue ? ' · overdue' : ''
           } · window=${p.window} · date=${p.date}${p.at ? ' · at ' + p.at : ''}`,
       )

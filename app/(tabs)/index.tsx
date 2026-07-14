@@ -1854,7 +1854,10 @@ export default function Home() {
    *  the deterministic title shows instantly, and Claude polishes it
    *  to a tidy imperative ~1s later. Quietly noop on failure.
    */
-  const commitTask = (t: SmartTask) => {
+  const commitTask = (
+    t: SmartTask,
+    opts?: { silent?: boolean },
+  ): { movedToISO: string | null } => {
     const hasTime = t.at != null;
 
     // Length: prefer what the LLM extracted / the user picked. If
@@ -1915,9 +1918,13 @@ export default function Home() {
                   weekday: 'short',
                   day: 'numeric',
                 });
-          showToast(
-            `That day’s full — “${short}” landed ${dayLabel} ${fmtMin(res.min)}.`,
-          );
+          // In a batch commit the caller aggregates + shows ONE honest
+          // summary; a per-task toast here would just be overwritten.
+          if (!opts?.silent) {
+            showToast(
+              `That day’s full — “${short}” landed ${dayLabel} ${fmtMin(res.min)}.`,
+            );
+          }
         }
       }
     }
@@ -1957,6 +1964,9 @@ export default function Home() {
     // version. Doing a second post-commit swap would just risk the
     // task title flickering AGAIN after they've already approved it
     // — exactly the "text changes a couple seconds later" complaint.
+    // derivedDate is non-null only when overflow moved the task to a
+    // different day — the caller uses this for an honest batch summary.
+    return { movedToISO: derivedDate };
   };
 
   /**
@@ -2469,11 +2479,21 @@ export default function Home() {
     if (!previewTasks) return;
     if (previewCommitLatch.current) return;
     previewCommitLatch.current = true;
-    for (const t of previewTasks) commitTask(t);
+    // Commit silently and count how many overflowed to a future day,
+    // so the summary is honest instead of claiming everything landed
+    // "in your day" when some were pushed out (the old copy hid it).
+    let moved = 0;
+    for (const t of previewTasks) {
+      const r = commitTask(t, { silent: previewTasks.length > 1 });
+      if (r.movedToISO) moved += 1;
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const n = previewTasks.length;
     showToast(
-      previewTasks.length > 1
-        ? `Saved ${previewTasks.length} tasks — sorted into your day.`
+      n > 1
+        ? moved > 0
+          ? `Saved ${n} — ${moved} moved to ${moved === 1 ? 'a day' : 'days'} with room.`
+          : `Saved ${n} tasks — sorted into your day.`
         : placementToast(previewTasks[0]),
     );
     setPreviewTasks(null);
@@ -2825,11 +2845,20 @@ export default function Home() {
     enabled: heyLumiArmed,
     parse: heyLumiParse,
     onCommit: (kept) => {
-      for (const t of kept) commitTask(t);
+      // Same honest-summary treatment as approvePreview — a batch that
+      // overflows some tasks to future days must not claim they all
+      // "sorted into your day".
+      let moved = 0;
+      for (const t of kept) {
+        const r = commitTask(t, { silent: kept.length > 1 });
+        if (r.movedToISO) moved += 1;
+      }
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       showToast(
         kept.length > 1
-          ? `Saved ${kept.length} tasks — sorted into your day.`
+          ? moved > 0
+            ? `Saved ${kept.length} — ${moved} moved to ${moved === 1 ? 'a day' : 'days'} with room.`
+            : `Saved ${kept.length} tasks — sorted into your day.`
           : placementToast(kept[0]),
       );
     },

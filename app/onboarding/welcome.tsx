@@ -43,6 +43,7 @@ import {
 import { useQuestStore } from '../../store/questStore';
 import { useSession } from '../../lib/auth';
 import { useVoice } from '../../lib/voice';
+import { syncNotifications } from '../../lib/notifications';
 import {
   parseSmartCapture,
   difficultyFromImportance,
@@ -676,8 +677,16 @@ export default function Onboarding() {
     next();
   };
 
-  // ── Final commit — happens on step 8 (widget intro) → "I'm ready" ───
+  // ── Final commit — happens on the last step → "I'm ready" ───
+  // Re-entry latch: finalize() seeds the brain-dump into real quests
+  // BEFORE it router.replace's away, so a fast double-tap on "I'm
+  // ready" (or "Skip") re-ran the whole body and DOUBLE-SEEDED day-one
+  // tasks (Home's accept buttons got this latch this session; this CTA
+  // was missed). One-shot guard covers both finalize entry points.
+  const finalizingRef = useRef(false);
   const finalize = () => {
+    if (finalizingRef.current) return;
+    finalizingRef.current = true;
     const rhythmDef = RHYTHMS.find((r) => r.key === rhythm);
     const sharp = rhythmDef?.sharp ?? null;
     const foggy = rhythmDef?.foggy ?? null;
@@ -704,41 +713,56 @@ export default function Onboarding() {
 
     // Seed the brain-dump as real quests via the shared smart-capture
     // engine so the app isn't empty on day one. (Spec §3 + §8.4.)
-    const trimmed = dump.trim();
-    if (trimmed) {
-      const now = new Date();
-      const ctx: CaptureContext = {
-        sharpWindow: sharp,
-        foggyWindow: foggy,
-        peakStart: null,
-        peakEnd: null,
-        effectiveWindows,
-        now,
-        nowMin: now.getHours() * 60 + now.getMinutes(),
-        wakeMin: anchors.wake,
-        sleepMin: anchors.sleep,
-        anchors,
-      };
-      const tasks = parseSmartCapture(trimmed, ctx);
-      for (const t of tasks) {
-        const hasTime = t.at != null;
-        addQuest({
-          title: t.title,
-          difficulty: difficultyFromImportance(t.importance),
-          importance: t.importance,
-          window: t.window,
-          ...(hasTime && {
-            scheduledHour: Math.floor((t.at as number) / 60),
-            scheduledMinute: (t.at as number) % 60,
-            durationMinutes: 30,
-          }),
-          ...(t.date && { date: t.date }),
-          ...(t.recur && { recur: t.recur }),
-        });
+    // Wrapped so a parser/store hiccup can't throw BEFORE the
+    // router.replace below — that would strand the user on this screen
+    // with the finalize latch stuck true (both CTAs dead). A seed
+    // failure just means an emptier day one, never a wedged onboarding.
+    try {
+      const trimmed = dump.trim();
+      if (trimmed) {
+        const now = new Date();
+        const ctx: CaptureContext = {
+          sharpWindow: sharp,
+          foggyWindow: foggy,
+          peakStart: null,
+          peakEnd: null,
+          effectiveWindows,
+          now,
+          nowMin: now.getHours() * 60 + now.getMinutes(),
+          wakeMin: anchors.wake,
+          sleepMin: anchors.sleep,
+          anchors,
+        };
+        const tasks = parseSmartCapture(trimmed, ctx);
+        for (const t of tasks) {
+          const hasTime = t.at != null;
+          addQuest({
+            title: t.title,
+            difficulty: difficultyFromImportance(t.importance),
+            importance: t.importance,
+            window: t.window,
+            ...(hasTime && {
+              scheduledHour: Math.floor((t.at as number) / 60),
+              scheduledMinute: (t.at as number) % 60,
+              durationMinutes: 30,
+            }),
+            ...(t.date && { date: t.date }),
+            ...(t.recur && { recur: t.recur }),
+          });
+        }
       }
+    } catch (e) {
+      console.warn('[onboarding] brain-dump seed failed', e);
     }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    // Ask for notification permission ONCE, now — the gentle nudges
+    // default ON and the meds nudge was just promised, but nothing
+    // ever requested permission (launch sync is non-interactive), so
+    // every switch read ON while zero notifications fired. One
+    // interactive sync turns the promise real; if the user declines,
+    // the toggles honestly reflect that on next open.
+    void syncNotifications({ interactive: true }).catch(() => {});
     // Route straight to the trial-choice screen so the user doesn't
     // flicker through /(tabs) first. The layout would catch this
     // anyway via the !trialChoiceSeen gate; this just keeps the

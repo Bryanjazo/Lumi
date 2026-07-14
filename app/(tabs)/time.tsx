@@ -307,8 +307,18 @@ const recurMatches = (
       const weeks = Math.floor((dayNumber(date) - dayNumber(anchor)) / 7);
       return ((weeks % 2) + 2) % 2 === 0;
     }
-    case 'month':
-      return date.getDate() === anchor.getDate();
+    case 'month': {
+      // Interval-aware (audit): the old check ignored `n`, so an
+      // "every 3 months" habit drew a ghost EVERY month — disagreeing
+      // with the store's spawn cadence (nextOccurrence setMonth(+n)).
+      // Require the day-of-month match AND a non-negative whole-month
+      // distance that's a multiple of the interval.
+      if (date.getDate() !== anchor.getDate()) return false;
+      const months =
+        (date.getFullYear() - anchor.getFullYear()) * 12 +
+        (date.getMonth() - anchor.getMonth());
+      return months >= 0 && months % n === 0;
+    }
     default:
       return false;
   }

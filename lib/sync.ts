@@ -291,9 +291,32 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         (userRow.pet_name === 'Luna' ? 'Lumi' : userRow.pet_name) ??
         localState.petName,
       adhdType: userRow.adhd_type ?? localState.adhdType,
+      // XP is a monotonic lifetime total — max is the honest merge.
       xp: Math.max(localState.xp, userRow.xp ?? 0),
-      streak: Math.max(localState.streak, userRow.streak ?? 0),
-      lastActiveDate: userRow.last_active_date ?? localState.lastActiveDate,
+      // Streak is NOT monotonic — a blind max resurrected a streak the
+      // user had already broken locally (local 0/1 vs a stale cloud
+      // 15). Streak + lastActiveDate move together: adopt whichever
+      // source reflects the MORE RECENT activity, so a broken streak
+      // stays broken and a genuinely newer device wins.
+      ...(function () {
+        const cloudDate = userRow.last_active_date ?? '';
+        const localDate = localState.lastActiveDate ?? '';
+        if (cloudDate === localDate) {
+          // Same day on both — neither is "newer"; take the higher
+          // streak so a second device that logged more today isn't
+          // under-reported (and a broken local streak on a NEW day
+          // still falls to the branch below, where dates differ).
+          return {
+            streak: Math.max(localState.streak, userRow.streak ?? 0),
+            lastActiveDate: localState.lastActiveDate ?? userRow.last_active_date,
+          };
+        }
+        const cloudNewer = cloudDate > localDate;
+        return {
+          streak: cloudNewer ? (userRow.streak ?? 0) : localState.streak,
+          lastActiveDate: cloudNewer ? userRow.last_active_date : localState.lastActiveDate,
+        };
+      })(),
       shieldAvailable: userRow.shield_available ?? true,
       shieldUsedThisWeek: userRow.shield_used_this_week ?? false,
       onboarded: userRow.onboarded ?? localState.onboarded,
@@ -321,7 +344,17 @@ export const pullAll = async (userId: string): Promise<boolean> => {
     }
   }
 
-  // Quests — merge by id, cloud version wins on conflict.
+  // Quests — merge by id. The cloud owns the columns it actually has;
+  // LOCAL-ONLY fields (window, note, comment, recur, lastSpawnedDate,
+  // xpPaid) have no column in the quests table, so a naive "cloud
+  // wins" rebuild silently WIPED them on every cold start — recurring
+  // habits stopped repeating, notes/comments vanished, windowed tasks
+  // collapsed to 'midday', and the once-ever xpPaid stamp got erased
+  // (re-opening an XP double-pay farm). We preserve those fields from
+  // the existing local quest and only take cloud values for columns
+  // the cloud can represent. (Full multi-device persistence still
+  // needs the schema migration in supabase/migrations that adds these
+  // columns; this stops the data loss on the primary device today.)
   if (q.data) {
     const local = useQuestStore.getState().quests;
     // A row deleted on this device must not ride back in on the pull
@@ -332,7 +365,12 @@ export const pullAll = async (userId: string): Promise<boolean> => {
     const effective = getEffectiveWindows();
     for (const r of q.data) {
       if (tombstoned.has(r.id)) continue;
+      const prior = byId.get(r.id); // local copy (richer), if any
+      // Window: keep the local truth; only derive from the clock when
+      // this device has never seen the task (fresh install / 2nd
+      // device), where the cloud genuinely can't tell us the window.
       const win: WindowKey =
+        prior?.window ??
         r.window ??
         (r.scheduled_hour != null
           ? deriveWindowFor(
@@ -355,6 +393,26 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         durationMinutes: r.duration_minutes ?? undefined,
         accent: r.accent ?? undefined,
         createdAt: r.created_at,
+        // ── Local-only fields the cloud can't round-trip: preserve. ──
+        ...(prior?.note != null && { note: prior.note }),
+        ...(prior?.comment != null && { comment: prior.comment }),
+        ...(prior?.recur != null && { recur: prior.recur }),
+        ...(prior?.lastSpawnedDate != null && {
+          lastSpawnedDate: prior.lastSpawnedDate,
+        }),
+        // calendarEventIds maps this quest to its real OS-calendar
+        // event ids. Dropping it made mirrorDelete skip cleanup
+        // (orphaned events) and mirrorUpsert create DUPLICATES on the
+        // next anchor/retitle. Preserve it like the rest.
+        ...(prior?.calendarEventIds &&
+          Object.keys(prior.calendarEventIds).length > 0 && {
+            calendarEventIds: prior.calendarEventIds,
+          }),
+        // xpPaid: keep the local stamp, and force it true whenever the
+        // task is completed — a completed task has, by definition,
+        // already been paid, so a re-complete after undo can never
+        // re-award XP/shards even if the local stamp was lost.
+        ...((prior?.xpPaid || r.completed) && { xpPaid: true }),
       });
     }
     useQuestStore.setState({ quests: Array.from(byId.values()) });

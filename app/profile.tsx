@@ -369,6 +369,20 @@ const sharpWindowFromRhythm = (
   return null;
 };
 
+// The "hits a wall" window paired with each rhythm — MUST mirror
+// onboarding's RHYTHMS table. Updating rhythm here without also
+// setting foggyWindow left it stale (a Night-owl pick made sharp AND
+// foggy both 'evening', so the app scheduled hard work into the exact
+// window the user said they wall in).
+const foggyWindowFromRhythm = (
+  k: RhythmKey,
+): EnergyWindowKey | null => {
+  if (k === 'morning') return 'evening';
+  if (k === 'afternoon') return 'morning';
+  if (k === 'night') return 'morning';
+  return null;
+};
+
 const ANCHOR_DEFS: {
   key: keyof DailyAnchors;
   label: string;
@@ -1231,7 +1245,12 @@ export default function AccountScreen() {
 
   const pickRhythm = (k: RhythmKey) => {
     Haptics.selectionAsync();
-    useUserStore.setState({ sharpWindow: sharpWindowFromRhythm(k) });
+    useUserStore.setState({
+      sharpWindow: sharpWindowFromRhythm(k),
+      // Keep foggy in lockstep — otherwise a rhythm change left the
+      // old foggy window behind and could make sharp === foggy.
+      foggyWindow: foggyWindowFromRhythm(k),
+    });
   };
 
 
