@@ -67,6 +67,27 @@ const pushUser = async (userId: string) => {
     { onConflict: 'id' },
   );
   if (error) console.warn('[sync] pushUser', error.message);
+
+  // Lifetime ledgers go in a SEPARATE, best-effort upsert — the
+  // columns come from migration 20260713010000, which may not be
+  // applied yet. PostgREST fails the WHOLE row on an unknown column,
+  // so bundling these into the core upsert above would 400 and kill
+  // ALL profile sync until the migration lands. Isolated here, a
+  // missing-column error only skips the ledgers. Gated on a completed
+  // pull so we never overwrite the cloud ledger with a not-yet-merged
+  // local copy (the pull is what max-merges cloud history in).
+  if (useSyncStatus.getState().pulledFor[userId]) {
+    const { error: ledgerErr } = await supabase.from('users').upsert(
+      {
+        id: userId,
+        done_log: s.doneLog,
+        tasks_ever_completed: s.tasksEverCompleted,
+        focus_minutes_lifetime: s.focusMinutesLifetime,
+      },
+      { onConflict: 'id' },
+    );
+    if (ledgerErr) console.warn('[sync] pushUser ledgers', ledgerErr.message);
+  }
 };
 
 // ── push: quests ────────────────────────────────────────────────────────
@@ -109,6 +130,15 @@ const pushQuests = async (userId: string) => {
       scheduled_minute: q.scheduledMinute ?? null,
       duration_minutes: q.durationMinutes ?? null,
       accent: q.accent ?? null,
+      // Formerly local-only — now round-tripped (migration
+      // 20260713000000) so recurrence, notes, window placement and the
+      // once-ever xp_paid stamp survive reinstall / reach a 2nd device.
+      window: q.window,
+      note: q.note ?? null,
+      comment: q.comment ?? null,
+      recur: q.recur ?? null,
+      last_spawned_date: q.lastSpawnedDate ?? null,
+      xp_paid: q.xpPaid ?? false,
     }));
   if (rows.length === 0) return;
   const { error } = await supabase.from('quests').upsert(rows, {
@@ -322,6 +352,25 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       onboarded: userRow.onboarded ?? localState.onboarded,
       isTester: userRow.is_tester === true,
       offlineMode: userRow.offline_mode ?? false,
+      // Lifetime ledgers — monotonic merge (never lose history): counts
+      // by max, done_log by per-day max so neither device's record is
+      // erased. Cloud columns may be absent on pre-migration rows → 0.
+      tasksEverCompleted: Math.max(
+        localState.tasksEverCompleted,
+        (userRow.tasks_ever_completed as number | null) ?? 0,
+      ),
+      focusMinutesLifetime: Math.max(
+        localState.focusMinutesLifetime,
+        (userRow.focus_minutes_lifetime as number | null) ?? 0,
+      ),
+      doneLog: (() => {
+        const merged: Record<string, number> = { ...localState.doneLog };
+        const cloud = (userRow.done_log ?? {}) as Record<string, number>;
+        for (const [ymd, n] of Object.entries(cloud)) {
+          merged[ymd] = Math.max(merged[ymd] ?? 0, Number(n) || 0);
+        }
+        return merged;
+      })(),
       subscriptionStatus: nextSubStatus,
       subscriptionTier: nextSubTier,
       subscriptionCurrentPeriodEnd: nextSubEnd,
@@ -344,17 +393,15 @@ export const pullAll = async (userId: string): Promise<boolean> => {
     }
   }
 
-  // Quests — merge by id. The cloud owns the columns it actually has;
-  // LOCAL-ONLY fields (window, note, comment, recur, lastSpawnedDate,
-  // xpPaid) have no column in the quests table, so a naive "cloud
-  // wins" rebuild silently WIPED them on every cold start — recurring
-  // habits stopped repeating, notes/comments vanished, windowed tasks
-  // collapsed to 'midday', and the once-ever xpPaid stamp got erased
-  // (re-opening an XP double-pay farm). We preserve those fields from
-  // the existing local quest and only take cloud values for columns
-  // the cloud can represent. (Full multi-device persistence still
-  // needs the schema migration in supabase/migrations that adds these
-  // columns; this stops the data loss on the primary device today.)
+  // Quests — merge by id. window/note/comment/recur/lastSpawnedDate/
+  // xpPaid now round-trip (migration 20260713000000), but the merge
+  // still prefers the LOCAL value and only falls back to the cloud
+  // when this device has never seen the task (fresh install / 2nd
+  // device). This is deliberately non-regressing: a pre-migration
+  // cloud row carries NULL for these columns, so "cloud wins" would
+  // re-wipe local recurrence/notes; "local, else cloud" can never
+  // regress and still hydrates a genuinely new device from the cloud.
+  // (calendarEventIds stays local-only — it's device-specific.)
   if (q.data) {
     const local = useQuestStore.getState().quests;
     // A row deleted on this device must not ride back in on the pull
@@ -393,26 +440,31 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         durationMinutes: r.duration_minutes ?? undefined,
         accent: r.accent ?? undefined,
         createdAt: r.created_at,
-        // ── Local-only fields the cloud can't round-trip: preserve. ──
-        ...(prior?.note != null && { note: prior.note }),
-        ...(prior?.comment != null && { comment: prior.comment }),
-        ...(prior?.recur != null && { recur: prior.recur }),
-        ...(prior?.lastSpawnedDate != null && {
-          lastSpawnedDate: prior.lastSpawnedDate,
+        // ── Local-preferred, cloud-fallback (see block comment). ──
+        ...((prior?.note ?? r.note) != null && {
+          note: prior?.note ?? r.note,
         }),
-        // calendarEventIds maps this quest to its real OS-calendar
-        // event ids. Dropping it made mirrorDelete skip cleanup
-        // (orphaned events) and mirrorUpsert create DUPLICATES on the
-        // next anchor/retitle. Preserve it like the rest.
+        ...((prior?.comment ?? r.comment) != null && {
+          comment: prior?.comment ?? r.comment,
+        }),
+        ...((prior?.recur ?? r.recur) != null && {
+          recur: prior?.recur ?? r.recur,
+        }),
+        ...((prior?.lastSpawnedDate ?? r.last_spawned_date) != null && {
+          lastSpawnedDate: prior?.lastSpawnedDate ?? r.last_spawned_date,
+        }),
+        // calendarEventIds is DEVICE-specific (event ids differ per
+        // OS calendar) — keep local only; never adopt from cloud.
+        // Dropping it made mirrorDelete skip cleanup (orphaned events)
+        // and mirrorUpsert create DUPLICATES on the next anchor/retitle.
         ...(prior?.calendarEventIds &&
           Object.keys(prior.calendarEventIds).length > 0 && {
             calendarEventIds: prior.calendarEventIds,
           }),
-        // xpPaid: keep the local stamp, and force it true whenever the
-        // task is completed — a completed task has, by definition,
-        // already been paid, so a re-complete after undo can never
-        // re-award XP/shards even if the local stamp was lost.
-        ...((prior?.xpPaid || r.completed) && { xpPaid: true }),
+        // xpPaid: local stamp OR the cloud stamp OR completed (a
+        // completed task has already been paid) — force true so a
+        // re-complete after undo can never re-award XP/shards.
+        ...((prior?.xpPaid || r.xp_paid || r.completed) && { xpPaid: true }),
       });
     }
     useQuestStore.setState({ quests: Array.from(byId.values()) });

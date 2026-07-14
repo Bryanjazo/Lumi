@@ -49,12 +49,7 @@ export const difficultyFromImportance = (
 ): 'easy' | 'medium' | 'hard' =>
   i === 'high' ? 'hard' : i === 'medium' ? 'medium' : 'easy';
 
-/**
- * Auto-assigned XP for a new quest based on its importance.
- * No more manual XP picker — pick the importance, the XP follows.
- */
-export const XP_BY_IMPORTANCE: Record<Importance, number> = {
-  high: 80,
-  medium: 40,
-  low: 20,
-};
+// (Removed the unused XP_BY_IMPORTANCE table — it diverged from the
+// live scale, lib/gamification.ts xpForQuest (easy 30 / medium 80 /
+// hard 160), and was a latent trap for anyone who read the wrong one.
+// XP is derived from difficulty via xpForQuest; there is one scale.)

@@ -179,6 +179,60 @@ export const nextOccurrence = (rule: RecurRule, fromISO?: string): string => {
   }
 };
 
+// DST-safe local day index — raw getTime()/86400000 mis-buckets across
+// the spring-forward 23-hour day. Noon anchor dodges it.
+const dayNumber = (d: Date): number => {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12);
+  return Math.round(x.getTime() / 86400000);
+};
+
+/**
+ * THE canonical "does this rule fire on calendar date `date`, given the
+ * schedule anchor `anchorISO`?" predicate. Used by Time's ghost
+ * projection so the projection and the store's spawn cadence
+ * (nextOccurrence) can never disagree — they used to drift on month
+ * interval and month-end. An occurrence never fires before its anchor.
+ */
+export const firesOnDate = (
+  rule: RecurRule,
+  date: Date,
+  anchorISO?: string,
+): boolean => {
+  const dow = date.getDay();
+  const n = effInterval(rule);
+  const anchor = anchorISO ? new Date(anchorISO + 'T12:00:00') : new Date();
+  switch (rule.every) {
+    case 'day': {
+      const diff = dayNumber(date) - dayNumber(anchor);
+      return diff >= 0 && diff % n === 0;
+    }
+    case 'weekday':
+      return dow >= 1 && dow <= 5;
+    case 'week': {
+      if (!rule.day) return false;
+      if (WEEKDAY_INDEX[rule.day] !== dow) return false;
+      const weeks = Math.floor((dayNumber(date) - dayNumber(anchor)) / 7);
+      if (weeks < 0) return false;
+      return n <= 1 ? true : weeks % n === 0;
+    }
+    case '2week': {
+      if (!rule.day) return false;
+      if (WEEKDAY_INDEX[rule.day] !== dow) return false;
+      const weeks = Math.floor((dayNumber(date) - dayNumber(anchor)) / 7);
+      return weeks >= 0 && weeks % 2 === 0;
+    }
+    case 'month': {
+      if (date.getDate() !== anchor.getDate()) return false;
+      const months =
+        (date.getFullYear() - anchor.getFullYear()) * 12 +
+        (date.getMonth() - anchor.getMonth());
+      return months >= 0 && months % n === 0;
+    }
+    default:
+      return false;
+  }
+};
+
 /**
  * Is the rule due today, given the last-spawned date? Used by Home's
  * refreshRecurring() to know when to flip a recurring quest's

@@ -64,7 +64,11 @@ import { timeColors as C } from '../../constants/colors';
 import { fonts } from '../../constants/fonts';
 import { IMPORTANCE, type Importance } from '../../constants/importance';
 import { useEffectiveWindows } from '../../constants/windows';
-import { type RecurRule, type WeekdayKey } from '../../constants/recur';
+import {
+  firesOnDate,
+  type RecurRule,
+  type WeekdayKey,
+} from '../../constants/recur';
 import {
   useUserStore,
   type DailyAnchors,
@@ -127,16 +131,6 @@ const MO = [
   'November',
   'December',
 ];
-
-const WEEKDAY_TO_NUM: Record<WeekdayKey, number> = {
-  Sun: 0,
-  Mon: 1,
-  Tue: 2,
-  Wed: 3,
-  Thu: 4,
-  Fri: 5,
-  Sat: 6,
-};
 
 type Scale = 'day' | 'week' | 'month';
 const SCALES: { key: Scale; label: string }[] = [
@@ -269,60 +263,11 @@ const anchorItems = (anchors: DailyAnchors): TItem[] => [
  * status renders). On past dates we don't backfill — those would
  * have been completed historical instances and the moat lives there.
  */
-// DST-safe local day count — raw getTime()/86400000 mis-buckets
-// across the spring-forward 23-hour day.
-const dayNumber = (d: Date): number => {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12);
-  return Math.round(x.getTime() / 86400000);
-};
 
-const recurMatches = (
-  rule: RecurRule,
-  date: Date,
-  anchorISO: string | undefined,
-): boolean => {
-  const dow = date.getDay();
-  const n = Math.max(1, Math.round(rule.interval ?? 1));
-  // The habit's own schedule anchor — projections used to anchor to
-  // TODAY, so monthly ghosts drifted daily and biweekly parity
-  // flipped as the week rolled over.
-  const anchor = anchorISO
-    ? new Date(anchorISO + 'T12:00:00')
-    : new Date();
-  switch (rule.every) {
-    case 'day':
-      return (dayNumber(date) - dayNumber(anchor)) % n === 0;
-    case 'weekday':
-      return dow >= 1 && dow <= 5;
-    case 'week': {
-      if (!rule.day) return false;
-      if (WEEKDAY_TO_NUM[rule.day] !== dow) return false;
-      if (n <= 1) return true;
-      const weeks = Math.floor((dayNumber(date) - dayNumber(anchor)) / 7);
-      return ((weeks % n) + n) % n === 0;
-    }
-    case '2week': {
-      if (!rule.day) return false;
-      if (WEEKDAY_TO_NUM[rule.day] !== dow) return false;
-      const weeks = Math.floor((dayNumber(date) - dayNumber(anchor)) / 7);
-      return ((weeks % 2) + 2) % 2 === 0;
-    }
-    case 'month': {
-      // Interval-aware (audit): the old check ignored `n`, so an
-      // "every 3 months" habit drew a ghost EVERY month — disagreeing
-      // with the store's spawn cadence (nextOccurrence setMonth(+n)).
-      // Require the day-of-month match AND a non-negative whole-month
-      // distance that's a multiple of the interval.
-      if (date.getDate() !== anchor.getDate()) return false;
-      const months =
-        (date.getFullYear() - anchor.getFullYear()) * 12 +
-        (date.getMonth() - anchor.getMonth());
-      return months >= 0 && months % n === 0;
-    }
-    default:
-      return false;
-  }
-};
+// Recurrence projection now delegates to the ONE canonical predicate
+// (constants/recur.ts firesOnDate) so Time's ghosts and the store's
+// spawn cadence can never drift apart again.
+const recurMatches = firesOnDate;
 
 // De-stack pass (audit): a windowed task with no fixed time renders
 // at its window's START minute, so several in the same window pile on

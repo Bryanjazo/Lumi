@@ -1106,7 +1106,14 @@ export default function Home() {
 
   // ── Local state ──────────────────────────────────────────────────
   const [now, setNow] = useState(() => new Date());
+  // `swap` is the rotation index for "show me another". `heroPickId`
+  // pins a SPECIFIC task as the hero (surfaced from a waiting row, a
+  // notification tap, or the Untangle handoff) — identity-based so a
+  // list reorder can't leave a stale index pointing at the wrong card.
+  // It's resolved to the live task at render and quietly ignored once
+  // the task leaves the candidate list.
   const [swap, setSwap] = useState(0);
+  const [heroPickId, setHeroPickId] = useState<string | null>(null);
   const [cheer, setCheer] = useState(0);
   // Focus-picker modal — opens from the LumiFocusCard's "Focus on
   // another task →" link and shows a full-height sheet of today's
@@ -1349,9 +1356,22 @@ export default function Home() {
   const focusQuestId = useFocusSession((s) => s.current?.questId ?? null);
   const hero = candidates.length
     ? (focusQuestId && candidates.find((q) => q.id === focusQuestId)) ||
+      (heroPickId
+        ? candidates.find((q) => q.id === heroPickId)
+        : undefined) ||
       candidates[swap % candidates.length]
     : null;
   const rest = hero ? candidates.filter((q) => q.id !== hero.id) : [];
+
+  // Drop a pin once its task leaves the candidate list (edited to
+  // another day/window, moved to someday, completed) — otherwise a
+  // stale pin could silently re-promote the task to hero if it ever
+  // re-entered candidates (e.g. moved back to today).
+  useEffect(() => {
+    if (heroPickId && !candidates.some((c) => c.id === heroPickId)) {
+      setHeroPickId(null);
+    }
+  }, [candidates, heroPickId]);
 
   const totalToday = todayQuests.filter((q) => q.window !== 'someday').length;
   // Today's completed quests, freshest first — drives both the progress
@@ -1464,6 +1484,7 @@ export default function Home() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setQuestDate(nextUpcoming.id, todayKey());
     setSwap(0);
+    setHeroPickId(null);
     showToast(`Borrowed from ${pullLabel} — you're ahead.`);
   };
 
@@ -1560,6 +1581,7 @@ export default function Home() {
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setSwap(0);
+    setHeroPickId(null);
 
     // Celebratory chrome — only fires in Full mode. In Minimal /
     // Focused the completion stays a quiet check (calmer surface).
@@ -1620,14 +1642,13 @@ export default function Home() {
     }, 6000);
   };
 
-  /** "now" on a waiting row — surface that task as the hero
-   *  immediately. hero = candidates[swap % length], so pointing swap
-   *  at the task's index in candidates does it in one state write. */
+  /** "now" on a waiting row — surface that task as the hero. Pins by
+   *  ID (not index) so a later list reorder can't point at the wrong
+   *  card. Ignored automatically once the task leaves candidates. */
   const surfaceNow = (q: Quest) => {
-    const idx = candidates.findIndex((c) => c.id === q.id);
-    if (idx < 0) return;
+    if (!candidates.some((c) => c.id === q.id)) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSwap(idx);
+    setHeroPickId(q.id);
   };
 
   // ── Away/return + Rescue Mode (emotional-model spec §2/§3) ───────
@@ -2955,8 +2976,8 @@ export default function Home() {
           showNotifBanner(origin, 'Nothing on the plate — rest counts. 💛');
           break;
         }
-        const already = swap % candidates.length === 0;
-        if (!already) setSwap(0);
+        const already = hero?.id === candidates[0].id;
+        if (!already) setHeroPickId(candidates[0].id);
         flashHero();
         showNotifBanner(
           origin,
@@ -2989,8 +3010,8 @@ export default function Home() {
             idx = i;
           }
         }
-        const already = idx === swap % candidates.length;
-        if (!already) setSwap(idx);
+        const already = hero?.id === candidates[idx].id;
+        if (!already) setHeroPickId(candidates[idx].id);
         flashHero();
         showNotifBanner(
           origin,
@@ -3036,8 +3057,8 @@ export default function Home() {
             (intent.questTitle && norm(q.title) === norm(intent.questTitle)),
         );
         if (idx >= 0) {
-          const already = idx === swap % candidates.length;
-          if (!already) setSwap(idx);
+          const already = hero?.id === candidates[idx].id;
+          if (!already) setHeroPickId(candidates[idx].id);
           flashHero();
           showNotifBanner(
             origin,
@@ -3080,9 +3101,9 @@ export default function Home() {
     if (!id) return;
     const q = candidates.find((c) => c.id === id);
     if (q) {
-      // Point swap at the pick. If a focus session is running the
-      // hero is locked to that task (focusQuestId override) — swap
-      // still updates, so the pick takes the card the moment the
+      // Pin the pick as hero (by id). If a focus session is running
+      // the hero is locked to that task (focusQuestId override) — the
+      // pin still applies, so the pick takes the card the moment the
       // session ends, but we stay quiet rather than announce a card
       // the user can't see change yet.
       surfaceNow(q);
@@ -3708,7 +3729,16 @@ export default function Home() {
               }
               onSwap={
                 candidates.length > 1
-                  ? () => setSwap((s) => s + 1)
+                  ? () => {
+                      // Advance from whatever's showing NOW (a pinned
+                      // pick or the rotation index), then release the
+                      // pin so rotation drives from here on.
+                      const curIdx = hero
+                        ? candidates.findIndex((c) => c.id === hero.id)
+                        : swap;
+                      setSwap((curIdx < 0 ? swap : curIdx) + 1);
+                      setHeroPickId(null);
+                    }
                   : undefined
               }
               swapAvailable={candidates.length > 1}

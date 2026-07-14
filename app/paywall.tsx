@@ -418,7 +418,11 @@ export default function Paywall() {
               <Text style={styles.ctaDisclaimer}>
                 {selected === 'annual'
                   ? `${PRICING.annual.firstYearLabel} first year, renews at ${PRICING.annual.renewalLabel}/yr. Cancel anytime — your free plan never expires.`
-                  : `7-day free trial, then ${PRICING.monthly.label}/mo. Cancel anytime — your free plan never expires.`}
+                  : access.trialAlreadyUsed
+                    ? // Don't promise a trial the user already spent —
+                      // mirror Profile's upgrade card, which adapts.
+                      `${PRICING.monthly.label}/mo. Cancel anytime — your free plan never expires.`
+                    : `7-day free trial, then ${PRICING.monthly.label}/mo. Cancel anytime — your free plan never expires.`}
               </Text>
             </>
           )}

@@ -911,75 +911,11 @@ export default function AccountScreen() {
     access.trialDaysLeft,
   ]);
 
-  // ── "How far you've come" — per lumi-stats-section-spec.md ──────
-  // Four tiles that always climb and read warmly:
-  //   1) Days with Lumi  → account-age (already grows on its own)
-  //   2) Things done     → lifetime completed (neutral rename — works
-  //                        in Focused mode too, no "quests"/"XP")
-  //   3) Current streak  → from userStore.streak (more motivating
-  //                        than longest; pairs with a flame)
-  //   4) This week       → completions in last 7 days, w/ 7-bar
-  //                        mini chart for momentum at a glance
-  // Encouraging empty states throughout — no bare "0" reproaches.
-  const userStreak = useUserStore((s) => s.streak);
-
-  const last7Days = useMemo(() => {
-    // [today, yesterday, … 6 days ago] — completion count per day.
-    // Used by both the "This week" tile (total + bar chart) and the
-    // "Days with Lumi" tile (active-days dot row).
-    const todayMs = new Date().setHours(0, 0, 0, 0);
-    const counts: number[] = [];
-    for (let i = 0; i < 7; i++) {
-      const dayStart = todayMs - i * 86400000;
-      const dayEnd = dayStart + 86400000;
-      const count = quests.filter((q) => {
-        if (!q.completed || !q.completedAt) return false;
-        const t = new Date(q.completedAt).getTime();
-        return t >= dayStart && t < dayEnd;
-      }).length;
-      counts.push(count);
-    }
-    return counts;
-  }, [quests]);
-
-  const thisWeekTotal = useMemo(
-    () => last7Days.reduce((a, b) => a + b, 0),
-    [last7Days],
-  );
-  const activeDaysThisWeek = useMemo(
-    () => last7Days.filter((c) => c > 0).length,
-    [last7Days],
-  );
-
-  const lifetimeDone = useMemo(
-    () => quests.filter((q) => q.completed).length,
-    [quests],
-  );
-
-  const daysWithLumi = useMemo(
-    () => Math.max(1, daysBetween(onboardedAt)),
-    [onboardedAt],
-  );
-
-  // Things-done milestone targets — small early, generous later.
-  const MILESTONES = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
-  const nextMilestone = useMemo(
-    () => MILESTONES.find((m) => m > lifetimeDone) ?? lifetimeDone + 100,
-    [lifetimeDone],
-  );
-  const prevMilestone = useMemo(
-    () =>
-      [...MILESTONES].reverse().find((m) => m <= lifetimeDone) ?? 0,
-    [lifetimeDone],
-  );
-  const milestoneProgress = Math.max(
-    0,
-    Math.min(
-      1,
-      (lifetimeDone - prevMilestone) /
-        Math.max(1, nextMilestone - prevMilestone),
-    ),
-  );
+  // (Removed the "How far you've come" stat computations — last7Days /
+  // thisWeekTotal / activeDaysThisWeek / lifetimeDone / daysWithLumi /
+  // the MILESTONES math — dead since the stats grid was cut; they ran a
+  // 7-day quests.filter + milestone math on every Profile render for
+  // nothing rendered.)
 
   // ── Weekly archive ───────────────────────────────────────────────
   // One pass — this used to run the full bucket build twice per render.
