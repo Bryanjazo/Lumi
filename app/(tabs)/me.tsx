@@ -124,7 +124,7 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const ROOM_BG = require('../../assets/room/room-bg.png');
 const ROOM_CABINET = require('../../assets/room/room-cabinet.png');
 const ROOM_FRAME = require('../../assets/room/room-frame.png');
-const ROOM_VASE = require('../../assets/room/room-vase.png');
+// (room-vase.png retired — the stateful shelf plant took its spot.)
 // Progressive / care decor (commissioned). The plant grows 1→3 with
 // attention; curtains + lamp toggle; bowls fill on feeding.
 const ROOM_PLANT = [
@@ -139,18 +139,22 @@ const ROOM_LAMP_OFF = require('../../assets/room/room-lamp-off.png');
 const ROOM_FOOD_BOWL = require('../../assets/room/room-food-bowl.png');
 const ROOM_WATER_BOWL = require('../../assets/room/room-water-bowl.png');
 const ROOM_YARN = require('../../assets/room/room-yarn.png');
+const ROOM_MAT = require('../../assets/room/room-mat.png');
+const ROOM_BOOKS = require('../../assets/room/room-books.png');
 
-// Placement in ORIGINAL art coords (172×144 canvas). Rendered at
-// (x+OX)*kx, (y+OY)*ky with size w*kx × h*ky — same scheme as the
-// cabinet/vase/frame. Grouped here so positions are easy to nudge.
+// Placement in ORIGINAL art coords (172×144 canvas), matched to the
+// artist's final mock. Every sprite is 1:1 with the canvas — render at
+// its NATIVE w×h (scaling them squished the curtain off the window).
 const DECOR = {
-  curtain: { x: 12, y: 6, w: 60, h: 58 }, // frames the window (x18–69)
-  plant: { x: 4, y: 74, w: 30, h: 53 }, // floor, front-left of window
-  lamp: { x: 150, y: 44, w: 25, h: 90 }, // far-right floor
-  // Clear of the lamp base (x≈150+) so the corner doesn't clutter.
-  foodBowl: { x: 104, y: 126, w: 19, h: 16 },
-  waterBowl: { x: 117, y: 126, w: 19, h: 16 },
-  yarn: { x: 2, y: 128, w: 42, h: 18 }, // floor, front-left
+  curtain: { x: 3, y: 2, w: 80, h: 74 }, // rod + tied-back fabric, centered on the window
+  plant: { x: 4, y: 74, w: 30, h: 53 }, // big floor plant, left
+  shelfPlant: { x: 108, y: 40, w: 14, h: 24 }, // the droopy→lush states, on the bookshelf
+  books: { x: 97, y: 17, w: 53, h: 20 }, // top wall shelf: books + cactus
+  lamp: { x: 148, y: 44, w: 25, h: 86 }, // far right, base on the floor line
+  mat: { x: 118, y: 121, w: 48, h: 20 }, // little fringe mat under the bowls
+  foodBowl: { x: 123, y: 123, w: 19, h: 16 },
+  waterBowl: { x: 144, y: 123, w: 19, h: 16 },
+  yarn: { x: 4, y: 124, w: 42, h: 18 }, // floor, front-left
 } as const;
 
 // Wall-wash palette — light color veils the user paints the room
@@ -180,6 +184,10 @@ const Room = ({
   height,
   active = true,
   petLabel = 'Lumi',
+  onWater,
+  onFeed,
+  onCurtains,
+  onLamp,
 }: {
   vitality: number;
   cheer?: number;
@@ -189,6 +197,13 @@ const Room = ({
   active?: boolean;
   /** VoiceOver name for the cat — the user renames her. */
   petLabel?: string;
+  /** Diegetic care — tap the OBJECTS themselves (plant → water,
+   *  bowls → feed, window → curtains, lamp → light). No button
+   *  chrome over a lofi world. */
+  onWater?: () => void;
+  onFeed?: () => void;
+  onCurtains?: () => void;
+  onLamp?: () => void;
 }) => {
   const lunaMood = useAmbientLunaMood();
   const lunaSkin = useLunaSkin();
@@ -520,10 +535,11 @@ const Room = ({
       style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}
       resizeMode="stretch"
     />
-    {/* Night sky in the window glass — UNDER the curtain, and only
-        when the curtains are open (drawn fabric covers the glass).
-        It used to paint over the curtain as an opaque blue square. */}
-    {isNightSky && curtainsOpen && (
+    {/* Night sky in the window glass — UNDER the curtain (it used to
+        paint over the fabric as an opaque blue square). Rendered
+        whenever it's night: gating it on open curtains made CLOSING
+        them "turn the window back to daytime" at the exposed edges. */}
+    {isNightSky && (
       <View
         pointerEvents="none"
         style={{
@@ -580,14 +596,17 @@ const Room = ({
       }}
       resizeMode="stretch"
     />
+    {/* The stateful plant lives ON the bookshelf (per the artist's
+        mock) — droopy sprout → fuller → lush as the user tends it.
+        (Replaces the old static vase in the same spot.) */}
     <Image
-      source={ROOM_VASE}
+      source={plantSrc}
       style={{
         position: 'absolute',
-        left: (110 + OX) * kx,
-        top: (48 + OY) * ky,
-        width: 16 * kx,
-        height: 18 * ky,
+        left: (DECOR.shelfPlant.x + OX) * kx,
+        top: (DECOR.shelfPlant.y + OY) * ky,
+        width: DECOR.shelfPlant.w * kx,
+        height: DECOR.shelfPlant.h * ky,
       }}
       resizeMode="stretch"
     />
@@ -599,6 +618,18 @@ const Room = ({
         top: (46 + OY) * ky,
         width: 16 * kx,
         height: 17 * ky,
+      }}
+      resizeMode="stretch"
+    />
+    {/* Top wall shelf — full books row + cactus (artist decor set). */}
+    <Image
+      source={ROOM_BOOKS}
+      style={{
+        position: 'absolute',
+        left: (DECOR.books.x + OX) * kx,
+        top: (DECOR.books.y + OY) * ky,
+        width: DECOR.books.w * kx,
+        height: DECOR.books.h * ky,
       }}
       resizeMode="stretch"
     />
@@ -626,7 +657,19 @@ const Room = ({
       }}
       resizeMode="stretch"
     />
-    {/* Lumi's bowls — fade toward empty as a gentle refill cue. */}
+    {/* Fringe mat + Lumi's bowls (per mock) — bowls fade toward
+        empty as a gentle refill cue. */}
+    <Image
+      source={ROOM_MAT}
+      style={{
+        position: 'absolute',
+        left: (DECOR.mat.x + OX) * kx,
+        top: (DECOR.mat.y + OY) * ky,
+        width: DECOR.mat.w * kx,
+        height: DECOR.mat.h * ky,
+      }}
+      resizeMode="stretch"
+    />
     <Image
       source={ROOM_FOOD_BOWL}
       style={{
@@ -783,6 +826,71 @@ const Room = ({
         accessibilityLabel={petLabel}
       />
     </Animated.View>
+    {/* ── Diegetic care hotspots — the room IS the interface. ──
+        Invisible Pressables over the objects themselves; a tap
+        anywhere else still "sits with her" (parent Pressable). */}
+    {(() => {
+      type Rect = { x: number; y: number; w: number; h: number };
+      const spots: {
+        key: string;
+        r: Rect;
+        act: () => void;
+        label: string;
+      }[] = [];
+      if (onWater) {
+        spots.push({
+          key: 'hs-plant',
+          r: DECOR.plant,
+          act: onWater,
+          label: 'Water the plant',
+        });
+        spots.push({
+          key: 'hs-shelfplant',
+          r: DECOR.shelfPlant,
+          act: onWater,
+          label: 'Water the shelf plant',
+        });
+      }
+      if (onFeed) {
+        spots.push({
+          key: 'hs-bowls',
+          r: DECOR.mat,
+          act: onFeed,
+          label: `Fill ${petLabel}'s bowls`,
+        });
+      }
+      if (onCurtains) {
+        spots.push({
+          key: 'hs-curtains',
+          r: DECOR.curtain,
+          act: onCurtains,
+          label: curtainsOpen ? 'Draw the curtains' : 'Open the curtains',
+        });
+      }
+      if (onLamp) {
+        spots.push({
+          key: 'hs-lamp',
+          r: DECOR.lamp,
+          act: onLamp,
+          label: lampOn ? 'Turn the lamp off' : 'Turn the lamp on',
+        });
+      }
+      return spots.map((h) => (
+        <Pressable
+          key={h.key}
+          onPress={h.act}
+          accessibilityRole="button"
+          accessibilityLabel={h.label}
+          style={{
+            position: 'absolute',
+            left: (h.r.x + OX) * kx,
+            top: (h.r.y + OY) * ky,
+            width: h.r.w * kx,
+            height: h.r.h * ky,
+          }}
+        />
+      ));
+    })()}
     </View>
   );
 };
@@ -1521,14 +1629,18 @@ export default function MeTab() {
     );
   };
 
-  // ── Tend the room — water the plant, feed Lumi, curtains, lamp ──
+  // ── Tend the room — diegetic care (tap the objects themselves) ──
   const waterPlant = useRoomStore((s) => s.waterPlant);
   const feedLumi = useRoomStore((s) => s.feed);
   const toggleCurtains = useRoomStore((s) => s.toggleCurtains);
   const toggleLamp = useRoomStore((s) => s.toggleLamp);
   const curtainsOpen = useRoomStore((s) => s.curtainsOpen);
   const lampOn = useRoomStore((s) => s.lampOn);
+  const hintsSeen = useUserStore((s) => s.hintsSeen);
+  const markHintSeen = useUserStore((s) => s.markHintSeen);
+  const careTouched = () => markHintSeen('roomCare');
   const doWater = () => {
+    careTouched();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const grew = waterPlant();
     showCareToast(
@@ -1536,11 +1648,13 @@ export default function MeTab() {
     );
   };
   const doFeed = () => {
+    careTouched();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     feedLumi();
     showCareToast(`${petName}'s bowls are full. 🍽️`);
   };
   const doCurtains = () => {
+    careTouched();
     Haptics.selectionAsync();
     toggleCurtains();
     showCareToast(
@@ -1548,6 +1662,7 @@ export default function MeTab() {
     );
   };
   const doLamp = () => {
+    careTouched();
     Haptics.selectionAsync();
     toggleLamp();
     showCareToast(lampOn ? 'Lamp off.' : 'Lamp on — a warm glow. 💡');
@@ -1683,6 +1798,10 @@ export default function MeTab() {
             width={screenWidth}
             height={roomHeight}
             petLabel={petName}
+            onWater={doWater}
+            onFeed={doFeed}
+            onCurtains={doCurtains}
+            onLamp={doLamp}
           />
           {/* Floating chrome over the room — minimal (hearthside):
               just her room's name and the profile door. Rank moved
@@ -1760,42 +1879,14 @@ export default function MeTab() {
           )}
         </Pressable>
 
-        {/* Tend the room — the care actions live just BELOW the art
-            (they used to float over it, covering the floor + bowls).
-            Each is its own Pressable; hidden outside Full mode. */}
-        {companion.showCheer && (
-          <View style={styles.careRow}>
-            {[
-              { key: 'water', glyph: '💧', label: 'Water', onPress: doWater },
-              { key: 'feed', glyph: '🍽️', label: 'Feed', onPress: doFeed },
-              {
-                key: 'curtains',
-                glyph: curtainsOpen ? '🌙' : '☀️',
-                label: curtainsOpen ? 'Draw' : 'Open',
-                onPress: doCurtains,
-              },
-              {
-                key: 'lamp',
-                glyph: '💡',
-                label: lampOn ? 'Off' : 'Lamp',
-                onPress: doLamp,
-              },
-            ].map((a) => (
-              <Pressable
-                key={a.key}
-                onPress={a.onPress}
-                style={({ pressed }) => [
-                  styles.careChip,
-                  pressed && { opacity: 0.7, transform: [{ scale: 0.96 }] },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={`${a.label} — tend the room`}
-              >
-                <Text style={styles.careChipGlyph}>{a.glyph}</Text>
-                <Text style={styles.careChipLabel}>{a.label}</Text>
-              </Pressable>
-            ))}
-          </View>
+        {/* Care is DIEGETIC — you tap the objects in the room itself
+            (plant, bowls, window, lamp). One quiet whisper teaches it,
+            then retires forever after the first touch. */}
+        {!hintsSeen.includes('roomCare') && (
+          <Text style={styles.roomWhisper}>
+            the room is yours to tend — try the plant, the bowls, the
+            lamp ✧
+          </Text>
         )}
 
         {/* ═══ The two of you — a bond, not a dashboard ═══ */}
@@ -2644,35 +2735,17 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     bottom: 0,
     height: 26,
   },
-  // Care actions — an in-flow row just below the room art (floating
-  // them OVER the art covered the floor, bowls and cat).
-  careRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 9,
-    paddingHorizontal: 16,
-    marginTop: -6,
-    marginBottom: 16,
-  },
-  careChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: 'rgba(240,236,220,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(240,236,220,0.14)',
-  },
-  careChipGlyph: {
-    fontSize: 13,
-  },
-  careChipLabel: {
-    fontFamily: fonts.interSemi,
-    fontSize: 11.5,
-    color: C.bone,
-    letterSpacing: 0.1,
+  // One-time whisper teaching that the room itself is tappable —
+  // retired forever after the first care touch. No button chrome.
+  roomWhisper: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 12.5,
+    color: hexA('#8EA0B4', 0.9), // dusk — Lumi's voice
+    textAlign: 'center',
+    paddingHorizontal: 24,
+    marginTop: -4,
+    marginBottom: 14,
   },
   heroTopBar: {
     position: 'absolute',
