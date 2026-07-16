@@ -1308,6 +1308,18 @@ export default function Home() {
   );
   useEffect(() => {
     if (!onboardedAt || tourSeen) return;
+    // The tour is a FIRST-RUN moment. onboardedAt can (re)appear long
+    // after onboarding — the sync pull restores it from the server's
+    // created_at for returning users — and without this recency gate
+    // that restore re-armed the tour mid-normal-use (spotlights over a
+    // lived-in Home, where its assumptions no longer hold). Only
+    // auto-start within 48h of actually onboarding; anyone past that
+    // window gets tourSeen stamped so this never re-fires.
+    const ageMs = Date.now() - new Date(onboardedAt).getTime();
+    if (!Number.isFinite(ageMs) || ageMs > 48 * 3_600_000) {
+      useUserStore.getState().setTourSeen();
+      return;
+    }
     const t = setTimeout(() => tour.start(), 600);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps

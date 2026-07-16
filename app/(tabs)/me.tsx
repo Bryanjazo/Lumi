@@ -147,8 +147,9 @@ const DECOR = {
   curtain: { x: 12, y: 6, w: 60, h: 58 }, // frames the window (x18–69)
   plant: { x: 4, y: 74, w: 30, h: 53 }, // floor, front-left of window
   lamp: { x: 150, y: 44, w: 25, h: 90 }, // far-right floor
-  foodBowl: { x: 120, y: 128, w: 19, h: 16 }, // floor, front (left of lamp)
-  waterBowl: { x: 132, y: 128, w: 19, h: 16 },
+  // Clear of the lamp base (x≈150+) so the corner doesn't clutter.
+  foodBowl: { x: 104, y: 126, w: 19, h: 16 },
+  waterBowl: { x: 117, y: 126, w: 19, h: 16 },
   yarn: { x: 2, y: 128, w: 42, h: 18 }, // floor, front-left
 } as const;
 
@@ -519,6 +520,42 @@ const Room = ({
       style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}
       resizeMode="stretch"
     />
+    {/* Night sky in the window glass — UNDER the curtain, and only
+        when the curtains are open (drawn fabric covers the glass).
+        It used to paint over the curtain as an opaque blue square. */}
+    {isNightSky && curtainsOpen && (
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: (18 + OX) * kx,
+          top: (11 + OY) * ky,
+          width: 52 * kx,
+          height: 52 * ky,
+          backgroundColor: 'rgba(18,22,48,0.82)',
+        }}
+      >
+        {[
+          { x: 9, y: 9 },
+          { x: 30, y: 5 },
+          { x: 41, y: 21 },
+          { x: 17, y: 33 },
+        ].map((s, i2) => (
+          <View
+            key={'st' + i2}
+            style={{
+              position: 'absolute',
+              left: s.x * kx,
+              top: s.y * ky,
+              width: 2.5,
+              height: 2.5,
+              borderRadius: 1.25,
+              backgroundColor: 'rgba(240,236,220,0.85)',
+            }}
+          />
+        ))}
+      </View>
+    )}
     {/* Curtain over the window — open (tied back) or drawn closed. */}
     <Image
       source={curtainsOpen ? ROOM_CURTAIN_OPEN : ROOM_CURTAIN_CLOSED}
@@ -668,40 +705,9 @@ const Room = ({
         backgroundColor: hexA(C.glow, warmAlpha),
       }}
     />
-    {/* Night pane over the window glass (art glass ≈ x18–69, y11–62) */}
-    {isNightSky && (
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          left: (18 + OX) * kx,
-          top: (11 + OY) * ky,
-          width: 52 * kx,
-          height: 52 * ky,
-          backgroundColor: 'rgba(18,22,48,0.82)',
-        }}
-      >
-        {[
-          { x: 9, y: 9 },
-          { x: 30, y: 5 },
-          { x: 41, y: 21 },
-          { x: 17, y: 33 },
-        ].map((s, i2) => (
-          <View
-            key={'st' + i2}
-            style={{
-              position: 'absolute',
-              left: s.x * kx,
-              top: s.y * ky,
-              width: 2.5,
-              height: 2.5,
-              borderRadius: 1.25,
-              backgroundColor: 'rgba(240,236,220,0.85)',
-            }}
-          />
-        ))}
-      </View>
-    )}
+    {/* (Night pane moved UNDER the curtain — it used to render here,
+        on top of everything, and read as a blue square covering the
+        curtain fabric.) */}
     {/* Vitality light — honey warmth up, dim veil down. Luna renders
         ABOVE the veils on purpose: she's the life of the room. */}
         <View
@@ -1696,43 +1702,6 @@ export default function MeTab() {
             colors={['rgba(18,14,12,0)', C.void]}
             style={styles.heroBottomSeam}
           />
-          {/* Tend the room — care actions live where she lives. Each is
-              its own Pressable so a tap here doesn't also "sit with
-              her". Hidden in Focused mode (no cozy/game surface). */}
-          {companion.showCheer && (
-            <View style={styles.careRow}>
-              {[
-                { key: 'water', glyph: '💧', label: 'Water', onPress: doWater },
-                { key: 'feed', glyph: '🍽️', label: 'Feed', onPress: doFeed },
-                {
-                  key: 'curtains',
-                  glyph: curtainsOpen ? '🌙' : '☀️',
-                  label: curtainsOpen ? 'Draw' : 'Open',
-                  onPress: doCurtains,
-                },
-                {
-                  key: 'lamp',
-                  glyph: '💡',
-                  label: lampOn ? 'Off' : 'Lamp',
-                  onPress: doLamp,
-                },
-              ].map((a) => (
-                <Pressable
-                  key={a.key}
-                  onPress={a.onPress}
-                  style={({ pressed }) => [
-                    styles.careChip,
-                    pressed && { opacity: 0.7, transform: [{ scale: 0.96 }] },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${a.label} — tend the room`}
-                >
-                  <Text style={styles.careChipGlyph}>{a.glyph}</Text>
-                  <Text style={styles.careChipLabel}>{a.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
           <View style={[styles.heroTopBar, { top: insets.top + 8 }]}>
             <Text style={styles.heroEyebrow}>{petName}&apos;s room</Text>
             <View style={{ flex: 1 }} />
@@ -1790,6 +1759,44 @@ export default function MeTab() {
             </View>
           )}
         </Pressable>
+
+        {/* Tend the room — the care actions live just BELOW the art
+            (they used to float over it, covering the floor + bowls).
+            Each is its own Pressable; hidden outside Full mode. */}
+        {companion.showCheer && (
+          <View style={styles.careRow}>
+            {[
+              { key: 'water', glyph: '💧', label: 'Water', onPress: doWater },
+              { key: 'feed', glyph: '🍽️', label: 'Feed', onPress: doFeed },
+              {
+                key: 'curtains',
+                glyph: curtainsOpen ? '🌙' : '☀️',
+                label: curtainsOpen ? 'Draw' : 'Open',
+                onPress: doCurtains,
+              },
+              {
+                key: 'lamp',
+                glyph: '💡',
+                label: lampOn ? 'Off' : 'Lamp',
+                onPress: doLamp,
+              },
+            ].map((a) => (
+              <Pressable
+                key={a.key}
+                onPress={a.onPress}
+                style={({ pressed }) => [
+                  styles.careChip,
+                  pressed && { opacity: 0.7, transform: [{ scale: 0.96 }] },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={`${a.label} — tend the room`}
+              >
+                <Text style={styles.careChipGlyph}>{a.glyph}</Text>
+                <Text style={styles.careChipLabel}>{a.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
 
         {/* ═══ The two of you — a bond, not a dashboard ═══ */}
         <View style={styles.bondBlock}>
@@ -2637,16 +2644,15 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     bottom: 0,
     height: 26,
   },
-  // Care actions — a soft glass row along the bottom of the room.
+  // Care actions — an in-flow row just below the room art (floating
+  // them OVER the art covered the floor, bowls and cat).
   careRow: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 16,
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 9,
     paddingHorizontal: 16,
+    marginTop: -6,
+    marginBottom: 16,
   },
   careChip: {
     flexDirection: 'row',
@@ -2655,9 +2661,9 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 12,
     borderRadius: 999,
-    backgroundColor: 'rgba(18,14,12,0.55)',
+    backgroundColor: 'rgba(240,236,220,0.06)',
     borderWidth: 1,
-    borderColor: 'rgba(240,236,220,0.16)',
+    borderColor: 'rgba(240,236,220,0.14)',
   },
   careChipGlyph: {
     fontSize: 13,

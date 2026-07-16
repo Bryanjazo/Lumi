@@ -396,6 +396,16 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         if (!local) return cloud;
         return cloud < local ? cloud : local;
       })(),
+      // REGRESSION GUARD: Home auto-starts the spotlight tour when
+      // onboardedAt exists and tourSeen is false. Restoring
+      // onboardedAt above for a RETURNING user (local was null after
+      // a wipe/reinstall) re-armed that effect — onboarding highlights
+      // popped for someone long past onboarding, mid-normal-use. A
+      // restored user is by definition not a first-run user: mark the
+      // tour seen alongside the restore.
+      ...(localState.onboardedAt == null && userRow.created_at != null
+        ? { tourSeen: true }
+        : {}),
       // Lifetime ledgers — monotonic merge (never lose history): counts
       // by max, done_log by per-day max so neither device's record is
       // erased. Cloud columns may be absent on pre-migration rows → 0.
