@@ -51,6 +51,12 @@ import {
 } from '../../store/questStore';
 import { useCheckinStore, localYmdFromIso } from '../../store/checkinStore';
 import { useUserStore } from '../../store/userStore';
+import {
+  useRoomStore,
+  meterLevel,
+  stageForGrowth,
+  FOOD_EMPTY_HOURS,
+} from '../../store/roomStore';
 import { todayKey, xpProgress, TITLES } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
 
@@ -119,6 +125,32 @@ const ROOM_BG = require('../../assets/room/room-bg.png');
 const ROOM_CABINET = require('../../assets/room/room-cabinet.png');
 const ROOM_FRAME = require('../../assets/room/room-frame.png');
 const ROOM_VASE = require('../../assets/room/room-vase.png');
+// Progressive / care decor (commissioned). The plant grows 1→3 with
+// attention; curtains + lamp toggle; bowls fill on feeding.
+const ROOM_PLANT = [
+  require('../../assets/room/room-plant-1.png'),
+  require('../../assets/room/room-plant-2.png'),
+  require('../../assets/room/room-plant-3.png'),
+];
+const ROOM_CURTAIN_OPEN = require('../../assets/room/room-curtain-open.png');
+const ROOM_CURTAIN_CLOSED = require('../../assets/room/room-curtain-closed.png');
+const ROOM_LAMP_ON = require('../../assets/room/room-lamp-on.png');
+const ROOM_LAMP_OFF = require('../../assets/room/room-lamp-off.png');
+const ROOM_FOOD_BOWL = require('../../assets/room/room-food-bowl.png');
+const ROOM_WATER_BOWL = require('../../assets/room/room-water-bowl.png');
+const ROOM_YARN = require('../../assets/room/room-yarn.png');
+
+// Placement in ORIGINAL art coords (172×144 canvas). Rendered at
+// (x+OX)*kx, (y+OY)*ky with size w*kx × h*ky — same scheme as the
+// cabinet/vase/frame. Grouped here so positions are easy to nudge.
+const DECOR = {
+  curtain: { x: 12, y: 6, w: 60, h: 58 }, // frames the window (x18–69)
+  plant: { x: 4, y: 74, w: 30, h: 53 }, // floor, front-left of window
+  lamp: { x: 150, y: 44, w: 25, h: 90 }, // far-right floor
+  foodBowl: { x: 120, y: 128, w: 19, h: 16 }, // floor, front (left of lamp)
+  waterBowl: { x: 132, y: 128, w: 19, h: 16 },
+  yarn: { x: 2, y: 128, w: 42, h: 18 }, // floor, front-left
+} as const;
 
 // Wall-wash palette — light color veils the user paints the room
 // with (Me hero swatch row). Soft enough to keep the pixel art true.
@@ -160,6 +192,32 @@ const Room = ({
   const lunaMood = useAmbientLunaMood();
   const lunaSkin = useLunaSkin();
   const roomTint = useUserStore((s) => s.roomTint);
+  // ── Living-room care state ──
+  const growthPoints = useRoomStore((s) => s.growthPoints);
+  const peakStage = useRoomStore((s) => s.peakStage);
+  const notePeakStage = useRoomStore((s) => s.notePeakStage);
+  const curtainsOpen = useRoomStore((s) => s.curtainsOpen);
+  const lampOn = useRoomStore((s) => s.lampOn);
+  const foodMeter = useRoomStore((s) => s.food);
+  const waterBowlMeter = useRoomStore((s) => s.bowlWater);
+  // Plant reflects BOTH tending (watering advances growthPoints) AND
+  // the user's overall momentum (vitality) — "grows the more you pay
+  // attention". The stage is LATCHED at its peak so a later momentum
+  // dip can never wilt it (soul rule: no guilt, gaps are rest).
+  const vitalityStage = vitality >= 67 ? 3 : vitality >= 34 ? 2 : 1;
+  const candidateStage = Math.max(stageForGrowth(growthPoints), vitalityStage);
+  useEffect(() => {
+    if (candidateStage > peakStage) notePeakStage(candidateStage);
+  }, [candidateStage, peakStage, notePeakStage]);
+  const plantStage = Math.max(peakStage, candidateStage);
+  const plantSrc = ROOM_PLANT[Math.min(2, Math.max(0, plantStage - 1))];
+  // Each bowl fades toward empty as a gentle "refill me" cue (never
+  // guilt) — and reads FULL on a fresh/reset room (at:0 sentinel).
+  const nowMs = Date.now();
+  const foodOpacity =
+    0.55 + 0.45 * (meterLevel(foodMeter, FOOD_EMPTY_HOURS, nowMs) / 100);
+  const waterOpacity =
+    0.55 + 0.45 * (meterLevel(waterBowlMeter, FOOD_EMPTY_HOURS, nowMs) / 100);
   const [, force] = useState(0);
   const S = useRef<RoomState & { joy: number }>({
     t: 0,
@@ -461,6 +519,18 @@ const Room = ({
       style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}
       resizeMode="stretch"
     />
+    {/* Curtain over the window — open (tied back) or drawn closed. */}
+    <Image
+      source={curtainsOpen ? ROOM_CURTAIN_OPEN : ROOM_CURTAIN_CLOSED}
+      style={{
+        position: 'absolute',
+        left: (DECOR.curtain.x + OX) * kx,
+        top: (DECOR.curtain.y + OY) * ky,
+        width: DECOR.curtain.w * kx,
+        height: DECOR.curtain.h * ky,
+      }}
+      resizeMode="stretch"
+    />
     {/* Decor — the cat cabinet, vase and frame (commissioned set) */}
     <Image
       source={ROOM_CABINET}
@@ -495,6 +565,82 @@ const Room = ({
       }}
       resizeMode="stretch"
     />
+    {/* Floor lamp — off by day, warm glow when on. */}
+    <Image
+      source={lampOn ? ROOM_LAMP_ON : ROOM_LAMP_OFF}
+      style={{
+        position: 'absolute',
+        left: (DECOR.lamp.x + OX) * kx,
+        top: (DECOR.lamp.y + OY) * ky,
+        width: DECOR.lamp.w * kx,
+        height: DECOR.lamp.h * ky,
+      }}
+      resizeMode="stretch"
+    />
+    {/* Potted plant — grows 1→3 with attention (watering + momentum). */}
+    <Image
+      source={plantSrc}
+      style={{
+        position: 'absolute',
+        left: (DECOR.plant.x + OX) * kx,
+        top: (DECOR.plant.y + OY) * ky,
+        width: DECOR.plant.w * kx,
+        height: DECOR.plant.h * ky,
+      }}
+      resizeMode="stretch"
+    />
+    {/* Lumi's bowls — fade toward empty as a gentle refill cue. */}
+    <Image
+      source={ROOM_FOOD_BOWL}
+      style={{
+        position: 'absolute',
+        left: (DECOR.foodBowl.x + OX) * kx,
+        top: (DECOR.foodBowl.y + OY) * ky,
+        width: DECOR.foodBowl.w * kx,
+        height: DECOR.foodBowl.h * ky,
+        opacity: foodOpacity,
+      }}
+      resizeMode="stretch"
+    />
+    <Image
+      source={ROOM_WATER_BOWL}
+      style={{
+        position: 'absolute',
+        left: (DECOR.waterBowl.x + OX) * kx,
+        top: (DECOR.waterBowl.y + OY) * ky,
+        width: DECOR.waterBowl.w * kx,
+        height: DECOR.waterBowl.h * ky,
+        opacity: waterOpacity,
+      }}
+      resizeMode="stretch"
+    />
+    {/* Ball of yarn — a little life on the floor. */}
+    <Image
+      source={ROOM_YARN}
+      style={{
+        position: 'absolute',
+        left: (DECOR.yarn.x + OX) * kx,
+        top: (DECOR.yarn.y + OY) * ky,
+        width: DECOR.yarn.w * kx,
+        height: DECOR.yarn.h * ky,
+      }}
+      resizeMode="stretch"
+    />
+    {/* Lamp glow — soft warm pool when the lamp is on. */}
+    {lampOn && (
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: (DECOR.lamp.x - 10 + OX) * kx,
+          top: (DECOR.lamp.y + 4 + OY) * ky,
+          width: 44 * kx,
+          height: 44 * ky,
+          borderRadius: 22 * kx,
+          backgroundColor: hexA(C.glow, 0.16),
+        }}
+      />
+    )}
     {/* User-painted wall wash */}
     {roomTint !== 'none' && (
       <View
@@ -1369,6 +1515,38 @@ export default function MeTab() {
     );
   };
 
+  // ── Tend the room — water the plant, feed Lumi, curtains, lamp ──
+  const waterPlant = useRoomStore((s) => s.waterPlant);
+  const feedLumi = useRoomStore((s) => s.feed);
+  const toggleCurtains = useRoomStore((s) => s.toggleCurtains);
+  const toggleLamp = useRoomStore((s) => s.toggleLamp);
+  const curtainsOpen = useRoomStore((s) => s.curtainsOpen);
+  const lampOn = useRoomStore((s) => s.lampOn);
+  const doWater = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const grew = waterPlant();
+    showCareToast(
+      grew ? 'Your plant grew a little. 🌱' : 'Watered — it perks up. 💧',
+    );
+  };
+  const doFeed = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    feedLumi();
+    showCareToast(`${petName}'s bowls are full. 🍽️`);
+  };
+  const doCurtains = () => {
+    Haptics.selectionAsync();
+    toggleCurtains();
+    showCareToast(
+      curtainsOpen ? 'Curtains drawn — cozy and dim.' : 'Curtains open — light pours in.',
+    );
+  };
+  const doLamp = () => {
+    Haptics.selectionAsync();
+    toggleLamp();
+    showCareToast(lampOn ? 'Lamp off.' : 'Lamp on — a warm glow. 💡');
+  };
+
   // Days together — the bond, not a stat.
   const onboardedAt = useUserStore((s) => s.onboardedAt);
   const daysTogether = useMemo(() => {
@@ -1503,6 +1681,43 @@ export default function MeTab() {
             colors={['rgba(18,14,12,0)', C.void]}
             style={styles.heroBottomSeam}
           />
+          {/* Tend the room — care actions live where she lives. Each is
+              its own Pressable so a tap here doesn't also "sit with
+              her". Hidden in Focused mode (no cozy/game surface). */}
+          {companion.showCheer && (
+            <View style={styles.careRow}>
+              {[
+                { key: 'water', glyph: '💧', label: 'Water', onPress: doWater },
+                { key: 'feed', glyph: '🍽️', label: 'Feed', onPress: doFeed },
+                {
+                  key: 'curtains',
+                  glyph: curtainsOpen ? '🌙' : '☀️',
+                  label: curtainsOpen ? 'Draw' : 'Open',
+                  onPress: doCurtains,
+                },
+                {
+                  key: 'lamp',
+                  glyph: '💡',
+                  label: lampOn ? 'Off' : 'Lamp',
+                  onPress: doLamp,
+                },
+              ].map((a) => (
+                <Pressable
+                  key={a.key}
+                  onPress={a.onPress}
+                  style={({ pressed }) => [
+                    styles.careChip,
+                    pressed && { opacity: 0.7, transform: [{ scale: 0.96 }] },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${a.label} — tend the room`}
+                >
+                  <Text style={styles.careChipGlyph}>{a.glyph}</Text>
+                  <Text style={styles.careChipLabel}>{a.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
           <View style={[styles.heroTopBar, { top: insets.top + 8 }]}>
             <Text style={styles.heroEyebrow}>{petName}&apos;s room</Text>
             <View style={{ flex: 1 }} />
@@ -2406,6 +2621,37 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     right: 0,
     bottom: 0,
     height: 26,
+  },
+  // Care actions — a soft glass row along the bottom of the room.
+  careRow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 9,
+    paddingHorizontal: 16,
+  },
+  careChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: 'rgba(18,14,12,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(240,236,220,0.16)',
+  },
+  careChipGlyph: {
+    fontSize: 13,
+  },
+  careChipLabel: {
+    fontFamily: fonts.interSemi,
+    fontSize: 11.5,
+    color: C.bone,
+    letterSpacing: 0.1,
   },
   heroTopBar: {
     position: 'absolute',

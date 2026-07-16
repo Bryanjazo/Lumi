@@ -53,6 +53,15 @@ export const resetLocalUserData = (): void => {
   } catch {
     // pet store unavailable — nothing to wipe
   }
+  // The living room's plant growth + care state belongs to this user.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    (require('../store/roomStore') as typeof import('../store/roomStore'))
+      .useRoomStore.getState()
+      .resetRoom();
+  } catch {
+    // room store unavailable — nothing to wipe
+  }
   useUserStore.setState({
     // identity
     name: '',
