@@ -17,7 +17,8 @@ export type NotifAction =
   | 'rescue' // recovery — open Rescue Mode (shrink/lighten)
   | 'quest' // recurring reminder — surface THAT quest
   | 'recap' // Sunday — open the weekly recap
-  | 'focusdone'; // focus block ended — settle the session, show done
+  | 'focusdone' // focus block ended — settle the session, show done
+  | 'dump'; // morning ritual — open the brain-dump, ready to listen
 
 export interface NotifIntent {
   action: NotifAction;

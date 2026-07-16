@@ -3,10 +3,12 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ROTATIONS = {
+  // Morning = the brain-dump ritual (retention §3a): an offer of
+  // RELIEF ("tell me and I'll sort it"), never a chore assignment.
   morning: [
-    "Good morning. One small task is enough.",
-    "Hey — today's brain doesn't have to be yesterday's brain.",
-    "Pick the thing that already feels half-done.",
+    "Morning — what's on your mind today? Tell me and I'll sort it.",
+    "New day, blank slate. Dump the swirl on me — I'll make it a list.",
+    "Before the day starts: tell me everything you're holding. I'll untangle it.",
   ],
   meds: [
     "Meds + something to eat. That's it.",
@@ -23,10 +25,12 @@ const ROTATIONS = {
     "Tomorrow's first task — pick it now while it's easy.",
     "Lights low. You don't owe anyone a full day.",
   ],
+  // The weekly ritual (retention §4) — intimate, a gift, never a
+  // report card. "Your week WITH ME" is the relationship framing.
   recap: [
-    "Your week, told warmly — the recap's ready when you are.",
-    "Sunday read: what worked, what wandered, and one win worth keeping.",
-    "Lumi wrote your week up. No numbers-shaming, promise.",
+    'Your week with me is ready 💛',
+    "I wrote up our week — come read it when you're ready. 💛",
+    "Sunday's here. Our week, told warmly — whenever you want it.",
   ],
   // Recovery lines OFFER something (emotional-model spec §6) — never
   // report a deficit or imply Luna was hurt by the absence ("Luna
@@ -220,7 +224,10 @@ const syncNotificationsInner = async (opts?: {
   }
   if (prefs.nudges) {
     const slots: Array<[Bucket, number, string, string]> = [
-      ['morning', Math.max(0, a.wake + 30), 'lumi-morning', 'hero'],
+      // Morning tap opens the brain-dump (capture), not a task
+      // spotlight — the notification PROMISES "tell me and I'll sort
+      // it", so the tap must land in the telling place (§3b).
+      ['morning', Math.max(0, a.wake + 30), 'lumi-morning', 'dump'],
       ['midday', a.lunch, 'lumi-midday', 'smallest'],
       ['windDown', Math.max(0, a.sleep - 90), 'lumi-winddown', 'tomorrow'],
     ];

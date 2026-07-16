@@ -68,6 +68,13 @@ interface RoomState {
   bowlWater: CareMeter;
   curtainsOpen: boolean;
   lampOn: boolean;
+  /** Local Y-M-D of the last room visit — powers the welcome-back
+   *  re-bloom moment (retention §5): returning after days away gets a
+   *  warm greeting + the cat's happy beat, never a dead plant. */
+  lastRoomVisitDate: string | null;
+  /** Stamp today's visit; returns days since the previous one
+   *  (0 on same-day or first-ever visit). */
+  noteRoomVisit: () => number;
 
   /** Water the plant — at most once per cooldown window, advances
    *  growth toward the next stage. Returns true when this water
@@ -88,6 +95,11 @@ interface RoomState {
 // cozy, not needy.
 const fullMeter = (): CareMeter => ({ value: 100, at: 0 });
 
+const todayIso = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 export const useRoomStore = create<RoomState>()(
   persist(
     (set, get) => ({
@@ -98,6 +110,21 @@ export const useRoomStore = create<RoomState>()(
       bowlWater: fullMeter(),
       curtainsOpen: true,
       lampOn: false,
+      lastRoomVisitDate: null,
+
+      noteRoomVisit: () => {
+        const prev = get().lastRoomVisitDate;
+        const now = todayIso();
+        if (prev === now) return 0;
+        set({ lastRoomVisitDate: now });
+        if (!prev) return 0;
+        const days = Math.round(
+          (new Date(now + 'T12:00').getTime() -
+            new Date(prev + 'T12:00').getTime()) /
+            86_400_000,
+        );
+        return Math.max(0, days);
+      },
 
       waterPlant: () => {
         const now = Date.now();
@@ -142,6 +169,7 @@ export const useRoomStore = create<RoomState>()(
           bowlWater: fullMeter(),
           curtainsOpen: true,
           lampOn: false,
+          lastRoomVisitDate: null,
         }),
     }),
     {

@@ -62,6 +62,16 @@ export const resetLocalUserData = (): void => {
   } catch {
     // room store unavailable — nothing to wipe
   }
+  // Learning reveals ("Lumi learned you…") describe the previous
+  // user's patterns — the next account starts unknown.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    (require('../store/revealsStore') as typeof import('../store/revealsStore'))
+      .useRevealsStore.getState()
+      .reset();
+  } catch {
+    // reveals store unavailable — nothing to wipe
+  }
   useUserStore.setState({
     // identity
     name: '',

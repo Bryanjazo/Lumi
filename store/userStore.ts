@@ -183,6 +183,15 @@ interface UserState {
   /** Local Y-M-D the backlog nudge ("these have followed you…") was
    *  answered — one gentle offer per day, never a nag. */
   backlogNudgeDismissedDate: string | null;
+  /** Local Y-M-D the "tomorrow's looking full" heads-up last showed —
+   *  one evening offer per day, never a warning wall (retention §2a). */
+  heavyDayNoteDate: string | null;
+  markHeavyDayNote: () => void;
+  /** Local Y-M-D the morning brain-dump invitation was dismissed —
+   *  one soft offer per morning, never a "you haven't dumped yet" nag
+   *  (retention §3b). Auto-hides anyway once anything is captured. */
+  morningLineDismissedDate: string | null;
+  dismissMorningLine: () => void;
   /**
    * "Hey Lumi" wake word (Pro): while the app is open, saying
    * "hey lumi" opens the hands-free capture sheet. Opt-in — the mic
@@ -475,6 +484,8 @@ export const useUserStore = create<UserState>()(
       lastOpenedDate: null,
       rescueDismissedDate: null,
       backlogNudgeDismissedDate: null,
+      heavyDayNoteDate: null,
+      morningLineDismissedDate: null,
       heyLumiEnabled: false,
       medsNudge: false,
       roomTint: 'none',
@@ -587,6 +598,9 @@ export const useUserStore = create<UserState>()(
 
       dismissBacklogNudge: () =>
         set({ backlogNudgeDismissedDate: today() }),
+      markHeavyDayNote: () => set({ heavyDayNoteDate: today() }),
+      dismissMorningLine: () =>
+        set({ morningLineDismissedDate: today() }),
 
       setHeyLumiEnabled: (v) => set({ heyLumiEnabled: v }),
 
@@ -785,6 +799,8 @@ export const useUserStore = create<UserState>()(
           lastOpenedDate: null,
           rescueDismissedDate: null,
           backlogNudgeDismissedDate: null,
+          heavyDayNoteDate: null,
+          morningLineDismissedDate: null,
           heyLumiEnabled: false,
           medsNudge: false,
           roomTint: 'none',

@@ -147,6 +147,11 @@ import {
   selectRemainingSeconds,
 } from '../../lib/focusSession';
 import { completeQuestCore } from '../../lib/completeQuest';
+import {
+  useLearningReveal,
+  stampAll,
+} from '../../lib/learning/reveals';
+import { useRevealsStore } from '../../store/revealsStore';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -385,7 +390,16 @@ const whyLine = (
   q: Quest,
   inWindow: boolean,
   windowLabel: string,
+  rhythm?: { peakOpen: boolean; curveTrusted: boolean },
 ): string => {
+  // Retention §2b — when the LEARNED curve says the user is inside
+  // their real peak, Lumi says WHY out loud. Gated on curveTrusted
+  // (source === 'learned', ≥14 real days) so a day-1 user is never
+  // told "you're sharp right now" the data can't back (honest data).
+  if (rhythm?.curveTrusted && rhythm.peakOpen && q.importance === 'high')
+    return 'Your focus is sharpest right now — good time for the hard one.';
+  if (rhythm?.curveTrusted && rhythm.peakOpen && inWindow)
+    return "You're in your peak — this one will feel easy.";
   if (inWindow && q.importance === 'high')
     return "The heavy one — easier now, while you're sharp.";
   if (inWindow) return `A good fit for your ${windowLabel.toLowerCase()}.`;
@@ -1184,14 +1198,17 @@ export default function Home() {
     origin: string;
     label: string;
     undo?: () => void;
+    /** Button text for the action slot — defaults to "Undo". */
+    actionLabel?: string;
   } | null>(null);
   const notifBannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showNotifBanner = (
     origin: string,
     label: string,
     undo?: () => void,
+    actionLabel?: string,
   ) => {
-    setNotifBanner({ origin, label, undo });
+    setNotifBanner({ origin, label, undo, actionLabel });
     AccessibilityInfo.announceForAccessibility(`${origin}. ${label}`);
     if (notifBannerTimer.current) clearTimeout(notifBannerTimer.current);
     // Long enough to read + act on undo without being sticky forever.
@@ -1311,11 +1328,169 @@ export default function Home() {
       suppressed: suppressedSet,
       existingRecurringTitles: existingTitles,
     });
-    setAllSuggestions(detected);
-  }, [quests, suppressed, setAllSuggestions]);
+
+    // §2a ANTICIPATE — when a detected pattern's day IS today and the
+    // usual hasn't been done yet, reframe that same suggestion as an
+    // in-the-moment offer ("it's Sunday — your usual?") and lead with
+    // it. Same id/title, so accept + "Not it" suppression are shared.
+    const DOW3 = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+    const DAY_FULL = [
+      'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+      'Saturday',
+    ];
+    const dow = new Date().getDay();
+    const todayK = todayKey();
+    const handledToday = new Set(
+      quests
+        .filter((q) => q.date === todayK)
+        .map((q) => normalizeForSuppression(q.title)),
+    );
+    const matchesToday = (g: Suggestion['guess']): boolean =>
+      g.every === 'day' ||
+      (g.every === 'weekday' && dow >= 1 && dow <= 5) ||
+      // '2week' is deliberately excluded — without the pattern's real
+      // anchor we can't know the on/off week, and claiming "your
+      // usual" on the off week would overstate (honest data).
+      (g.every === 'week' &&
+        (g.interval ?? 1) <= 1 &&
+        g.day === DOW3[dow]);
+    const anticipate: Suggestion[] = [];
+    const laterPatterns: Suggestion[] = [];
+    for (const s of detected) {
+      if (
+        matchesToday(s.guess) &&
+        !handledToday.has(normalizeForSuppression(s.title))
+      ) {
+        anticipate.push({
+          ...s,
+          kind: 'anticipate',
+          span: `it's ${DAY_FULL[dow]} — want your usual set up for today?`,
+        });
+      } else {
+        laterPatterns.push(s);
+      }
+    }
+
+    // §2c SLIP — a cluster of one kind of task keeps drifting; offer a
+    // STANDING HOME for it (an offer born of understanding — the copy
+    // names the tasks slipping, never the person). Ranked last so it
+    // only surfaces once the calmer offers are settled; "Not it"
+    // suppresses the title forever via the shared dismissal set.
+    const slip: Suggestion[] = [];
+    const cluster = dominantStaleCluster(findStale(quests));
+    const SLIP_HOME: Record<
+      string,
+      { title: string; when: string; guess: Suggestion['guess'] }
+    > = {
+      'reach out': {
+        title: 'Calls & messages',
+        when: 'before lunch',
+        guess: { every: 'weekday', part: 'midday' },
+      },
+      errand: {
+        title: 'Errand run',
+        when: 'Saturday afternoon',
+        guess: { every: 'week', day: 'Sat', part: 'afternoon' },
+      },
+      money: {
+        title: 'Money admin',
+        when: 'Monday morning',
+        guess: { every: 'week', day: 'Mon', part: 'morning' },
+      },
+    };
+    const home = cluster && SLIP_HOME[cluster.tag];
+    if (
+      cluster &&
+      home &&
+      cluster.total >= 3 &&
+      !existingTitles.has(normalizeForSuppression(home.title))
+    ) {
+      slip.push({
+        id: `slip_${cluster.tag}`,
+        kind: 'slip',
+        title: home.title,
+        importance: 'medium',
+        span: `${cluster.label} tend to slip a few days — want a standing spot ${home.when}?`,
+        guess: home.guess,
+        evidence: cluster.items
+          .slice(0, 3)
+          .map((it) => `“${it.quest.title}” · waiting ${it.days}d`),
+      });
+    }
+
+    // One calm card at a time: day-matched offer first, then the
+    // durable patterns, slip last. setAll re-filters by suppression.
+    setAllSuggestions([...anticipate, ...laterPatterns, ...slip]);
+  }, [quests, suppressed, setAllSuggestions, dayKeyNow]);
 
   // ── Learning digest — drives smart-capture window inference ─────
   const digest = useLearningDigest();
+
+  // ── "Lumi learned something about you" (retention spec §1a) ─────
+  // At most ONE unseen positive-pattern reveal, rate-limited to ~one
+  // per day by the store. stampAll dates every crossed pattern the
+  // moment it first exists (§1b provenance for the Patterns tab),
+  // whether or not its reveal ever shows.
+  const learningReveal = useLearningReveal();
+  const markRevealSeen = useRevealsStore((s) => s.markSeen);
+  useEffect(() => {
+    stampAll(digest);
+  }, [digest]);
+
+  // ── "Tomorrow's looking full" (retention §2a) — one gentle evening
+  // heads-up when tomorrow is genuinely loaded, framed as an OFFER to
+  // lighten it (never a warning or a count). Once per day, evenings
+  // only, and only when tomorrow clearly outweighs today.
+  const heavyDayNoteDate = useUserStore((s) => s.heavyDayNoteDate);
+  const markHeavyDayNote = useUserStore((s) => s.markHeavyDayNote);
+  // Morning ritual line (§3b) — auto-fulfilled once anything was
+  // captured today, so it invites rather than tracks.
+  const morningLineDismissedDate = useUserStore(
+    (s) => s.morningLineDismissedDate,
+  );
+  const dismissMorningLine = useUserStore((s) => s.dismissMorningLine);
+  const capturedToday = useMemo(() => {
+    const k = todayKey();
+    // LOCAL day of createdAt — the UTC slice put a fresh morning
+    // capture on "yesterday" east of UTC, so the line never auto-hid.
+    const localDay = (iso: string) => {
+      const d = new Date(iso);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    return quests.some((q) => q.createdAt && localDay(q.createdAt) === k);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quests, dayKeyNow]);
+  useEffect(() => {
+    if (!questsHydrated) return;
+    if (now.getHours() < 17) return; // planning-tomorrow hours only
+    if (heavyDayNoteDate === todayKey()) return;
+    const tomorrowISO = offsetDate(1);
+    const mins = (list: Quest[]) =>
+      list.reduce((a, q) => a + (q.durationMinutes ?? 30), 0);
+    // Symmetric "how full is the day" totals — both sides count ALL
+    // non-someday tasks dated that day (completed included), so the
+    // comparison measures day fullness, not remaining work.
+    const tomorrowLoad = mins(
+      quests.filter(
+        (q) => q.date === tomorrowISO && q.window !== 'someday',
+      ),
+    );
+    const todayLoad = mins(
+      quests.filter(
+        (q) => q.date === todayKey() && q.window !== 'someday',
+      ),
+    );
+    // "Full" must be honest: ≥5 scheduled hours AND fuller than today.
+    if (tomorrowLoad < 300 || tomorrowLoad <= todayLoad) return;
+    markHeavyDayNote();
+    showNotifBanner(
+      'a heads-up',
+      'tomorrow’s looking full — want to lighten it while it’s still easy?',
+      () => router.push('/(tabs)/time' as never),
+      'open Time →',
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questsHydrated, dayKeyNow, now, quests, heavyDayNoteDate]);
 
   // ── Derived ──────────────────────────────────────────────────────
   const cw = currentWindowFor(effectiveWindows, now);
@@ -2942,6 +3117,7 @@ export default function Home() {
       rescue: 'From your check-in',
       quest: 'From your reminder',
       focusdone: 'Your focus block',
+      dump: 'From your morning nudge',
     };
     // Short phrase for the uppercase eyebrow (a full bodySnippet
     // sentence would read badly in caps; it stays plumbed for a11y).
@@ -3059,6 +3235,17 @@ export default function Home() {
           void fs.end({ reason: 'completed' });
         }
         showNotifBanner(origin, 'That focus block counted. 💛');
+        break;
+      }
+      case 'dump': {
+        // The morning ritual (§3b) — the notification promised "tell
+        // me and I'll sort it", so the tap lands ready to listen:
+        // focus the capture pill, keyboard up.
+        pillInputRef.current?.focus();
+        showNotifBanner(
+          origin,
+          'here — tell me what’s on your mind. i’ll sort it.',
+        );
         break;
       }
     }
@@ -3471,10 +3658,10 @@ export default function Home() {
               }}
               hitSlop={10}
               accessibilityRole="button"
-              accessibilityLabel="Undo this"
+              accessibilityLabel={notifBanner.actionLabel ?? 'Undo this'}
             >
               <Text style={[styles.undoBtnText, { color: accent.fg }]}>
-                Undo
+                {notifBanner.actionLabel ?? 'Undo'}
               </Text>
             </Pressable>
           )}
@@ -3508,7 +3695,14 @@ export default function Home() {
           <View style={{ flex: 1, paddingTop: 4 }}>
             <Text style={styles.dateLine}>{formatDate(now)}</Text>
             <Text style={styles.greeting}>
-              {greeting(now.getHours() + now.getMinutes() / 60)}.
+              {greeting(now.getHours() + now.getMinutes() / 60)}
+              {/* Warm arrival (§3c): greet the PERSON when we know
+                  them — "Good morning, Bryan." beats a generic hello.
+                  First name only; the greeting must stay one line. */}
+              {userName.trim()
+                ? `, ${userName.trim().split(/\s+/)[0]}`
+                : ''}
+              .
             </Text>
             {readout && (
               <Text style={styles.headerReadout}>{readout}</Text>
@@ -3624,6 +3818,47 @@ export default function Home() {
             )}
           </Text>
         </View>
+
+        {/* ── "Lumi learned something about you" (retention §1a) —
+            a positive pattern crossed its threshold. Persistent (not
+            a vanishing toast) until tapped or dismissed; at most one
+            per ~day via the reveals store; dusk = her intelligence.
+            Tap → the Patterns page where the insight lives. */}
+        {learningReveal && !rescueActive && (
+          <View style={styles.revealCard}>
+            <Text style={styles.revealSpark}>✦</Text>
+            <Pressable
+              style={{ flex: 1, minWidth: 0 }}
+              onPress={() => {
+                Haptics.selectionAsync();
+                markRevealSeen(learningReveal.key);
+                router.push('/(tabs)/patterns' as never);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`${learningReveal.copy} Open patterns.`}
+            >
+              <Text style={styles.revealOrigin}>{learningReveal.origin}</Text>
+              {/* Focused mode = calm organizer: same insight, plain
+                  register (cozy first-person stripped). */}
+              <Text style={styles.revealCopy}>
+                {companion.isFocused
+                  ? learningReveal.copyFocused
+                  : learningReveal.copy}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                markRevealSeen(learningReveal.key);
+              }}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss"
+            >
+              <Text style={styles.revealClose}>×</Text>
+            </Pressable>
+          </View>
+        )}
 
         {/* ── Welcome back (emotional-model spec §2) — after time
             away, Lumi kept your spot warm. Never "you missed X". */}
@@ -3757,6 +3992,19 @@ export default function Home() {
                       hero,
                       hero.window === cw,
                       effectiveWindows[hero.window].label,
+                      {
+                        // §2b — the learned curve, spoken. peakOpen
+                        // uses the same peakStart/peakEnd the capture
+                        // context already trusts.
+                        peakOpen:
+                          digest.curve.peakStart != null &&
+                          digest.curve.peakEnd != null &&
+                          now.getHours() * 60 + now.getMinutes() >=
+                            digest.curve.peakStart &&
+                          now.getHours() * 60 + now.getMinutes() <
+                            digest.curve.peakEnd,
+                        curveTrusted: digest.curve.source === 'learned',
+                      },
                     )
                   }
                   accentColor={accent.fg}
@@ -4048,12 +4296,17 @@ export default function Home() {
               input={{
                 id: heroSuggestion.id,
                 title: heroSuggestion.title,
-                // For recurrence suggestions the "note" is the span
-                // copy ("4 Sundays in a row") — the evidence that
-                // made Lumi spot the pattern in the first place.
-                note: heroSuggestion.span
-                  ? `You've done this ${heroSuggestion.span.toLowerCase()}`
-                  : undefined,
+                // Recurrence spans are FRAGMENTS ("4 Sundays in a
+                // row") that need the wrapper; anticipate/slip spans
+                // are complete offer sentences ("it's Sunday — want
+                // your usual set up for today?") and must render
+                // verbatim — the wrapper mangled them.
+                note:
+                  heroSuggestion.kind === 'recurrence'
+                    ? heroSuggestion.span
+                      ? `You've done this ${heroSuggestion.span.toLowerCase()}`
+                      : undefined
+                    : heroSuggestion.span || undefined,
                 defaultWindow:
                   (heroSuggestion.guess?.part as WindowKey) ?? 'evening',
                 defaultExactMinute: heroSuggestion.guess?.at ?? null,
@@ -4422,6 +4675,44 @@ export default function Home() {
                   hitSlop={8}
                 >
                   <Text style={styles.dymHintClear}>got it</Text>
+                </Pressable>
+              </View>
+            )}
+          {/* Morning ritual invitation (retention §3b) — one soft
+              offer to unload, mornings only, gone the moment anything
+              is captured today (auto-fulfilled) or dismissed (once per
+              day, never a "you haven't dumped yet" nag). Cozy phrasing
+              respects Focused mode. */}
+          {!dymHint &&
+            now.getHours() >= 5 &&
+            now.getHours() < 12 &&
+            morningLineDismissedDate !== todayKey() &&
+            !capturedToday && (
+              <View style={styles.dymHint}>
+                <Text style={styles.dymHintText}>
+                  {companion.isFocused
+                    ? 'anything on your mind? capture it and I’ll sort it.'
+                    : 'a fresh morning — anything swirling? tell me and i’ll sort it ✧'}
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    pillInputRef.current?.focus();
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={[styles.dymHintClear, { color: accent.fg }]}>
+                    {companion.isFocused ? 'capture' : 'tell her'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    dismissMorningLine();
+                  }}
+                  hitSlop={8}
+                >
+                  <Text style={styles.dymHintClear}>not now</Text>
                 </Pressable>
               </View>
             )}
@@ -5074,6 +5365,51 @@ const makeStyles = (accent: Accent) =>
       lineHeight: 18,
     },
     notifBannerClose: {
+      fontFamily: fonts.inter,
+      fontSize: 20,
+      color: C.mute,
+      paddingHorizontal: 2,
+    },
+
+    // ── "Lumi learned" reveal card (retention §1a) — inline in the
+    // scroll (persistent until acted on), dusk-accented because dusk
+    // is Lumi's intelligence color.
+    revealCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      backgroundColor: hexA(C.dusk, 0.08),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.35),
+      borderRadius: 16,
+      paddingLeft: 15,
+      paddingRight: 12,
+      paddingVertical: 13,
+      marginBottom: 14,
+    },
+    revealSpark: {
+      fontFamily: fonts.inter,
+      fontSize: 13,
+      color: C.dusk,
+    },
+    revealOrigin: {
+      fontFamily: fonts.interSemi,
+      fontSize: 9.5,
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+      color: C.dusk,
+      marginBottom: 3,
+    },
+    revealCopy: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.1,
+      lineHeight: 20,
+      paddingRight: 4,
+    },
+    revealClose: {
       fontFamily: fonts.inter,
       fontSize: 20,
       color: C.mute,

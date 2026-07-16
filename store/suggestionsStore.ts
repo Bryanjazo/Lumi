@@ -11,7 +11,12 @@ import { RecurRule } from '../constants/recur';
 // dismissed-title suppression set so a "not it" actually sticks across
 // future re-detections.
 
-export type SuggestionKind = 'recurrence';
+// 'recurrence' — a title keeps coming back; offer to make it repeat.
+// 'anticipate' — it's the learned day ("it's Sunday — your usual?");
+//                offer to set up today's instance (retention §2a).
+// 'slip'       — a cluster of a kind of task tends to drift; offer a
+//                standing home for it ("calls before lunch?") (§2c).
+export type SuggestionKind = 'recurrence' | 'anticipate' | 'slip';
 
 export interface Suggestion {
   id: string;

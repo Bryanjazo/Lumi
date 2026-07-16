@@ -448,9 +448,17 @@ export default function RecapScreen() {
           : `“${t}” got done — small victories count.`,
       );
     }
+    // The avoided-thing beat (retention §4) — the learning layer's
+    // signature specificity, kept strictly no-judgment because this
+    // line is the most PUBLIC copy in the app (users post it).
+    if (avoidance) {
+      parts.push(
+        `A few ${avoidance.label} kept drifting to the bottom — no judgment, they'll keep.`,
+      );
+    }
     parts.push("I'll be here next week too.");
     return parts.join(' ');
-  }, [set, done, pattern, win]);
+  }, [set, done, pattern, win, avoidance]);
 
   // Capture the story card as an image → native share sheet. On a
   // build that predates the view-shot/sharing modules, fall back to

@@ -1547,6 +1547,21 @@ export default function MeTab() {
     showCareToast(lampOn ? 'Lamp off.' : 'Lamp on — a warm glow. 💡');
   };
 
+  // ── Welcome-back re-bloom (retention §5) — returning to the room
+  // after days away gets a warm greeting + the cat's happy beat. The
+  // plant never wilted (peak-latched), so this is pure ceremony:
+  // "look, it's all still here" — never "look what you neglected".
+  const noteRoomVisit = useRoomStore((s) => s.noteRoomVisit);
+  useEffect(() => {
+    if (!meFocused) return;
+    const daysAway = noteRoomVisit();
+    if (daysAway >= 3 && companion.showCheer) {
+      setCheer((c) => c + 1);
+      showCareToast(`${petName} kept your spot warm. welcome back. 💛`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meFocused]);
+
   // Days together — the bond, not a stat.
   const onboardedAt = useUserStore((s) => s.onboardedAt);
   const daysTogether = useMemo(() => {

@@ -54,6 +54,8 @@ import { fonts, italicNumberFixLarge } from '../../constants/fonts';
 import { WINDOWS } from '../../constants/windows';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 import { useLearningDigest } from '../../lib/learning';
+import { arcTier, arcLine, learnedTag } from '../../lib/learning/reveals';
+import { useRevealsStore } from '../../store/revealsStore';
 import { useCompanionMode } from '../../lib/companion-mode';
 import { useQuestStore } from '../../store/questStore';
 import { useUserStore } from '../../store/userStore';
@@ -757,6 +759,12 @@ export default function PatternsScreen() {
   const learned = curve.source === 'learned';
   const ft = digest.followThrough;
 
+  // ── Living profile (retention §1b/§1c) — provenance dates from the
+  // reveals ledger ("learned this week") + the first-person arc that
+  // deepens as real check-in days accumulate.
+  const learnedAt = useRevealsStore((s) => s.learnedAt);
+  const tier = arcTier(digest);
+
   // Every completed quest bucketed by local day, MERGED with the
   // persisted doneLog ledger — deleting old quests on Home must
   // never turn a past warm day cold (titles vanish, warmth stays).
@@ -836,11 +844,13 @@ export default function PatternsScreen() {
     digest.recurrence.length > 0 ||
     digest.avoidance != null;
 
+  // Pre-graduation: honest progress ("day X of 14"). Post-graduation:
+  // provenance — WHEN Lumi first had your rhythm (retention §1b).
   const learningTag = !learned
     ? curve.sampleDays > 0
       ? `still learning · day ${Math.min(curve.sampleDays, 13)} of 14`
       : 'still learning'
-    : undefined;
+    : (learnedTag(learnedAt, 'curve:learned') ?? undefined);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -852,12 +862,15 @@ export default function PatternsScreen() {
         {/* 0 · header, adaptive */}
         <Text style={styles.eyebrow}>✦ PATTERNS</Text>
         <Text style={styles.h1}>The shape of you.</Text>
+        {/* First-person relationship arc (retention §1c) — driven by
+            REAL check-in days (curve.sampleDays), never time-since-
+            install, so "i know your rhythm" is always earned. */}
         <Text style={sparsePage || learned ? styles.sub : styles.subItal}>
-          {sparsePage
-            ? 'a few days of showing up and this page starts drawing your picture — all of it lives on your phone.'
-            : learned
-              ? 'drawn from what you actually do — not what a planner thinks you should.'
-              : 'still sketching…'}
+          {focused
+            ? learned
+              ? 'drawn from what you actually do.'
+              : 'still learning your rhythm.'
+            : arcLine(tier, sparsePage)}
         </Text>
 
         {/* 1 · hero curve */}
@@ -961,7 +974,15 @@ export default function PatternsScreen() {
         {/* 4 · windows */}
         {(strong || weak) && (
           <>
-            <Rule label="Where things actually happen" />
+            <Rule
+              label="Where things actually happen"
+              right={
+                strong
+                  ? (learnedTag(learnedAt, `window:${strong.window}`) ??
+                    undefined)
+                  : undefined
+              }
+            />
             {strong && (
               <WindowRow
                 name={WINDOWS[strong.window].label}
@@ -1042,7 +1063,8 @@ export default function PatternsScreen() {
           </>
         )}
 
-        {/* 6 · best-day chip */}
+        {/* 6 · best-day chip — dated so the profile reads as filling
+            in over time (retention §1b). */}
         {dayChip && (
           <View style={styles.chipWrap}>
             <View style={styles.chip}>
@@ -1051,15 +1073,24 @@ export default function PatternsScreen() {
                 {dayChip.down ? (
                   <Text style={{ color: C.mute }}> · {dayChip.down}</Text>
                 ) : null}
+                {digest.peakDow != null &&
+                learnedTag(learnedAt, `dow:${digest.peakDow}`) ? (
+                  <Text style={{ color: C.dusk }}>
+                    {'  ·  '}
+                    {learnedTag(learnedAt, `dow:${digest.peakDow}`)}
+                  </Text>
+                ) : null}
               </Text>
             </View>
           </View>
         )}
 
-        {/* 7 · footer — quiet in focused mode */}
+        {/* 7 · footer — quiet in focused mode; deepens with the arc */}
         {!focused && (
           <Text style={styles.foot}>
-            every week, this page knows you a little better ✦
+            {tier === 2
+              ? 'this page is you — and it keeps getting truer ✦'
+              : 'every week, this page knows you a little better ✦'}
           </Text>
         )}
       </ScrollView>
