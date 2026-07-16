@@ -145,15 +145,27 @@ const ROOM_BOOKS = require('../../assets/room/room-books.png');
 // Placement in ORIGINAL art coords (172×144 canvas), matched to the
 // artist's final mock. Every sprite is 1:1 with the canvas — render at
 // its NATIVE w×h (scaling them squished the curtain off the window).
+// (Positions below are MEASURED, not eyeballed: the wall-shelf board
+// is art x107–157 with its top at y29; the cabinet's visual top is
+// exactly y65; the sprites' transparent margins were measured too —
+// books content x2..50/bottom y17, plant bottom margin 1px, mat
+// content x2..45 / y2..17, bowls content x1..17 / y1..14.)
 const DECOR = {
-  curtain: { x: 3, y: 2, w: 80, h: 74 }, // rod + tied-back fabric, centered on the window
+  curtain: { x: 3, y: 2, w: 80, h: 74 }, // centered on window wood x14–73
   plant: { x: 4, y: 74, w: 30, h: 53 }, // big floor plant, left
-  shelfPlant: { x: 108, y: 40, w: 14, h: 24 }, // the droopy→lush states, on the bookshelf
-  books: { x: 97, y: 17, w: 53, h: 20 }, // top wall shelf: books + cactus
+  // Content bottom = 43 + 24·(52/53) ≈ 66.5 → seated ON the cabinet
+  // top (y65), left of the frame.
+  shelfPlant: { x: 106, y: 43, w: 14, h: 24 },
+  // Books content (x2..50, bottom y17) seated on the board: sprite at
+  // x105 puts content at 107..155 on the 107–157 board; y11 puts the
+  // content's last row at 28, resting on the board top (29).
+  books: { x: 105, y: 11, w: 53, h: 20 },
   lamp: { x: 148, y: 44, w: 25, h: 86 }, // far right, base on the floor line
-  mat: { x: 118, y: 121, w: 48, h: 20 }, // little fringe mat under the bowls
-  foodBowl: { x: 123, y: 123, w: 19, h: 16 },
-  waterBowl: { x: 144, y: 123, w: 19, h: 16 },
+  // Mat content lands x122..165 / y124..139; bowls sit ON it with the
+  // fringe visible (pink 125..141, blue 144..160, bottoms y138).
+  mat: { x: 120, y: 122, w: 48, h: 20 },
+  foodBowl: { x: 124, y: 124, w: 19, h: 16 },
+  waterBowl: { x: 143, y: 124, w: 19, h: 16 },
   yarn: { x: 4, y: 124, w: 42, h: 18 }, // floor, front-left
 } as const;
 
@@ -263,14 +275,14 @@ const Room = ({
   }, [cheer]);
   const W = width ?? 344;
   const H = height ?? 288;
-  // The bg asset is the 172×144 art edge-extended to 200×164 so the
-  // scene sits zoomed OUT a touch (owner request) — wall and floor
-  // continue into the padding. All placement below is original art
-  // coords + the padding offset, scaled by k.
-  const kx = W / 200;
-  const ky = H / 164;
-  const OX = 14; // padding offset baked into room-bg.png
-  const OY = 10;
+  // The bg asset is the 172×144 art edge-extended to 220×180 so the
+  // scene sits zoomed OUT (owner request ×2 — the room read cramped) —
+  // wall and floor continue into the padding. All placement below is
+  // original art coords + the padding offset, scaled by k.
+  const kx = W / 220;
+  const ky = H / 180;
+  const OX = 24; // padding offset baked into room-bg.png
+  const OY = 18;
 
   // ── Walking animation — paces the cat left↔right across the rug,
   // showing the walk GIF while in motion and dropping back to the
@@ -2793,21 +2805,23 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     borderWidth: 1.5,
     borderColor: 'rgba(255,250,240,0.9)',
   },
+  // Compact vertical strip hugging the right edge — the old wide
+  // horizontal pill covered a third of the room when open.
   paintRow: {
     position: 'absolute',
     top: 96,
     right: 22,
-    flexDirection: 'row',
-    gap: 10,
-    backgroundColor: 'rgba(20,14,10,0.55)',
+    flexDirection: 'column',
+    gap: 8,
+    backgroundColor: 'rgba(20,14,10,0.5)',
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 9,
   },
   paintSwatch: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     borderWidth: 1,
     borderColor: 'rgba(255,250,240,0.35)',
   },
