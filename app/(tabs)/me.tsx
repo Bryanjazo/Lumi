@@ -510,8 +510,33 @@ const Room = ({
   // stars settles over it. Day split: 6:00–19:59.
   const hourNow = new Date().getHours();
   const isNightSky = hourNow < 6 || hourNow >= 20;
-  const dimAlpha = Math.min(1, Math.max(0, (1 - v) * 0.2 + (isNightSky ? 0.04 : 0)));
+  // Night darkness now lives in the phase veil below (stronger, and
+  // lifted by the lamp) — dimAlpha stays purely vitality-driven so
+  // the two don't stack into a mud-dark room.
+  const dimAlpha = Math.min(1, Math.max(0, (1 - v) * 0.2));
   const warmAlpha = Math.min(1, Math.max(0, v * 0.1));
+
+  // ── Day phases — the room lives in the user's real day ──────────
+  // dawn 5–8 rose-gold · day 8–16 clear · dusk 16–20 amber · night
+  // 20–5 deep blue. At night the lamp EARNS its keep: on lifts the
+  // dark veil (0.34 → 0.16) + casts a real light pool, so the toggle
+  // visibly changes the room.
+  const phase: 'dawn' | 'day' | 'dusk' | 'night' =
+    hourNow >= 5 && hourNow < 8
+      ? 'dawn'
+      : hourNow >= 8 && hourNow < 16
+        ? 'day'
+        : hourNow >= 16 && hourNow < 20
+          ? 'dusk'
+          : 'night';
+  const phaseVeil =
+    phase === 'dawn'
+      ? 'rgba(255,178,140,0.10)'
+      : phase === 'dusk'
+        ? 'rgba(255,148,84,0.12)'
+        : phase === 'night'
+          ? `rgba(12,16,44,${lampOn ? 0.16 : 0.34})`
+          : null;
 
   // Luna mood + position. Joy spikes (tap-to-cheer) amplify the bob
   // for ~80 frames so the cat visibly reacts to a tap.
@@ -721,21 +746,6 @@ const Room = ({
       }}
       resizeMode="stretch"
     />
-    {/* Lamp glow — soft warm pool when the lamp is on. */}
-    {lampOn && (
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          left: (DECOR.lamp.x - 10 + OX) * kx,
-          top: (DECOR.lamp.y + 4 + OY) * ky,
-          width: 44 * kx,
-          height: 44 * ky,
-          borderRadius: 22 * kx,
-          backgroundColor: hexA(C.glow, 0.16),
-        }}
-      />
-    )}
     {/* User-painted wall wash */}
     {roomTint !== 'none' && (
       <View
@@ -766,6 +776,23 @@ const Room = ({
     {/* (Night pane moved UNDER the curtain — it used to render here,
         on top of everything, and read as a blue square covering the
         curtain fabric.) */}
+    {/* Day-phase veil — the room lives in the user's real day: soft
+        rose-gold at dawn, clear daylight, amber at dusk, deep blue at
+        night. At night the veil is DARK enough that the lamp matters
+        — flipping it on visibly lifts the room. */}
+    {phaseVeil && (
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: W,
+          height: H,
+          backgroundColor: phaseVeil,
+        }}
+      />
+    )}
     {/* Vitality light — honey warmth up, dim veil down. Luna renders
         ABOVE the veils on purpose: she's the life of the room. */}
         <View
@@ -779,6 +806,50 @@ const Room = ({
         backgroundColor: `rgba(14,10,8,${dimAlpha.toFixed(3)})`,
       }}
     />
+    {/* Lamp light — a real pool, not a flat circle: radial warm glow
+        from the shade + a soft cast on the floor. Rendered ABOVE the
+        phase/dim veils so at night the light genuinely cuts through
+        the dark. */}
+    {lampOn && (
+      <Svg
+        pointerEvents="none"
+        style={{ position: 'absolute', left: 0, top: 0 }}
+        width={W}
+        height={H}
+      >
+        <Defs>
+          <RadialGradient id="lampPool" cx="50%" cy="50%" r="50%">
+            <Stop
+              offset="0"
+              stopColor="#FFD9A0"
+              stopOpacity={phase === 'night' ? 0.5 : 0.26}
+            />
+            <Stop
+              offset="0.55"
+              stopColor="#FFD9A0"
+              stopOpacity={phase === 'night' ? 0.2 : 0.1}
+            />
+            <Stop offset="1" stopColor="#FFD9A0" stopOpacity="0" />
+          </RadialGradient>
+        </Defs>
+        {/* glow around the shade */}
+        <Ellipse
+          cx={(DECOR.lamp.x + 12 + OX) * kx}
+          cy={(DECOR.lamp.y + 11 + OY) * ky}
+          rx={44 * kx}
+          ry={40 * ky}
+          fill="url(#lampPool)"
+        />
+        {/* warm cast pooling on the floor at the base */}
+        <Ellipse
+          cx={(DECOR.lamp.x + 12 + OX) * kx}
+          cy={(129 + OY) * ky}
+          rx={30 * kx}
+          ry={9 * ky}
+          fill="url(#lampPool)"
+        />
+      </Svg>
+    )}
     {/* Pixel cat overlay. The outer Animated.View owns the
        transform (translateX + scaleX, both Animated values so the
        native driver runs the whole thing) and the inner Image
