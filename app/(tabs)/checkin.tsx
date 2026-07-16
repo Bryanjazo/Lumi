@@ -1616,13 +1616,23 @@ export default function Untangle() {
         if (q.window === 'someday') moveWindow(p.taskId, 'morning');
         applied += 1;
       } else if (p.action === 'defer') {
-        moveWindow(p.taskId, 'someday');
-        applied += 1;
+        // Deferring a task already parked in Later is a no-op — don't
+        // count it toward "N sorted" (honest data).
+        if (q.window !== 'someday') {
+          moveWindow(p.taskId, 'someday');
+          applied += 1;
+        }
       } else if (p.action === 'surface') {
         // Surfacing must not strip a fixed clock time — setDate AND
         // moveWindow both wipe anchors + calendar mirrors, so the
         // original anchor is restored LAST (anchor() also re-derives
         // a coherent window from the time).
+        const sBefore = {
+          date: q.date,
+          window: q.window,
+          sh: q.scheduledHour ?? null,
+          sm: q.scheduledMinute ?? null,
+        };
         const sHadAnchor = q.scheduledHour != null;
         const sHadH = q.scheduledHour ?? 0;
         const sHadM = q.scheduledMinute ?? 0;
@@ -1635,17 +1645,26 @@ export default function Untangle() {
         }
         if (sHadAnchor) {
           anchor(p.taskId, sHadH, sHadM);
-        } else if (!dateChanged && !p.window && q.window !== 'someday') {
-          // True no-op surface — nothing was touched above; skip the
-          // applied count so the confirmation stays honest.
-          continue;
         }
-        applied += 1;
-        // Surface is the strongest "focus this" signal — the first
-        // one wins Home's main card (today only; surface targets the
-        // selected day).
-        if (!surfacedId && untanglingToday) surfacedId = p.taskId;
-        actionableCount += 1;
+        // FINAL-vs-initial diff — a same-window / same-day surface (or
+        // an anchored task restored to its own time) is a no-op and
+        // must not count or hijack Home's hero.
+        const sAfter = useQuestStore.getState().quests.find(
+          (x) => x.id === p.taskId,
+        );
+        const sChanged =
+          !!sAfter &&
+          (sAfter.date !== sBefore.date ||
+            sAfter.window !== sBefore.window ||
+            (sAfter.scheduledHour ?? null) !== sBefore.sh ||
+            (sAfter.scheduledMinute ?? null) !== sBefore.sm);
+        if (sChanged) {
+          applied += 1;
+          // Surface is the strongest "focus this" signal — first real
+          // one wins Home's card (today only).
+          if (!surfacedId && untanglingToday) surfacedId = p.taskId;
+          actionableCount += 1;
+        }
       }
     }
     // Hand Home the task Lumi steered onto. An explicit surface always
@@ -1702,6 +1721,13 @@ export default function Untangle() {
     ]);
     setView(res.view);
     setHighlightIds(res.highlightIds ?? []);
+    // Hand Home the top pick whenever a move singles one out — TODAY
+    // only. This must run for "What matters?" too, which HIGHLIGHTS
+    // its picks but has zero mutations; the handoff used to sit inside
+    // the mutations>0 branch, so "matters" never actually reached Home.
+    if (res.highlightIds && res.highlightIds[0] && selectedDate === todayKey()) {
+      useHomeFocusStore.getState().setPick(res.highlightIds[0]);
+    }
     if (res.mutations.length > 0) {
       // Apply BEFORE the reply lands (the old 700ms delay let a
       // second move interleave against the pre-mutation pile), and
@@ -1709,12 +1735,6 @@ export default function Untangle() {
       // path carries — they were the only irreversible surface.
       applyMutations(res.mutations);
       const tk = bankUndo();
-      // "What matters" surfaces the few that count — its top pick is
-      // the one to start on, so mirror it as Home's main card (today
-      // only). Other moves (park/defer) don't single out a focus.
-      if (res.highlightIds && res.highlightIds[0] && selectedDate === todayKey()) {
-        useHomeFocusStore.getState().setPick(res.highlightIds[0]);
-      }
       pushLumi(
         res.say,
         tk

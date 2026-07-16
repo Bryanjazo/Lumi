@@ -622,8 +622,16 @@ const DayTaskRow = ({
   // Past due = the whole day is behind you, OR its slot already
   // passed today. (Previously only the today case existed, so an
   // unfinished task on yesterday rendered exactly like "up next".)
+  // A WINDOWED task (no fixed clock time) is "sometime in this window",
+  // not an appointment — it renders at the window start, so marking it
+  // "missed" just because that start passed reads as guilt for a time
+  // the user never set (soul rule: never guilt). Only clock-ANCHORED
+  // tasks can be missed on today; a carried/dropped windowed task just
+  // waits. (Past DAYS still settle everything.)
   const missed =
-    !done && (isPast || (isToday && it.min + (it.durMin ?? 0) <= nowMin));
+    !done &&
+    (isPast ||
+      (isToday && !it.windowed && it.min + (it.durMin ?? 0) <= nowMin));
   // Radio-complete works on real quest rows only. Future dates show
   // recurring TEMPLATES as ghost projections — completing one of
   // those would mark the template itself done, which is a lie.

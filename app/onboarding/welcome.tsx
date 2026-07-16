@@ -473,15 +473,10 @@ export default function Onboarding() {
         ANCHOR_DEFS.map((a) => [a.key, a.def]),
       ) as unknown as DailyAnchors,
   );
-  // Companion-mode picker (step 6). Default 'full' so the cozy
-  // companion stays the natural choice unless the user dials down.
-  // All three modes (Full / Minimal / Focused) are surfaced — matches
-  // what's in Profile → Personalize. Earlier versions only offered
-  // Full + Focused; users landing in Full never realized Minimal
-  // existed as a middle ground.
-  const [companionPick, setCompanionPick] = useState<
-    'full' | 'minimal' | 'focused'
-  >('full');
+  // Companion mode is NOT chosen during onboarding — new users start in
+  // Full (the cozy default) and dial it down later in Profile → "How
+  // playful is Lumi?". (An in-onboarding picker was removed to keep the
+  // first-run decision light; finalize() just sets the default.)
   // Calendar-connect step (7) — single state machine for the button.
   // 'connected' freezes the row to its success state so the user
   // can move on without re-tapping; 'error' shows the iOS error so
@@ -691,11 +686,10 @@ export default function Onboarding() {
     const sharp = rhythmDef?.sharp ?? null;
     const foggy = rhythmDef?.foggy ?? null;
 
-    // Apply the user's companion-mode pick before completing
-    // onboarding so the very first Home render reflects their choice
-    // (cozy room + XP visible for 'full', clean organizer for
-    // 'focused'). The setter is a single Zustand call — no async.
-    setCompanionMode(companionPick);
+    // Start every new user in the cozy Full mode; they dial it down
+    // later in Profile. (Explicit so a re-onboard on this device can't
+    // inherit a previous account's dialed-down mode.)
+    setCompanionMode('full');
 
     // Picking the meds struggle IS the consent for the morning meds
     // nudge — the only way that notification ever turns on by itself.

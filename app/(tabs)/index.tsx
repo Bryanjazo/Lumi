@@ -3702,12 +3702,31 @@ export default function Home() {
           </View>
         ) : totallyEmpty ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyEyebrow}>Open canvas</Text>
-            <Text style={styles.emptyTitle}>Nothing on the day yet.</Text>
-            <Text style={styles.emptyBody}>
-              Tuck a thought below — Lumi will surface the next right thing
-              when there&apos;s something to surface.
-            </Text>
+            {backlogNudge ? (
+              // Honest: "nothing on the day" is false when work slipped
+              // from earlier. Gate on backlogNudge (not the raw overdue
+              // count) so the "waiting below" copy only appears when the
+              // standalone backlog card actually renders below.
+              <>
+                <Text style={styles.emptyEyebrow}>A soft start</Text>
+                <Text style={styles.emptyTitle}>
+                  Nothing new today — a few things carried over.
+                </Text>
+                <Text style={styles.emptyBody}>
+                  They&apos;re waiting below whenever you&apos;re ready — pull
+                  one into today, or let them rest.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.emptyEyebrow}>Open canvas</Text>
+                <Text style={styles.emptyTitle}>Nothing on the day yet.</Text>
+                <Text style={styles.emptyBody}>
+                  Tuck a thought below — Lumi will surface the next right
+                  thing when there&apos;s something to surface.
+                </Text>
+              </>
+            )}
           </View>
         ) : hero ? (
           <View ref={heroRef as never} style={styles.heroWrap}>
@@ -4083,6 +4102,33 @@ export default function Home() {
             it as the hero immediately. Long-press a row to edit;
             tapping "someday" on a someday row opens the move-back
             sheet. Delete intentionally lives on the hero card only. */}
+        {/* Standalone backlog nudge — the morning-after case where
+            nothing is dated today but real work slipped from before.
+            The nested nudge in the waiting card only shows when today
+            has tasks (rest>0), so overdue work was stranded with no
+            snooze/tuck affordance. */}
+        {rest.length === 0 && backlogNudge && !rescueActive && (
+          <View style={[styles.waitingCard, { padding: 16 }]}>
+            <Text style={styles.backlogLine}>{backlogNudge.line}</Text>
+            <View style={[styles.backlogRow, { marginTop: 12 }]}>
+              <Pressable onPress={backlogSnooze} style={styles.backlogBtn}>
+                <Text style={styles.backlogBtnText}>Snooze to tomorrow</Text>
+              </Pressable>
+              <Pressable onPress={backlogTuck} style={styles.backlogBtn}>
+                <Text style={styles.backlogBtnText}>Tuck into someday</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  dismissBacklogNudge();
+                }}
+                style={styles.backlogKeep}
+              >
+                <Text style={styles.backlogKeepText}>keep them</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
         {rest.length > 0 && !rescueActive && (
           <View style={styles.waitingCard}>
             <Pressable

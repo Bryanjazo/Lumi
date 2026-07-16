@@ -140,43 +140,21 @@ const addDays = (d: Date, n: number): Date => {
 export const nextOccurrence = (rule: RecurRule, fromISO?: string): string => {
   const from = fromISO ? fromYmd(fromISO) : new Date();
   from.setHours(0, 0, 0, 0);
-  const n = effInterval(rule);
-
-  switch (rule.every) {
-    case 'day':
-      // "every N days" — advance N days from the last spawn.
-      return ymd(addDays(from, n));
-
-    case 'weekday': {
-      let d = addDays(from, 1);
-      while (d.getDay() === 0 || d.getDay() === 6) d = addDays(d, 1);
-      return ymd(d);
-    }
-
-    case 'week': {
-      // "every N weeks on <day>" — walk to the next matching weekday,
-      // then add (n-1) more weeks so the gap is exactly N weeks.
-      const target = rule.day ? WEEKDAY_INDEX[rule.day] : from.getDay();
-      let d = addDays(from, 1);
-      while (d.getDay() !== target) d = addDays(d, 1);
-      if (n > 1) d = addDays(d, (n - 1) * 7);
-      return ymd(d);
-    }
-
-    case '2week': {
-      // Legacy biweekly — same as week + 1 extra 7-day jump.
-      const target = rule.day ? WEEKDAY_INDEX[rule.day] : from.getDay();
-      let d = addDays(from, 1);
-      while (d.getDay() !== target) d = addDays(d, 1);
-      return ymd(addDays(d, 7));
-    }
-
-    case 'month': {
-      const d = new Date(from);
-      d.setMonth(d.getMonth() + n);
-      return ymd(d);
-    }
+  // Walk forward to the first day the rule FIRES, using the exact same
+  // predicate the Time projection draws with (firesOnDate). This is
+  // the fix for the two-writer drift: the spawn cadence and the ghost
+  // projection now share ONE definition, so they can never disagree on
+  // month-end (Jan 31 → skip Feb → Mar 31) or interval parity. The cap
+  // covers the widest realistic gap — a high-interval monthly rule on
+  // the 31st that skips short months can be a couple years out (interval
+  // is user-settable up to 99) — while still terminating on a malformed
+  // rule, where the fallback keeps callers moving.
+  let d = addDays(from, 1);
+  for (let i = 0; i < 4200; i++) {
+    if (firesOnDate(rule, d, fromISO)) return ymd(d);
+    d = addDays(d, 1);
   }
+  return ymd(addDays(from, 30));
 };
 
 // DST-safe local day index — raw getTime()/86400000 mis-buckets across
@@ -209,15 +187,19 @@ export const firesOnDate = (
     case 'weekday':
       return dow >= 1 && dow <= 5;
     case 'week': {
-      if (!rule.day) return false;
-      if (WEEKDAY_INDEX[rule.day] !== dow) return false;
+      // A dayless week rule (common from bulk capture — "gym weekly")
+      // fires on the ANCHOR's weekday, matching the pre-unification
+      // spawn. Returning false here made nextOccurrence's walk never
+      // fire → habits respawned ~monthly.
+      const target = rule.day ? WEEKDAY_INDEX[rule.day] : anchor.getDay();
+      if (target !== dow) return false;
       const weeks = Math.floor((dayNumber(date) - dayNumber(anchor)) / 7);
       if (weeks < 0) return false;
       return n <= 1 ? true : weeks % n === 0;
     }
     case '2week': {
-      if (!rule.day) return false;
-      if (WEEKDAY_INDEX[rule.day] !== dow) return false;
+      const target = rule.day ? WEEKDAY_INDEX[rule.day] : anchor.getDay();
+      if (target !== dow) return false;
       const weeks = Math.floor((dayNumber(date) - dayNumber(anchor)) / 7);
       return weeks >= 0 && weeks % 2 === 0;
     }

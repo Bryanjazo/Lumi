@@ -534,6 +534,13 @@ export const useQuestStore = create<QuestState>()(
               completedAt: null,
               date: today,
               lastSpawnedDate: today,
+              // Each new day's instance earns XP again. xpPaid guards
+              // against undo→re-complete farming WITHIN a day; keeping
+              // it across the respawn made daily habits pay XP/shards
+              // exactly ONCE ever while the UI still showed "+xp today"
+              // (banked nothing — dishonest). The lastSpawnedDate===today
+              // guard above already blocks same-day re-award.
+              xpPaid: undefined,
               scheduledHour:
                 recurAt != null ? Math.floor(recurAt / 60) : q.scheduledHour,
               scheduledMinute:

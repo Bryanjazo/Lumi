@@ -38,8 +38,6 @@ import { colors } from '../constants/colors';
 import { useUserStore } from '../store/userStore';
 import { resetLocalUserData } from '../lib/localData';
 import { useQuestStore } from '../store/questStore';
-import { useCheckinStore } from '../store/checkinStore';
-import { useSuggestionsStore } from '../store/suggestionsStore';
 import { useSession, handleAuthDeepLink } from '../lib/auth';
 import { syncNotifications } from '../lib/notifications';
 import { isSupabaseConfigured } from '../lib/supabase';
@@ -308,14 +306,13 @@ export default function RootLayout() {
     // clean slate. Wrapped in try/catch so a single store failing to
     // reset doesn't bubble out and crash the auth-state-change tree.
     try {
-      const hasData =
-        useQuestStore.getState().quests.length > 0 ||
-        useCheckinStore.getState().checkins.length > 0 ||
-        useSuggestionsStore.getState().suggestions.length > 0;
-      if (!hasData) return;
-
-      // Shared wipe — the same reset signOut() uses (lib/localData),
-      // so "what counts as personal data" lives in exactly one place.
+      // Wipe UNCONDITIONALLY for a genuinely-new account on this device
+      // (all the guards above already established that). The old
+      // hasData proxy only checked quests/checkins/suggestions, so a
+      // previous account whose ONLY residue was pet SOS mental-health
+      // events, an active subscription/trial, or room/pet progression
+      // slipped through and leaked into the new account. resetLocalUser
+      // Data is idempotent, so wiping a truly-empty device is harmless.
       resetLocalUserData();
     } catch (e) {
       console.warn('[lumi] cross-account wipe failed', e);

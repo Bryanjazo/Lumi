@@ -44,7 +44,7 @@ const debounce = <T extends (...args: never[]) => void>(
 };
 
 // ── push: user profile ──────────────────────────────────────────────────
-const pushUser = async (userId: string) => {
+const pushUser = async (userId: string, forceLedgers = false) => {
   const s = useUserStore.getState();
   // Subscription columns are owned by the server / IAP webhook — we read
   // them but don't push, to avoid the client accidentally extending its
@@ -73,16 +73,49 @@ const pushUser = async (userId: string) => {
   // applied yet. PostgREST fails the WHOLE row on an unknown column,
   // so bundling these into the core upsert above would 400 and kill
   // ALL profile sync until the migration lands. Isolated here, a
-  // missing-column error only skips the ledgers. Gated on a completed
-  // pull so we never overwrite the cloud ledger with a not-yet-merged
-  // local copy (the pull is what max-merges cloud history in).
-  if (useSyncStatus.getState().pulledFor[userId]) {
+  // missing-column error only skips the ledgers. Normally gated on a
+  // completed pull so a not-yet-merged local copy can't briefly lower
+  // the cloud ledger — but the SIGN-OUT flush forces it (forceLedgers)
+  // so a session whose login pull failed doesn't lose its history to
+  // the wipe; the receiving device's pull max-merges anyway.
+  const pulled = useSyncStatus.getState().pulledFor[userId];
+  if (forceLedgers || pulled) {
+    let doneLog = s.doneLog;
+    let tasksEver = s.tasksEverCompleted;
+    let focusMin = s.focusMinutesLifetime;
+    // Forced flush BEFORE a completed pull (sign-out after a failed
+    // login pull): local hasn't merged the cloud, and the upsert is a
+    // plain overwrite with no server-side GREATEST — a blind write
+    // could LOWER a higher cloud ledger (another device). Read + max
+    // first so a forced push can only ever KEEP history. If the read
+    // fails we skip the ledger push rather than risk lowering.
+    if (forceLedgers && !pulled) {
+      const { data: cur, error: readErr } = await supabase
+        .from('users')
+        .select('done_log, tasks_ever_completed, focus_minutes_lifetime')
+        .eq('id', userId)
+        .maybeSingle();
+      if (readErr) {
+        console.warn('[sync] ledger read (skip force)', readErr.message);
+        return;
+      }
+      if (cur) {
+        tasksEver = Math.max(tasksEver, (cur.tasks_ever_completed as number) ?? 0);
+        focusMin = Math.max(focusMin, (cur.focus_minutes_lifetime as number) ?? 0);
+        const merged: Record<string, number> = { ...doneLog };
+        const cloud = (cur.done_log ?? {}) as Record<string, number>;
+        for (const [ymd, n] of Object.entries(cloud)) {
+          merged[ymd] = Math.max(merged[ymd] ?? 0, Number(n) || 0);
+        }
+        doneLog = merged;
+      }
+    }
     const { error: ledgerErr } = await supabase.from('users').upsert(
       {
         id: userId,
-        done_log: s.doneLog,
-        tasks_ever_completed: s.tasksEverCompleted,
-        focus_minutes_lifetime: s.focusMinutesLifetime,
+        done_log: doneLog,
+        tasks_ever_completed: tasksEver,
+        focus_minutes_lifetime: focusMin,
       },
       { onConflict: 'id' },
     );
@@ -352,6 +385,17 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       onboarded: userRow.onboarded ?? localState.onboarded,
       isTester: userRow.is_tester === true,
       offlineMode: userRow.offline_mode ?? false,
+      // "Member since" = the EARLIEST known date. On a reinstall the
+      // local onboardedAt resets, which dropped a long-time user back
+      // to "day 1 together" in Profile/Me — restore it from the
+      // server's created_at when that's older.
+      onboardedAt: (() => {
+        const cloud = (userRow.created_at as string | null) ?? null;
+        const local = localState.onboardedAt;
+        if (!cloud) return local;
+        if (!local) return cloud;
+        return cloud < local ? cloud : local;
+      })(),
       // Lifetime ledgers — monotonic merge (never lose history): counts
       // by max, done_log by per-day max so neither device's record is
       // erased. Cloud columns may be absent on pre-migration rows → 0.
@@ -483,16 +527,21 @@ export const pullAll = async (userId: string): Promise<boolean> => {
     const byId = new Map<string, Checkin>();
     for (const lc of local) byId.set(lc.id, lc);
     for (const r of c.data) {
+      // LOCAL WINS: coordinates (the real energy/zone the user placed)
+      // aren't round-tripped to Supabase yet, so a cloud row carries
+      // only a center placeholder. Overwriting a local row with it
+      // FLATTENED every user's whole energy history to a constant 50
+      // on each cold start (Patterns/Me/Recap all read from it). Only
+      // adopt a cloud row this device has never seen.
+      if (byId.has(r.id)) continue;
       let parsed: { state?: string; explanation?: string; action?: string } = {};
       try {
         parsed = r.ai_response ? JSON.parse(r.ai_response) : {};
       } catch {
         /* ignore malformed */
       }
-      // Coordinate fields aren't yet round-tripped to Supabase — until
-      // the columns land, plant cloud rows at center and derive zone/
-      // energy from that. Local rows already carry their own coord and
-      // win on the next sync push.
+      // Coordinate fields aren't yet round-tripped to Supabase — plant
+      // never-seen cloud rows at center and derive zone/energy from it.
       const x = 0.5;
       const y = 0.5;
       byId.set(r.id, {
@@ -620,7 +669,9 @@ export const pullAll = async (userId: string): Promise<boolean> => {
  */
 export const pushAllNow = async (userId: string): Promise<void> => {
   await Promise.all([
-    pushUser(userId),
+    // forceLedgers — this is the sign-out flush before the local wipe;
+    // never let it drop the session's doneLog / lifetime counts.
+    pushUser(userId, true),
     pushQuests(userId),
     pushCheckins(userId),
     pushPet(userId),
