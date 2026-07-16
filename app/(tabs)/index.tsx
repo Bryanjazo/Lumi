@@ -146,6 +146,7 @@ import {
   useFocusSession,
   selectRemainingSeconds,
 } from '../../lib/focusSession';
+import { completeQuestCore } from '../../lib/completeQuest';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -1032,9 +1033,8 @@ export default function Home() {
   const xp = useUserStore((s) => s.xp);
   const streak = useUserStore((s) => s.streak);
   const activeDaysThisMonth = useUserStore((s) => s.activeDaysThisMonth);
-  const addXp = useUserStore((s) => s.addXp);
-  const addShard = useUserStore((s) => s.addShard);
-  const registerActivity = useUserStore((s) => s.registerActivity);
+  // (XP/shard/activity economy moved into the shared completeQuestCore
+  // helper — completion no longer needs these bindings here.)
   // Smart-capture context (learned rhythms → smart Layer-2 placement).
   const sharpWindow = useUserStore((s) => s.sharpWindow);
   const foggyWindow = useUserStore((s) => s.foggyWindow);
@@ -1548,36 +1548,12 @@ export default function Home() {
   };
 
   const completeQuest = (q: Quest) => {
-    // Fresh-store read — the render-closure quest goes stale between
-    // taps. A double-tap used to see completed=false twice: the 2nd
-    // toggle flipped the quest BACK open while stale xpPaid paid the
-    // economy a second time.
-    const fresh = useQuestStore.getState().quests.find((x) => x.id === q.id);
-    if (!fresh || fresh.completed) return;
-    const next = toggle(q.id);
-    if (!next || !next.completed) return;
-
-    // ECONOMY GUARD (audit C1): XP/shards pay exactly ONCE per quest,
-    // ever — undo→re-complete used to farm them indefinitely.
-    const gain = fresh.xpReward;
-    const firstAward = !fresh.xpPaid;
-    if (firstAward) {
-      addXp(gain);
-      addShard();
-      useQuestStore.getState().markXpPaid(q.id);
-    }
-    registerActivity();
-
-    // If a focus session is running ON THIS quest, end it cleanly
-    // so the Dynamic Island pill clears immediately (otherwise it
-    // lingers until its full duration ticks out, which feels broken
-    // after the user already marked the task done). Reason is
-    // 'cancelled' — the user gets their celebration from the manual
-    // completion path, not from the focus-card's done screen.
-    const fs = useFocusSession.getState();
-    if (fs.current?.questId === q.id) {
-      void fs.end({ reason: 'cancelled' });
-    }
+    // THE shared completion fan-out — flips to done, pays XP/shards
+    // once ever, registers activity, ends a focus session on this
+    // quest. Returns null on a no-op (stale double-tap / already done).
+    const result = completeQuestCore(q.id);
+    if (!result) return;
+    const { firstAward, gain } = result;
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setSwap(0);

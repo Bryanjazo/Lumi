@@ -75,6 +75,7 @@ import {
 } from '../../store/userStore';
 import { useQuestStore, type Quest } from '../../store/questStore';
 import { useLearningDigest } from '../../lib/learning';
+import { completeQuestCore } from '../../lib/completeQuest';
 import { todayKey } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
 import { useUncompleteConfirm } from '../../components/TaskDeleteWrap';
@@ -662,24 +663,12 @@ const DayTaskRow = ({
   }));
   const confirmUncomplete = useUncompleteConfirm(it.questId ?? '', it.title);
 
-  // FAN-OUT mirrors Home's completeQuest (XP + shard + activity) so
-  // finishing a missed task here grants the same rewards.
+  // THE shared completion fan-out (XP + shard + activity + focus-end),
+  // so finishing a missed task here grants exactly the same rewards as
+  // Home / Untangle — one definition, no drift.
   const markDone = () => {
     if (!it.questId) return;
-    const prev = useQuestStore
-      .getState()
-      .quests.find((qq) => qq.id === it.questId);
-    const next = useQuestStore.getState().toggle(it.questId);
-    if (prev && next && !prev.completed && next.completed) {
-      const u = useUserStore.getState();
-      // Economy guard — XP/shards pay once per quest, ever (C1).
-      if (!prev.xpPaid) {
-        u.addXp(next.xpReward);
-        u.addShard();
-        useQuestStore.getState().markXpPaid(next.id);
-      }
-      u.registerActivity();
-    }
+    completeQuestCore(it.questId);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 

@@ -63,6 +63,7 @@ import { useDeleteConfirm } from '../../components/TaskDeleteWrap';
 import { MoveBackToDateSheet } from '../../components/MoveBackToDateSheet';
 import { useUserStore } from '../../store/userStore';
 import { useFocusSession } from '../../lib/focusSession';
+import { completeQuestCore } from '../../lib/completeQuest';
 import { MicIcon } from '../../components/MicIcon';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 import { useKeyboardHeight } from '../../lib/useKeyboard';
@@ -848,10 +849,8 @@ export default function Untangle() {
   const moveWindow = useQuestStore((s) => s.moveWindow);
   const setDate = useQuestStore((s) => s.setDate);
   const anchor = useQuestStore((s) => s.anchor);
-  const toggleQuest = useQuestStore((s) => s.toggle);
-  const addXp = useUserStore((s) => s.addXp);
-  const addShard = useUserStore((s) => s.addShard);
-  const registerActivity = useUserStore((s) => s.registerActivity);
+  // (Completion economy — toggle/addXp/addShard/registerActivity —
+  // moved into the shared completeQuestCore helper.)
 
   // User profile bits the LLM needs as context (sharp/foggy windows,
   // anchors, top struggles).
@@ -1393,24 +1392,14 @@ export default function Untangle() {
           .quests.find((x) => x.id === p.taskId);
         if (!live || live.completed) continue;
         if (seenIds.has(p.taskId)) continue; // duplicate id in one proposal
+        // Snapshot BEFORE the toggle (the helper flips it) so undo can
+        // restore the open state.
         snapshotForUndo(p.taskId);
         seenIds.add(p.taskId);
-        const next = toggleQuest(live.id);
-        // Pay ONLY when the flip landed in the done direction.
-        if (next && next.completed) {
-          // Economy guard — once per quest, ever (Home audit C1).
-          if (!live.xpPaid) {
-            addXp(live.xpReward);
-            addShard();
-            useQuestStore.getState().markXpPaid(live.id);
-          }
-          registerActivity();
-          // Same as Home's completeQuest: a focus session running on
-          // this quest ends now, or the Island pill lingers.
-          const fs = useFocusSession.getState();
-          if (fs.current?.questId === live.id) {
-            void fs.end({ reason: 'cancelled' });
-          }
+        // THE shared completion fan-out — same XP/shard/activity/
+        // focus-end as Home + Time (one definition, no drift).
+        const done = completeQuestCore(live.id);
+        if (done) {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           applied += 1;
         }
