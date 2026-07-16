@@ -1925,10 +1925,9 @@ export default function MeTab() {
           />
           <View style={[styles.heroTopBar, { top: insets.top + 8 }]}>
             <Text style={styles.heroEyebrow}>{petName}&apos;s room</Text>
-            <View style={{ flex: 1 }} />
-            {/* Same canonical icon as every other tab (components/
-                ProfileIcon) — Me used to draw its own honey variant
-                and the mismatch read as a bug. */}
+            {/* Paint dot lives LEFT, beside the eyebrow over blank
+                scrimmed wall — parked at top-right it sat directly on
+                the shelf's cactus (owner screenshot). */}
             <Pressable
               onPress={() => setPaintOpen((o) => !o)}
               hitSlop={8}
@@ -1947,6 +1946,10 @@ export default function MeTab() {
                 ]}
               />
             </Pressable>
+            <View style={{ flex: 1 }} />
+            {/* Same canonical icon as every other tab (components/
+                ProfileIcon) — Me used to draw its own honey variant
+                and the mismatch read as a bug. */}
             <ProfileIcon />
           </View>
         </Pressable>
@@ -2916,7 +2919,7 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    marginRight: 10,
+    marginLeft: 10,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(20,14,10,0.35)',
