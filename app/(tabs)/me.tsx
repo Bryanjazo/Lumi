@@ -160,12 +160,16 @@ const DECOR = {
   // x105 puts content at 107..155 on the 107–157 board; y11 puts the
   // content's last row at 28, resting on the board top (29).
   books: { x: 105, y: 11, w: 53, h: 20 },
-  lamp: { x: 148, y: 44, w: 25, h: 86 }, // far right, base on the floor line
-  // Mat content lands x122..165 / y124..139; bowls sit ON it with the
-  // fringe visible (pink 125..141, blue 144..160, bottoms y138).
-  mat: { x: 120, y: 122, w: 48, h: 20 },
-  foodBowl: { x: 124, y: 124, w: 19, h: 16 },
-  waterBowl: { x: 143, y: 124, w: 19, h: 16 },
+  // Pushed right into the padded floor so the shade clears the frame
+  // and the cabinet-top decor entirely (owner: "don't block the
+  // plant"). The extended bg keeps the floor under it.
+  lamp: { x: 157, y: 44, w: 25, h: 86 },
+  // Lower on the floor, clear of the lamp; bowls CENTERED on the mat
+  // (mat content y129..144; bowls content y130..143, 1px fringe top
+  // and bottom; pink 125..141, blue 145..161 inside content 122..165).
+  mat: { x: 120, y: 127, w: 48, h: 20 },
+  foodBowl: { x: 124, y: 129, w: 19, h: 16 },
+  waterBowl: { x: 144, y: 129, w: 19, h: 16 },
   yarn: { x: 4, y: 124, w: 42, h: 18 }, // floor, front-left
 } as const;
 
@@ -1654,9 +1658,25 @@ export default function MeTab() {
   const doWater = () => {
     careTouched();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const grew = waterPlant();
+    // Honest toast: only claim growth when the DISPLAYED stage rises.
+    // (waterPlant() can cross a growth-points threshold while vitality
+    // already latched the visual at its peak — nothing would change on
+    // screen, so "it grew" would be a lie.)
+    const before = useRoomStore.getState();
+    const shownBefore = Math.max(
+      before.peakStage,
+      stageForGrowth(before.growthPoints),
+    );
+    waterPlant();
+    const after = useRoomStore.getState();
+    const shownAfter = Math.max(
+      after.peakStage,
+      stageForGrowth(after.growthPoints),
+    );
     showCareToast(
-      grew ? 'Your plant grew a little. 🌱' : 'Watered — it perks up. 💧',
+      shownAfter > shownBefore
+        ? 'Your plant grew a little. 🌱'
+        : 'Watered — it perks up. 💧',
     );
   };
   const doFeed = () => {
@@ -1859,37 +1879,70 @@ export default function MeTab() {
             </Pressable>
             <ProfileIcon />
           </View>
-          {paintOpen && (
-            <View style={styles.paintRow}>
-              {(
-                ['none', 'rose', 'sage', 'sky', 'lavender', 'honey'] as const
-              ).map((t) => (
-                <Pressable
-                  key={t}
-                  hitSlop={6}
-                  onPress={() => {
-                    setRoomTint(t);
-                    setPaintOpen(false);
-                    void Haptics.impactAsync(
-                      Haptics.ImpactFeedbackStyle.Light,
-                    );
-                  }}
-                  style={[
-                    styles.paintSwatch,
-                    {
-                      backgroundColor:
-                        t === 'none' ? '#E8DCC8' : ROOM_TINTS[t],
-                    },
-                    roomTint === t && styles.paintSwatchOn,
-                  ]}
-                  accessibilityLabel={
-                    t === 'none' ? 'Original walls' : `${t} walls`
-                  }
-                />
-              ))}
-            </View>
-          )}
         </Pressable>
+
+        {/* Room color — same picker language as the skins row in
+            "Your space" (labeled cells, selected ring), rendered
+            IN-FLOW below the room so it never covers the art. Toggled
+            by the paint dot in the hero chrome. */}
+        {paintOpen && (
+          <View style={styles.roomColorBlock}>
+            <Text style={styles.roomColorTitle}>Room color</Text>
+            <View style={styles.roomColorRow}>
+              {(
+                [
+                  { t: 'none', label: 'Original' },
+                  { t: 'rose', label: 'Rose' },
+                  { t: 'sage', label: 'Sage' },
+                  { t: 'sky', label: 'Sky' },
+                  { t: 'lavender', label: 'Lavender' },
+                  { t: 'honey', label: 'Honey' },
+                ] as const
+              ).map(({ t, label }) => {
+                const on = roomTint === t;
+                return (
+                  <Pressable
+                    key={t}
+                    onPress={() => {
+                      setRoomTint(t);
+                      void Haptics.impactAsync(
+                        Haptics.ImpactFeedbackStyle.Light,
+                      );
+                    }}
+                    style={[
+                      styles.roomColorCell,
+                      on && styles.roomColorCellOn,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: on }}
+                    accessibilityLabel={`${label} walls`}
+                  >
+                    <View
+                      style={[
+                        styles.roomColorDot,
+                        {
+                          backgroundColor:
+                            t === 'none' ? '#E8DCC8' : ROOM_TINTS[t],
+                        },
+                      ]}
+                    />
+                    <Text
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                      style={[
+                        styles.roomColorLabel,
+                        on && styles.roomColorLabelOn,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
         {/* Care is DIEGETIC — you tap the objects in the room itself
             (plant, bowls, window, lamp). One quiet whisper teaches it,
@@ -2805,29 +2858,58 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     borderWidth: 1.5,
     borderColor: 'rgba(255,250,240,0.9)',
   },
-  // Compact vertical strip hugging the right edge — the old wide
-  // horizontal pill covered a third of the room when open.
-  paintRow: {
-    position: 'absolute',
-    top: 96,
-    right: 22,
-    flexDirection: 'column',
-    gap: 8,
-    backgroundColor: 'rgba(20,14,10,0.5)',
-    borderRadius: 999,
-    paddingHorizontal: 6,
+  // Room-color picker — the same visual language as the profile's
+  // skins row (labeled cells + selected ring), in-flow below the room
+  // so it never covers the art.
+  roomColorBlock: {
+    paddingHorizontal: 24,
+    marginTop: -2,
+    marginBottom: 14,
+  },
+  roomColorTitle: {
+    fontFamily: fonts.interSemi,
+    fontSize: 10,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: '#8A8072',
+    marginBottom: 8,
+  },
+  roomColorRow: {
+    flexDirection: 'row',
+    gap: 7,
+  },
+  roomColorCell: {
+    flex: 1,
+    alignItems: 'center',
     paddingVertical: 9,
-  },
-  paintSwatch: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    paddingHorizontal: 3,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,250,240,0.35)',
+    borderColor: '#2A2420',
+    backgroundColor: '#1A1512',
   },
-  paintSwatchOn: {
-    borderWidth: 2,
-    borderColor: 'rgba(255,250,240,0.95)',
+  roomColorCellOn: {
+    borderColor: '#E8A87C',
+    backgroundColor: 'rgba(232,168,124,0.10)',
+  },
+  roomColorDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(255,250,240,0.3)',
+    marginBottom: 6,
+  },
+  roomColorLabel: {
+    fontFamily: fonts.inter,
+    fontSize: 10,
+    color: '#8A8072',
+    width: '100%',
+    textAlign: 'center',
+  },
+  roomColorLabelOn: {
+    fontFamily: fonts.interSemi,
+    color: '#E8DCC8',
   },
 
   // ═════ Your corner ═════
