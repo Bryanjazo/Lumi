@@ -163,13 +163,12 @@ const DECOR = {
   // Pushed right into the padded floor so the shade clears the frame
   // and the cabinet-top decor entirely (owner: "don't block the
   // plant"). The extended bg keeps the floor under it.
-  lamp: { x: 157, y: 44, w: 25, h: 86 },
-  // Lower on the floor, clear of the lamp; bowls CENTERED on the mat
-  // (mat content y129..144; bowls content y130..143, 1px fringe top
-  // and bottom; pink 125..141, blue 145..161 inside content 122..165).
+  lamp: { x: 162, y: 44, w: 25, h: 86 },
+  // Lower on the floor, clear of the lamp; bowls sit slightly HIGH on
+  // the mat (owner nudge) so their bottoms never kiss the fringe.
   mat: { x: 120, y: 127, w: 48, h: 20 },
-  foodBowl: { x: 124, y: 129, w: 19, h: 16 },
-  waterBowl: { x: 144, y: 129, w: 19, h: 16 },
+  foodBowl: { x: 124, y: 127, w: 19, h: 16 },
+  waterBowl: { x: 144, y: 127, w: 19, h: 16 },
   yarn: { x: 4, y: 124, w: 42, h: 18 }, // floor, front-left
 } as const;
 
