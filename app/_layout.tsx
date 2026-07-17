@@ -415,6 +415,21 @@ export default function RootLayout() {
 
   const trialChoiceSeen = useUserStore((s) => s.trialChoiceSeen);
 
+  // Timeout fallback for the check-first onboarding gate below: if the
+  // first pull hasn't spoken for this uid within 12s (hard network
+  // failure), release the hold so a genuinely-new user can onboard.
+  // Resets whenever the uid changes.
+  const [pullWaitTimedOut, setPullWaitTimedOut] = useState(false);
+  useEffect(() => {
+    const uid = session?.user.id;
+    setPullWaitTimedOut(false);
+    if (!uid || !isSupabaseConfigured) return;
+    if (onboardedUserIds[uid] || pulledFor[uid]) return;
+    const t = setTimeout(() => setPullWaitTimedOut(true), 12_000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user.id, onboardedUserIds, pulledFor]);
+
   useEffect(() => {
     if (!hydrated || !fontsReady) return;
     if (isSupabaseConfigured && sessionLoading) return;
@@ -446,6 +461,23 @@ export default function RootLayout() {
 
     // 2. Then the per-user onboarding gate.
     if (!isOnboardedForCurrentUser) {
+      // CHECK FIRST, PROMPT SECOND: a returning user (Google/Apple
+      // sign-in, reinstall) has no local receipt until the first cloud
+      // pull mints it — routing to onboarding immediately flashed the
+      // "about to onboard" screen for a beat before the pull yanked it
+      // away. Hold here (the auth screen simply stays put) until the
+      // pull has spoken for this uid; the timeout fallback keeps a
+      // genuinely-new user on a flaky network from waiting forever.
+      const uid = session?.user.id;
+      if (
+        !allowOfflineDev &&
+        isSupabaseConfigured &&
+        uid &&
+        !pulledFor[uid] &&
+        !pullWaitTimedOut
+      ) {
+        return;
+      }
       if (!inOnboarding || inTrialChoice) router.replace('/onboarding/welcome');
       return;
     }
@@ -486,6 +518,8 @@ export default function RootLayout() {
     trialChoiceSeen,
     segments,
     router,
+    pulledFor,
+    pullWaitTimedOut,
   ]);
 
   if (!fontsReady || !hydrated) {
