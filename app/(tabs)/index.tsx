@@ -152,6 +152,7 @@ import {
   stampAll,
 } from '../../lib/learning/reveals';
 import { useRevealsStore } from '../../store/revealsStore';
+import { usePetStore } from '../../store/petStore';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -1207,11 +1208,19 @@ export default function Home() {
     label: string,
     undo?: () => void,
     actionLabel?: string,
+    opts?: { sticky?: boolean },
   ) => {
     setNotifBanner({ origin, label, undo, actionLabel });
     AccessibilityInfo.announceForAccessibility(`${origin}. ${label}`);
     if (notifBannerTimer.current) clearTimeout(notifBannerTimer.current);
-    // Long enough to read + act on undo without being sticky forever.
+    // STICKY banners stay until dismissed — used when the banner IS
+    // the entire result of a notification tap (meds, empty states):
+    // a 9s window meant "tapped it, saw nothing" whenever hydration
+    // or a slow open ate the window. Others still auto-dismiss.
+    if (opts?.sticky) {
+      notifBannerTimer.current = null;
+      return;
+    }
     notifBannerTimer.current = setTimeout(() => setNotifBanner(null), 9000);
   };
   // Soft highlight pulse on the hero card so a notification-driven swap
@@ -3107,13 +3116,17 @@ export default function Home() {
   }, [isFocused]);
 
   // ── Notification tap → the promised action ──────────────────────
-  const notifIntent = useNotifIntentStore((s) => s.intent);
+  const notifIntent = useNotifIntentStore((s) => s.intents[0] ?? null);
   const consumeNotifIntent = useNotifIntentStore((s) => s.consume);
   useEffect(() => {
     // Wait for the real quest list — consuming against the empty
     // pre-hydration store made every intent lie ("Nothing on the
     // plate" to a rescue-notification tap) and destroyed the intent.
-    if (!isFocused || !notifIntent || !questsHydrated) return;
+    // Also pace on the banner slot: two taps queued (meds + morning
+    // nudge land minutes apart) show ONE AT A TIME — the next intent
+    // waits until the current banner is dismissed/expired instead of
+    // stomping it.
+    if (!isFocused || !notifIntent || !questsHydrated || notifBanner) return;
     const intent = consumeNotifIntent();
     if (!intent) return;
     // A physical "something happened" cue the instant they arrive —
@@ -3134,10 +3147,21 @@ export default function Home() {
     // Short phrase for the uppercase eyebrow (a full bodySnippet
     // sentence would read badly in caps; it stays plumbed for a11y).
     const origin = ORIGIN[intent.action] ?? 'From your notification';
+    // A banner that is the ENTIRE visible result of the tap (no card
+    // swap, no sheet) stays until dismissed — the 9s auto-window was
+    // the "I tapped it and it showed nothing" bug when a slow open ate
+    // it. Banners that ACCOMPANY a visible change keep the auto-close.
+    const STICKY = { sticky: true };
     switch (intent.action) {
       case 'hero': {
         if (candidates.length === 0) {
-          showNotifBanner(origin, 'Nothing on the plate — rest counts. 💛');
+          showNotifBanner(
+            origin,
+            'Nothing on the plate — rest counts. 💛',
+            undefined,
+            undefined,
+            STICKY,
+          );
           break;
         }
         const already = hero?.id === candidates[0].id;
@@ -3152,11 +3176,29 @@ export default function Home() {
         break;
       }
       case 'meds':
-        showNotifBanner(origin, 'Meds + a bite — that’s the whole job. 💛');
+        // A medication reminder deserves a real action, not an echo:
+        // "I took them" logs the dose via the pet-care ledger (stamps
+        // lastCare.meds + grounds the cat) and confirms warmly.
+        showNotifBanner(
+          origin,
+          'Meds + a bite — that’s the whole job. 💛',
+          () => {
+            usePetStore.getState().care('meds');
+            showToast(`Logged 💊 ${focusPetName} settles a little.`);
+          },
+          'I took them',
+          STICKY,
+        );
         break;
       case 'smallest': {
         if (candidates.length === 0) {
-          showNotifBanner(origin, 'Nothing waiting — that’s a win, not a stall.');
+          showNotifBanner(
+            origin,
+            'Nothing waiting — that’s a win, not a stall.',
+            undefined,
+            undefined,
+            STICKY,
+          );
           break;
         }
         // Smallest = lowest tier, then shortest. Momentum first.
@@ -3195,14 +3237,28 @@ export default function Home() {
           setDaySetOpen(true);
           showNotifBanner(origin, 'Let’s line up tomorrow’s first thread.');
         } else {
-          pillInputRef.current?.focus();
-          showNotifBanner(origin, 'Tuck tomorrow’s first thing below — it’ll wait.');
+          // Deferred — a bare .focus() right after a cold-start
+          // navigation often no-ops on iOS (keyboard never opens).
+          setTimeout(() => pillInputRef.current?.focus(), 450);
+          showNotifBanner(
+            origin,
+            'Tuck tomorrow’s first thing below — it’ll wait.',
+            undefined,
+            undefined,
+            STICKY,
+          );
         }
         break;
       }
       case 'rescue':
         if (totallyEmpty) {
-          showNotifBanner(origin, 'Nothing on the plate — that IS today’s win.');
+          showNotifBanner(
+            origin,
+            'Nothing on the plate — that IS today’s win.',
+            undefined,
+            undefined,
+            STICKY,
+          );
         } else {
           setForceRescue(true);
           showNotifBanner(
@@ -3233,7 +3289,13 @@ export default function Home() {
         } else {
           // Honest: it isn't in today's list — could be done, moved, or
           // reparked. Don't assert "already handled".
-          showNotifBanner(origin, 'That one’s off today’s list — done or moved. 💛');
+          showNotifBanner(
+            origin,
+            'That one’s off today’s list — done or moved. 💛',
+            undefined,
+            undefined,
+            STICKY,
+          );
         }
         break;
       }
@@ -3246,23 +3308,34 @@ export default function Home() {
         if (fs.current && selectRemainingSeconds(fs.current) <= 0) {
           void fs.end({ reason: 'completed' });
         }
-        showNotifBanner(origin, 'That focus block counted. 💛');
+        showNotifBanner(
+          origin,
+          'That focus block counted. 💛',
+          undefined,
+          undefined,
+          STICKY,
+        );
         break;
       }
       case 'dump': {
         // The morning ritual (§3b) — the notification promised "tell
-        // me and I'll sort it", so the tap lands ready to listen:
-        // focus the capture pill, keyboard up.
-        pillInputRef.current?.focus();
+        // me and I'll sort it", so the tap lands ready to listen.
+        // Deferred focus: a bare .focus() right after cold-start
+        // navigation frequently no-ops on iOS (keyboard never opened
+        // → "tapped it, nothing happened").
+        setTimeout(() => pillInputRef.current?.focus(), 450);
         showNotifBanner(
           origin,
           'here — tell me what’s on your mind. i’ll sort it.',
+          undefined,
+          undefined,
+          STICKY,
         );
         break;
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFocused, notifIntent, questsHydrated]);
+  }, [isFocused, notifIntent, questsHydrated, notifBanner]);
 
   // ── Untangle → Home "focus this" handoff ────────────────────────
   // When a conversation in Untangle switched the user onto a task

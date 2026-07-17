@@ -32,18 +32,36 @@ export interface NotifIntent {
 }
 
 interface NotifIntentState {
-  intent: NotifIntent | null;
+  /** FIFO — two notifications tapped close together (meds + the
+   *  morning nudge both land at breakfast time) used to share ONE
+   *  slot, so the second tap silently erased the first. Home consumes
+   *  one at a time, pacing on its banner slot. */
+  intents: NotifIntent[];
   setIntent: (i: NotifIntent | null) => void;
-  /** Read-and-clear — consumers call this exactly once per intent. */
+  /** Read-and-remove the FIRST queued intent. */
   consume: () => NotifIntent | null;
 }
 
 export const useNotifIntentStore = create<NotifIntentState>()((set, get) => ({
-  intent: null,
-  setIntent: (i) => set({ intent: i }),
+  intents: [],
+  setIntent: (i) => {
+    if (!i) {
+      set({ intents: [] });
+      return;
+    }
+    set((s) => {
+      // Dedupe: replaying the same action while it's still queued
+      // (double-tap, cold-start replay) must not double it.
+      if (s.intents.some((q) => q.action === i.action && q.questId === i.questId)) {
+        return s;
+      }
+      return { intents: [...s.intents, i] };
+    });
+  },
   consume: () => {
-    const i = get().intent;
-    if (i) set({ intent: null });
-    return i;
+    const [first, ...rest] = get().intents;
+    if (!first) return null;
+    set({ intents: rest });
+    return first;
   },
 }));

@@ -63,13 +63,37 @@ export default function RootLayout() {
   const router2 = useRouter();
   const handledNotifRef = useRef<string | null>(null);
   useEffect(() => {
+    // Dedupe key for a delivered tap. Repeating notifications reuse a
+    // CONSTANT identifier ('lumi-meds' etc.) every day — if the OS
+    // ever omits notification.date, the old identifier-only key
+    // collapsed to the same string forever and day-2+ cold-start taps
+    // were silently dropped. Fall back to the local day so a constant
+    // id is at worst deduped within one day.
+    const keyFor = (resp: Notifications.NotificationResponse): string => {
+      const d = new Date();
+      const dayStamp = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+      return (
+        resp.notification.request.identifier +
+        '|' +
+        String(resp.notification.date ?? dayStamp)
+      );
+    };
+    const persistSeen = (key: string) => {
+      void import('@react-native-async-storage/async-storage')
+        .then(({ default: AsyncStorage }) =>
+          AsyncStorage.setItem('lumi.lastNotifResponse', key),
+        )
+        .catch(() => {});
+    };
     const act = (resp: Notifications.NotificationResponse | null) => {
       if (!resp) return;
-      const key =
-        resp.notification.request.identifier +
-        String(resp.notification.date ?? '');
+      const key = keyFor(resp);
       if (handledNotifRef.current === key) return;
       handledNotifRef.current = key;
+      // The LIVE listener persists the key too — it used to be
+      // cold-start-only, so a tap handled live could be replayed by
+      // the next launch's getLastNotificationResponseAsync.
+      persistSeen(key);
       const data = (resp.notification.request.content.data ?? {}) as {
         action?: NotifIntent['action'];
         questId?: string;
@@ -102,9 +126,7 @@ export default function RootLayout() {
         ).default;
         const resp = await Notifications.getLastNotificationResponseAsync();
         if (!resp) return;
-        const key =
-          resp.notification.request.identifier +
-          String(resp.notification.date ?? '');
+        const key = keyFor(resp);
         const seen = await AsyncStorage.getItem('lumi.lastNotifResponse');
         if (seen === key) return;
         await AsyncStorage.setItem('lumi.lastNotifResponse', key);
