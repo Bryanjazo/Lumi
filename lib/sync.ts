@@ -46,22 +46,64 @@ const debounce = <T extends (...args: never[]) => void>(
 // ── push: user profile ──────────────────────────────────────────────────
 const pushUser = async (userId: string, forceLedgers = false) => {
   const s = useUserStore.getState();
+  const pulled = useSyncStatus.getState().pulledFor[userId];
+  // PULL FIRST, PUSH SECOND. Between sign-in and the first completed
+  // pull, the local store may be post-sign-out-wipe DEFAULTS — and this
+  // upsert is a plain overwrite. One store write in that window (e.g.
+  // Google sign-in setting the display name) used to clobber the cloud
+  // profile with onboarded:false / xp:0 / adhd_type:null, making a
+  // returning user look brand new on every device thereafter.
+  if (!pulled && !forceLedgers) return;
+  // The forced sign-out flush may legitimately run before a clean pull
+  // (login pull failed all session). Local is the best record of THIS
+  // session, but it never merged the cloud — read first so the flush
+  // can only ever KEEP what the cloud already knew.
+  let onboarded = s.onboarded;
+  let adhdType = s.adhdType;
+  let name = s.name;
+  let xp = s.xp;
+  let streak = s.streak;
+  let lastActiveDate = s.lastActiveDate;
+  if (!pulled) {
+    const { data: cur, error: readErr } = await supabase
+      .from('users')
+      .select('onboarded, adhd_type, name, xp, streak, last_active_date')
+      .eq('id', userId)
+      .maybeSingle();
+    if (readErr) {
+      // Can't see the cloud → don't risk overwriting it.
+      console.warn('[sync] profile read (skip push)', readErr.message);
+      return;
+    }
+    if (cur) {
+      onboarded = onboarded || cur.onboarded === true;
+      adhdType = adhdType ?? (cur.adhd_type as typeof adhdType) ?? null;
+      name = name || ((cur.name as string | null) ?? '');
+      xp = Math.max(xp, (cur.xp as number | null) ?? 0);
+      const cloudDate = (cur.last_active_date as string | null) ?? '';
+      if (cloudDate > (lastActiveDate ?? '')) {
+        // Cloud reflects more recent activity — keep its streak pair.
+        streak = (cur.streak as number | null) ?? 0;
+        lastActiveDate = cloudDate;
+      }
+    }
+  }
   // Subscription columns are owned by the server / IAP webhook — we read
   // them but don't push, to avoid the client accidentally extending its
   // own trial. Same for created_at.
   const { error } = await supabase.from('users').upsert(
     {
       id: userId,
-      name: s.name,
+      name,
       pet_name: s.petName,
-      adhd_type: s.adhdType,
+      adhd_type: adhdType,
       level: 1,
-      xp: s.xp,
-      streak: s.streak,
-      last_active_date: s.lastActiveDate,
+      xp,
+      streak,
+      last_active_date: lastActiveDate,
       shield_available: s.shieldAvailable,
       shield_used_this_week: s.shieldUsedThisWeek,
-      onboarded: s.onboarded,
+      onboarded,
       offline_mode: s.offlineMode,
     },
     { onConflict: 'id' },
@@ -78,7 +120,6 @@ const pushUser = async (userId: string, forceLedgers = false) => {
   // the cloud ledger — but the SIGN-OUT flush forces it (forceLedgers)
   // so a session whose login pull failed doesn't lose its history to
   // the wipe; the receiving device's pull max-merges anyway.
-  const pulled = useSyncStatus.getState().pulledFor[userId];
   if (forceLedgers || pulled) {
     let doneLog = s.doneLog;
     let tasksEver = s.tasksEverCompleted;
@@ -382,7 +423,11 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       })(),
       shieldAvailable: userRow.shield_available ?? true,
       shieldUsedThisWeek: userRow.shield_used_this_week ?? false,
-      onboarded: userRow.onboarded ?? localState.onboarded,
+      // Once onboarded, always onboarded — a cloud false (row created
+      // by a trigger before the completion push, or clobbered by the
+      // pre-pull-push bug this guards against) must not demote a user
+      // who finished onboarding on this device.
+      onboarded: userRow.onboarded === true || localState.onboarded,
       isTester: userRow.is_tester === true,
       offlineMode: userRow.offline_mode ?? false,
       // "Member since" = the EARLIEST known date. On a reinstall the
@@ -741,13 +786,23 @@ export const useCloudSync = (session: Session | null) => {
   useEffect(() => {
     if (!active || !userId) return;
 
-    const pushUserD = debounce(() => void pushUser(userId), DEBOUNCE_MS);
-    const pushQuestsD = debounce(() => void pushQuests(userId), DEBOUNCE_MS);
+    // Fire-time gate: no subscription push until this device has merged
+    // the cloud (pulledFor). Pre-pull local state can be post-wipe
+    // defaults, and pushPet/pushUser overwrite whole rows — a premature
+    // push wiped a returning user's profile (see pushUser). The pull's
+    // own merge writes trigger these subscriptions too, but by then
+    // pulledFor is being set and the debounce reads it at fire time.
+    const whenPulled = (fn: () => void) => () => {
+      if (!useSyncStatus.getState().pulledFor[userId]) return;
+      fn();
+    };
+    const pushUserD = debounce(whenPulled(() => void pushUser(userId)), DEBOUNCE_MS);
+    const pushQuestsD = debounce(whenPulled(() => void pushQuests(userId)), DEBOUNCE_MS);
     const pushCheckinsD = debounce(
-      () => void pushCheckins(userId),
+      whenPulled(() => void pushCheckins(userId)),
       DEBOUNCE_MS,
     );
-    const pushPetD = debounce(() => void pushPet(userId), DEBOUNCE_MS);
+    const pushPetD = debounce(whenPulled(() => void pushPet(userId)), DEBOUNCE_MS);
 
     const unsubUser = useUserStore.subscribe(pushUserD);
     const unsubQuests = useQuestStore.subscribe(pushQuestsD);
