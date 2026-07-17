@@ -4525,7 +4525,11 @@ export default function Home() {
                 Haptics.selectionAsync();
                 setDaySetOpen(true);
               }}
-              style={styles.dymHint}
+              // Even breathing room: 14 above (was 0 — it kissed the
+              // waiting pill) and 14 below to the done card (the
+              // shared style's marginBottom 8 + the card's marginTop
+              // 14 read lopsided here).
+              style={[styles.dymHint, { marginTop: 14, marginBottom: 0 }]}
               accessibilityRole="button"
               accessibilityLabel="Let the day set — close out today"
             >
