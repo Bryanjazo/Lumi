@@ -90,6 +90,7 @@ export const resetLocalUserData = (): void => {
     medsNudge: false,
     activeDaysThisMonth: 0,
     focusMinutesLifetime: 0,
+    deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0 },
     vitalitySnapshot: null,
     tasksEverCompleted: 0,
     // Completion-history ledger — Patterns merges this into its

@@ -240,6 +240,17 @@ interface UserState {
    *  go cold because the list got tidied. */
   doneLog: Record<string, number>;
   bumpDoneLog: (ymd: string, delta: 1 | -1) => void;
+  /** THIS device's contributions to the lifetime ledgers — the delta
+   *  slice synced under users.ledgers[deviceId]. Signed: undoing a
+   *  completion that predates this device's slice can push a day
+   *  negative here; the cross-device SUM stays exact. Display fields
+   *  (doneLog / tasksEverCompleted / focusMinutesLifetime) are the
+   *  derived totals. */
+  deviceLedger: {
+    doneLog: Record<string, number>;
+    tasksEver: number;
+    focusMin: number;
+  };
   heyLumiEnabled: boolean;
   /** Server-granted flag (users.is_tester) — internal/TestFlight
    *  testers whose raw captures upload for parser tuning. Never
@@ -490,6 +501,7 @@ export const useUserStore = create<UserState>()(
       medsNudge: false,
       roomTint: 'none',
       doneLog: {},
+      deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0 },
       activeDaysThisMonth: 0,
       focusMinutesLifetime: 0,
       vitalitySnapshot: null,
@@ -612,7 +624,16 @@ export const useUserStore = create<UserState>()(
           const doneLog = { ...s.doneLog };
           if (next === 0) delete doneLog[ymd];
           else doneLog[ymd] = next;
-          return { doneLog };
+          // Mirror into this device's delta slice (signed — no floor;
+          // zeros are dropped to keep the map tidy).
+          const sliceLog = { ...s.deviceLedger.doneLog };
+          const sn = (sliceLog[ymd] ?? 0) + delta;
+          if (sn === 0) delete sliceLog[ymd];
+          else sliceLog[ymd] = sn;
+          return {
+            doneLog,
+            deviceLedger: { ...s.deviceLedger, doneLog: sliceLog },
+          };
         }),
 
       setIsTester: (v) => set({ isTester: v }),
@@ -622,10 +643,18 @@ export const useUserStore = create<UserState>()(
       addFocusMinutes: (m) =>
         set((s) => ({
           focusMinutesLifetime: Math.max(0, s.focusMinutesLifetime + m),
+          deviceLedger: {
+            ...s.deviceLedger,
+            focusMin: s.deviceLedger.focusMin + m,
+          },
         })),
       bumpTasksEver: (delta) =>
         set((s) => ({
           tasksEverCompleted: Math.max(0, s.tasksEverCompleted + delta),
+          deviceLedger: {
+            ...s.deviceLedger,
+            tasksEver: s.deviceLedger.tasksEver + delta,
+          },
         })),
 
       consumeShield: () =>
@@ -805,6 +834,7 @@ export const useUserStore = create<UserState>()(
           medsNudge: false,
           roomTint: 'none',
           doneLog: {},
+          deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0 },
           activeDaysThisMonth: 0,
           focusMinutesLifetime: 0,
           vitalitySnapshot: null,

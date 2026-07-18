@@ -28,6 +28,7 @@ import {
   type Checkin,
 } from '../store/checkinStore';
 import { readState, energyValue } from '../constants/moodMap';
+import { getDeviceId } from './deviceId';
 import { usePetStore } from '../store/petStore';
 
 const DEBOUNCE_MS = 1500;
@@ -141,58 +142,98 @@ const pushUser = async (userId: string, forceLedgers = false) => {
   );
   if (error) console.warn('[sync] pushUser', error.message);
 
-  // Lifetime ledgers go in a SEPARATE, best-effort upsert — the
-  // columns come from migration 20260713010000, which may not be
-  // applied yet. PostgREST fails the WHOLE row on an unknown column,
-  // so bundling these into the core upsert above would 400 and kill
-  // ALL profile sync until the migration lands. Isolated here, a
-  // missing-column error only skips the ledgers. Normally gated on a
-  // completed pull so a not-yet-merged local copy can't briefly lower
-  // the cloud ledger — but the SIGN-OUT flush forces it (forceLedgers)
-  // so a session whose login pull failed doesn't lose its history to
-  // the wipe; the receiving device's pull max-merges anyway.
-  if (forceLedgers || pulled) {
-    let doneLog = s.doneLog;
-    let tasksEver = s.tasksEverCompleted;
-    let focusMin = s.focusMinutesLifetime;
-    // Forced flush BEFORE a completed pull (sign-out after a failed
-    // login pull): local hasn't merged the cloud, and the upsert is a
-    // plain overwrite with no server-side GREATEST — a blind write
-    // could LOWER a higher cloud ledger (another device). Read + max
-    // first so a forced push can only ever KEEP history. If the read
-    // fails we skip the ledger push rather than risk lowering.
-    if (forceLedgers && !pulled) {
+  // Lifetime ledgers: PER-DEVICE DELTA SLICE (migration 20260720000000).
+  // The old aggregate max-merge silently under-counted when two devices
+  // completed DIFFERENT tasks the same day (max(3,2)=3, truth 5). This
+  // device now writes ONLY its own slice via an atomic own-key jsonb
+  // merge — concurrent devices can't clobber each other, and the pull
+  // sums legacy columns + all slices for an exact total. The legacy
+  // done_log/tasks_ever/focus_min columns are no longer written by
+  // updated clients (they freeze as the pre-cutover base; old builds
+  // still max-merge into them, which stays correct).
+  try {
+    let slice = s.deviceLedger;
+    const sliceEmpty =
+      slice.tasksEver === 0 &&
+      slice.focusMin === 0 &&
+      Object.keys(slice.doneLog).length === 0;
+    if (!pulled) {
+      // Before the pull adopts my cloud slice, local is only the
+      // delta since the last wipe. A plain push would overwrite the
+      // cumulative cloud slice with a near-empty one.
+      if (!forceLedgers || sliceEmpty) return;
+      // Forced sign-out flush after a failed pull: fold the cloud
+      // copy of MY slice in (local counted from zero, so sum = the
+      // true cumulative). Read fails → skip rather than risk loss.
+      const deviceIdF = await getDeviceId();
       const { data: cur, error: readErr } = await supabase
         .from('users')
-        .select('done_log, tasks_ever_completed, focus_minutes_lifetime')
+        .select('ledgers')
         .eq('id', userId)
         .maybeSingle();
       if (readErr) {
         console.warn('[sync] ledger read (skip force)', readErr.message);
         return;
       }
-      if (cur) {
-        tasksEver = Math.max(tasksEver, (cur.tasks_ever_completed as number) ?? 0);
-        focusMin = Math.max(focusMin, (cur.focus_minutes_lifetime as number) ?? 0);
-        const merged: Record<string, number> = { ...doneLog };
-        const cloud = (cur.done_log ?? {}) as Record<string, number>;
-        for (const [ymd, n] of Object.entries(cloud)) {
-          merged[ymd] = Math.max(merged[ymd] ?? 0, Number(n) || 0);
-        }
-        doneLog = merged;
-      }
+      const mine = (cur?.ledgers as Record<string, LedgerSlice> | null)?.[
+        deviceIdF
+      ];
+      if (mine) slice = addSlices(normalizeSlice(mine), slice);
     }
-    const { error: ledgerErr } = await supabase.from('users').upsert(
-      {
-        id: userId,
-        done_log: doneLog,
-        tasks_ever_completed: tasksEver,
-        focus_minutes_lifetime: focusMin,
-      },
-      { onConflict: 'id' },
-    );
-    if (ledgerErr) console.warn('[sync] pushUser ledgers', ledgerErr.message);
+    if (
+      slice.tasksEver === 0 &&
+      slice.focusMin === 0 &&
+      Object.keys(slice.doneLog).length === 0
+    ) {
+      return; // nothing to say — don't write an empty slice
+    }
+    const deviceId = await getDeviceId();
+    const { error: ledgerErr } = await supabase.rpc('merge_device_ledger', {
+      p_device: deviceId,
+      p_slice: slice,
+    });
+    if (ledgerErr) console.warn('[sync] ledger slice', ledgerErr.message);
+  } catch (e) {
+    console.warn('[sync] ledger slice', e instanceof Error ? e.message : e);
   }
+};
+
+interface LedgerSlice {
+  doneLog?: Record<string, number>;
+  tasksEver?: number;
+  focusMin?: number;
+}
+
+const normalizeSlice = (
+  raw: LedgerSlice | null | undefined,
+): { doneLog: Record<string, number>; tasksEver: number; focusMin: number } => {
+  const doneLog: Record<string, number> = {};
+  for (const [d, n] of Object.entries(raw?.doneLog ?? {})) {
+    const v = Number(n);
+    if (Number.isFinite(v) && v !== 0) doneLog[d] = v;
+  }
+  return {
+    doneLog,
+    tasksEver: Number(raw?.tasksEver) || 0,
+    focusMin: Number(raw?.focusMin) || 0,
+  };
+};
+
+const addSlices = (
+  a: ReturnType<typeof normalizeSlice>,
+  b: ReturnType<typeof normalizeSlice>,
+): ReturnType<typeof normalizeSlice> => {
+  const doneLog: Record<string, number> = { ...a.doneLog };
+  for (const [d, n] of Object.entries(b.doneLog)) {
+    const v = (doneLog[d] ?? 0) + n;
+    if (v === 0) delete doneLog[d];
+    else doneLog[d] = v;
+  }
+  return {
+    doneLog,
+    tasksEver: a.tasksEver + b.tasksEver,
+    focusMin: a.focusMin + b.focusMin,
+  };
 };
 
 // ── push: quests ────────────────────────────────────────────────────────
@@ -386,6 +427,46 @@ export const pullAll = async (userId: string): Promise<boolean> => {
   const userRow = u.data;
   if (userRow) {
     const localState = useUserStore.getState();
+    // ── Ledger totals: legacy columns (frozen base) + Σ device slices.
+    // My slice: LOCAL wins (this device is its only writer) — except
+    // right after a wipe, when local is empty and the cloud copy IS
+    // my cumulative history (re-sign-in adoption).
+    const deviceId = await getDeviceId();
+    const cloudLedgers = (userRow.ledgers ?? {}) as Record<
+      string,
+      LedgerSlice
+    >;
+    let mySlice = normalizeSlice(localState.deviceLedger);
+    const myLocalEmpty =
+      mySlice.tasksEver === 0 &&
+      mySlice.focusMin === 0 &&
+      Object.keys(mySlice.doneLog).length === 0;
+    const myCloud = cloudLedgers[deviceId];
+    if (myLocalEmpty && myCloud) mySlice = normalizeSlice(myCloud);
+    const allSlices: ReturnType<typeof normalizeSlice>[] = [mySlice];
+    for (const [dev, sl] of Object.entries(cloudLedgers)) {
+      if (dev === deviceId) continue;
+      allSlices.push(normalizeSlice(sl));
+    }
+    const ledgerDone: Record<string, number> = {};
+    const legacyDone = (userRow.done_log ?? {}) as Record<string, number>;
+    for (const [d, n] of Object.entries(legacyDone)) {
+      const v = Number(n) || 0;
+      if (v > 0) ledgerDone[d] = v;
+    }
+    let ledgerTasksEver =
+      Number(userRow.tasks_ever_completed as number | null) || 0;
+    let ledgerFocusMin =
+      Number(userRow.focus_minutes_lifetime as number | null) || 0;
+    for (const sl of allSlices) {
+      for (const [d, n] of Object.entries(sl.doneLog)) {
+        const v = (ledgerDone[d] ?? 0) + n;
+        if (v <= 0) delete ledgerDone[d];
+        else ledgerDone[d] = v;
+      }
+      ledgerTasksEver += sl.tasksEver;
+      ledgerFocusMin += sl.focusMin;
+    }
     // Subscription source-of-truth precedence (top wins):
     //   1. Local 'active' from the RC SDK customer-info listener
     //      (optimistic on a fresh purchase) — never demote this just
@@ -522,25 +603,14 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       ...(localState.onboardedAt == null && userRow.onboarded === true
         ? { tourSeen: true }
         : {}),
-      // Lifetime ledgers — monotonic merge (never lose history): counts
-      // by max, done_log by per-day max so neither device's record is
-      // erased. Cloud columns may be absent on pre-migration rows → 0.
-      tasksEverCompleted: Math.max(
-        localState.tasksEverCompleted,
-        (userRow.tasks_ever_completed as number | null) ?? 0,
-      ),
-      focusMinutesLifetime: Math.max(
-        localState.focusMinutesLifetime,
-        (userRow.focus_minutes_lifetime as number | null) ?? 0,
-      ),
-      doneLog: (() => {
-        const merged: Record<string, number> = { ...localState.doneLog };
-        const cloud = (userRow.done_log ?? {}) as Record<string, number>;
-        for (const [ymd, n] of Object.entries(cloud)) {
-          merged[ymd] = Math.max(merged[ymd] ?? 0, Number(n) || 0);
-        }
-        return merged;
-      })(),
+      // Lifetime ledgers — EXACT cross-device totals: frozen legacy
+      // base + Σ per-device slices (computed above). Two devices doing
+      // different work the same day now sum instead of max-merging
+      // (the max silently under-counted, e.g. max(3,2)=3 vs truth 5).
+      tasksEverCompleted: Math.max(0, ledgerTasksEver),
+      focusMinutesLifetime: Math.max(0, ledgerFocusMin),
+      doneLog: ledgerDone,
+      deviceLedger: mySlice,
       subscriptionStatus: nextSubStatus,
       subscriptionTier: nextSubTier,
       subscriptionCurrentPeriodEnd: nextSubEnd,
