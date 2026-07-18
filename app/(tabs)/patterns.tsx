@@ -59,6 +59,7 @@ import { useRevealsStore } from '../../store/revealsStore';
 import { useCompanionMode } from '../../lib/companion-mode';
 import { useQuestStore } from '../../store/questStore';
 import { useUserStore } from '../../store/userStore';
+import { TabErrorBoundary } from '../../components/TabErrorBoundary';
 
 const hexA = (hex: string, a: number) => {
   const h = hex.replace('#', '');
@@ -727,7 +728,7 @@ const ShowingUp = ({
 // ═════════════════════════════════════════════════════════════════════
 // Screen
 // ═════════════════════════════════════════════════════════════════════
-export default function PatternsScreen() {
+function PatternsScreenInner() {
   const router = useRouter();
   const digest = useLearningDigest();
   const quests = useQuestStore((s) => s.quests);
@@ -1473,3 +1474,14 @@ const styles = StyleSheet.create({
     paddingRight: 3,
   },
 });
+
+// Per-tab crash isolation — a render crash here shows a calm in-tab
+// card instead of taking down the whole app (root boundary remains
+// the backstop for the shell itself).
+export default function PatternsScreen() {
+  return (
+    <TabErrorBoundary tab="patterns">
+      <PatternsScreenInner />
+    </TabErrorBoundary>
+  );
+}

@@ -37,6 +37,7 @@ import {
   clearPendingCredentials,
   useSession,
 } from '../../lib/auth';
+import { isReduceMotionEnabled } from '../../lib/useReducedMotion';
 
 const RESEND_COOLDOWN_S = 60;
 
@@ -96,6 +97,7 @@ export default function VerifyEmailScreen() {
   useEffect(() => clearPendingCredentials, []);
 
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.sequence([
         Animated.parallel([

@@ -23,7 +23,7 @@ const seen = new Set<string>();
 
 export const reportError = (
   error: unknown,
-  source: 'boundary' | 'global' | 'promise',
+  source: 'boundary' | 'global' | 'promise' | `tab:${string}`,
   fatal = false,
 ): void => {
   try {

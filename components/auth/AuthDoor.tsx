@@ -57,6 +57,7 @@ import {
 } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
+import { isReduceMotionEnabled } from '../../lib/useReducedMotion';
 
 export type AuthMode = 'signin' | 'signup';
 
@@ -274,6 +275,7 @@ const LunaGlow = () => {
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(0.75)).current;
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.sequence([
         Animated.parallel([

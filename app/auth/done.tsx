@@ -16,6 +16,7 @@ import { fonts } from '../../constants/fonts';
 import { LunaPixel } from '../../components/auth/LunaPixel';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
 import { useUserStore } from '../../store/userStore';
+import { isReduceMotionEnabled } from '../../lib/useReducedMotion';
 
 const SIGNUP_XP_REWARD = 30;
 const AUTO_ADVANCE_MS = 2400;
@@ -48,23 +49,28 @@ export default function DoneScreen() {
   }, [addXp, registerActivity, xpAwarded]);
 
   useEffect(() => {
-    // Subtle floating Luna animation.
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(lunaFloat, {
-          toValue: 1,
-          duration: 1800,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(lunaFloat, {
-          toValue: 0,
-          duration: 1800,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    ).start();
+    // Subtle floating Luna animation — the ONLY thing skipped under
+    // Reduce Motion. The fade-in, pill pop, and auto-advance below
+    // must still run (an early return here froze the screen at
+    // opacity 0 with no advance).
+    if (!isReduceMotionEnabled()) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(lunaFloat, {
+            toValue: 1,
+            duration: 1800,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(lunaFloat, {
+            toValue: 0,
+            duration: 1800,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ]),
+      ).start();
+    }
 
     // Fade in everything.
     Animated.timing(fadeIn, {

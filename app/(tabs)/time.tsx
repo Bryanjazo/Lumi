@@ -80,6 +80,7 @@ import { todayKey } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
 import { useUncompleteConfirm } from '../../components/TaskDeleteWrap';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
+import { TabErrorBoundary } from '../../components/TabErrorBoundary';
 
 // ═════════════════════════════════════════════════════════════════════
 // Layout constants — compact day-thread columns (loadmap layout)
@@ -1976,7 +1977,7 @@ const styles2 = StyleSheet.create({
   },
 });
 
-export default function Time() {
+function TimeInner() {
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
   const effectiveWindows = useEffectiveWindows();
@@ -3643,3 +3644,14 @@ const makeStyles = (accent: Accent) =>
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _defaults = makeStyles(accentFor('ember'));
 void _defaults;
+
+// Per-tab crash isolation — a render crash here shows a calm in-tab
+// card instead of taking down the whole app (root boundary remains
+// the backstop for the shell itself).
+export default function Time() {
+  return (
+    <TabErrorBoundary tab="time">
+      <TimeInner />
+    </TabErrorBoundary>
+  );
+}

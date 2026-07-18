@@ -141,6 +141,10 @@ const callMessages = async (params: {
   kind: AiKind;
   messages: AnthropicMessage[];
   maxTokens: number;
+  /** Client-side cancel (Untangle "reset"). Aborting the HTTP call
+   *  lets the proxy skip the usage log — a cancelled reply no longer
+   *  burns the weekly quota. */
+  signal?: AbortSignal;
 }): Promise<string> => {
   if (!isAnthropicConfigured) {
     throw new Error('Supabase not configured — proxy unreachable');
@@ -162,6 +166,7 @@ const callMessages = async (params: {
           messages: params.messages,
           max_tokens: params.maxTokens,
         },
+        ...(params.signal ? { signal: params.signal } : {}),
       },
     ));
   } catch (e) {
@@ -1142,6 +1147,7 @@ export interface UntangleThreadMsg {
 export const llmUntangle = async (
   thread: UntangleThreadMsg[],
   ctx: UntangleContext,
+  signal?: AbortSignal,
 ): Promise<UntangleTurnResponse | null> => {
   if (!isAnthropicConfigured) return null;
   if (thread.length === 0) return null;
@@ -1193,6 +1199,7 @@ export const llmUntangle = async (
         kind: 'untangle',
         maxTokens: 700,
         messages: [head, clock, ...tail],
+        signal,
       }),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('untangle-timeout')), 15_000),

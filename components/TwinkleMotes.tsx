@@ -11,6 +11,7 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, View } from 'react-native';
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
+import { isReduceMotionEnabled } from '../lib/useReducedMotion';
 
 export interface Mote {
   /** Absolute position within the parent, px. */
@@ -38,6 +39,7 @@ const TwinkleMote = ({ mote }: { mote: Mote }) => {
 
   const tw = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(mote.delay * 1000),

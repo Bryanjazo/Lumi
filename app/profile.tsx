@@ -75,6 +75,7 @@ import { EditProfileSheet } from '../components/EditProfileSheet';
 import { LanguagePickerSheet } from '../components/LanguagePickerSheet';
 import { WindowEditorSheet } from '../components/WindowEditorSheet';
 import { SoftGlow } from '../components/SoftGlow';
+import { isReduceMotionEnabled } from '../lib/useReducedMotion';
 
 // Enable LayoutAnimation on Android — used for insight + anchors expand.
 if (
@@ -676,6 +677,7 @@ const previewStyles = StyleSheet.create({
 const PulseDot = ({ color, size = 6 }: { color: string; size?: number }) => {
   const op = useRef(new Animated.Value(1)).current;
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(op, {

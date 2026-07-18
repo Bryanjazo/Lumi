@@ -31,6 +31,7 @@ import { useAmbientLunaMood } from '../../lib/luna-mood';
 import { supabase } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
 import { PRICING } from '../../lib/subscription';
+import { isReduceMotionEnabled } from '../../lib/useReducedMotion';
 
 const BENEFITS: { glyph: string; text: string }[] = [
   { glyph: '✦', text: 'Unlimited Untangle conversations' },
@@ -43,6 +44,7 @@ const LunaGlow = () => {
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(0.75)).current;
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.sequence([
         Animated.parallel([

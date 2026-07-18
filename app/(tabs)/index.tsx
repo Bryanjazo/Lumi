@@ -24,7 +24,7 @@
 //   - Multi-card Lumi-noticed carousel → ONE calm card
 //   - Level/rank display → moved to Me tab (per spec §2)
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   Animated,
@@ -38,6 +38,7 @@ import {
   View,
   Pressable,
   ScrollView,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect, useLocalSearchParams, router as globalRouter } from 'expo-router';
@@ -153,6 +154,7 @@ import {
 } from '../../lib/learning/reveals';
 import { useRevealsStore } from '../../store/revealsStore';
 import { usePetStore } from '../../store/petStore';
+import { TabErrorBoundary } from '../../components/TabErrorBoundary';
 
 // ═════════════════════════════════════════════════════════════════════
 // LunaPeek — small cozy pixel cat that lives in the header. Reacts to
@@ -500,6 +502,93 @@ const fmtScheduled = (q: Quest): string | null => {
     ? `${hr} ${suf}`
     : `${hr}:${String(m).padStart(2, '0')} ${suf}`;
 };
+
+/** One waiting-pile row — memoized at module level so the 60s clock
+ *  tick / keystrokes in the 7k-line Home tree stop re-rendering every
+ *  row (with a 200-task pile that was 200 full re-reconciles per
+ *  minute). Handlers are ref-stable dispatchers from Home; `hs`
+ *  (Home styles) only changes with the accent. */
+type HomeStyles = ReturnType<typeof makeStyles>;
+const WaitingRow = memo(function WaitingRow({
+  q,
+  timeLabel,
+  hs,
+  onEdit,
+  onComplete,
+  onSurface,
+  onMoveBack,
+}: {
+  q: Quest;
+  /** null → 'someday' chip; otherwise the clock/window label. */
+  timeLabel: string | null;
+  hs: HomeStyles;
+  onEdit: (q: Quest) => void;
+  onComplete: (q: Quest) => void;
+  onSurface: (q: Quest) => void;
+  onMoveBack: (q: Quest) => void;
+}) {
+  const kind = classifyKind(q.title);
+  return (
+    <Pressable
+      onPress={() => {
+        Haptics.selectionAsync();
+        onEdit(q);
+      }}
+      onLongPress={() => {
+        Haptics.selectionAsync();
+        onEdit(q);
+      }}
+      delayLongPress={350}
+      style={hs.waitingRow}
+    >
+      <Pressable
+        onPress={() => onComplete(q)}
+        hitSlop={10}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: false }}
+        accessibilityLabel={`Mark done: ${q.title}`}
+        style={[
+          hs.waitingCheck,
+          { borderColor: IMPORTANCE[q.importance].color },
+        ]}
+      />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={hs.waitingRowTitle}>{q.title}</Text>
+        {q.note && <Text style={hs.waitingNote}>{q.note}</Text>}
+      </View>
+      {timeLabel == null ? (
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync();
+            onMoveBack(q);
+          }}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="Move back to a real day"
+        >
+          <Text style={[hs.waitingWindow, { color: C.mute }]}>someday</Text>
+        </Pressable>
+      ) : (
+        <Text
+          style={[hs.waitingWindow, { color: WINDOWS[q.window].color }]}
+        >
+          {timeLabel}
+        </Text>
+      )}
+      <Pressable
+        onPress={() => onSurface(q)}
+        hitSlop={6}
+        accessibilityRole="button"
+        accessibilityLabel={`Surface now: ${q.title}`}
+        style={[hs.kindPillRow, { backgroundColor: `${kind.color}1F` }]}
+      >
+        <Text style={[hs.kindPillRowText, { color: kind.color }]}>
+          {kind.label}
+        </Text>
+      </Pressable>
+    </Pressable>
+  );
+});
 
 /** Always-visible × button at the top-right of the hero card so the
  *  user can dismiss a task they don't want to do. First-time users
@@ -943,7 +1032,7 @@ const hexA = (hex: string, a: number): string => {
 // ═════════════════════════════════════════════════════════════════════
 // Screen
 // ═════════════════════════════════════════════════════════════════════
-export default function Home() {
+function HomeInner() {
   const router = useRouter();
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
@@ -1837,6 +1926,35 @@ export default function Home() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setHeroPickId(q.id);
   };
+
+  // Ref-stable dispatchers for the memoized WaitingRow — the real
+  // handlers close over fresh state each render; the rows must not
+  // re-render for that.
+  const rowActionsRef = useRef({
+    edit: (_q: Quest) => {},
+    complete: (_q: Quest) => {},
+    surface: (_q: Quest) => {},
+    moveBack: (_q: Quest) => {},
+  });
+  rowActionsRef.current = {
+    edit: (q) => setEditingQuest(q),
+    complete: completeQuest,
+    surface: surfaceNow,
+    moveBack: setMovingBack,
+  };
+  const onRowEdit = useCallback((q: Quest) => rowActionsRef.current.edit(q), []);
+  const onRowComplete = useCallback(
+    (q: Quest) => rowActionsRef.current.complete(q),
+    [],
+  );
+  const onRowSurface = useCallback(
+    (q: Quest) => rowActionsRef.current.surface(q),
+    [],
+  );
+  const onRowMoveBack = useCallback(
+    (q: Quest) => rowActionsRef.current.moveBack(q),
+    [],
+  );
 
   // ── Away/return + Rescue Mode (emotional-model spec §2/§3) ───────
   // Snapshot how long the user was away BEFORE stamping today as an
@@ -4525,98 +4643,38 @@ export default function Home() {
             )}
             {waitingOpen && (
               <>
-                {rest.map((q) => {
-                  // Once per row, not 3× per render (and the tree
-                  // re-renders every clock minute).
-                  const kind = classifyKind(q.title);
-                  return (
-                  <Pressable
-                    key={q.id}
-                    // TAP opens the edit sheet — long-press-only was
-                    // undiscoverable for new users. The checkbox and
-                    // "now" pill are their own targets, so a plain
-                    // row tap has no competing meaning.
-                    onPress={() => {
-                      Haptics.selectionAsync();
-                      setEditingQuest(q);
-                    }}
-                    onLongPress={() => {
-                      Haptics.selectionAsync();
-                      setEditingQuest(q);
-                    }}
-                    delayLongPress={350}
-                    style={styles.waitingRow}
-                  >
-                    <Pressable
-                      onPress={() => completeQuest(q)}
-                      hitSlop={10}
-                      accessibilityRole="checkbox"
-                      accessibilityState={{ checked: false }}
-                      accessibilityLabel={`Mark done: ${q.title}`}
-                      style={[
-                        styles.waitingCheck,
-                        { borderColor: IMPORTANCE[q.importance].color },
-                      ]}
+                <FlatList
+                  data={rest}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item }) => (
+                    <WaitingRow
+                      q={item}
+                      timeLabel={
+                        item.window === 'someday'
+                          ? null
+                          : (fmtScheduled(item) ??
+                            effectiveWindows[item.window].label.toLowerCase())
+                      }
+                      hs={styles}
+                      onEdit={onRowEdit}
+                      onComplete={onRowComplete}
+                      onSurface={onRowSurface}
+                      onMoveBack={onRowMoveBack}
                     />
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.waitingRowTitle}>
-                        {q.title}
-                      </Text>
-                      {q.note && (
-                        <Text style={styles.waitingNote}>
-                          {q.note}
-                        </Text>
-                      )}
-                    </View>
-                    {q.window === 'someday' ? (
-                      <Pressable
-                        onPress={() => {
-                          Haptics.selectionAsync();
-                          setMovingBack(q);
-                        }}
-                        hitSlop={6}
-                        accessibilityRole="button"
-                        accessibilityLabel="Move back to a real day"
-                      >
-                        <Text style={[styles.waitingWindow, { color: C.mute }]}>
-                          someday
-                        </Text>
-                      </Pressable>
-                    ) : (
-                      <Text
-                        style={[
-                          styles.waitingWindow,
-                          { color: WINDOWS[q.window].color },
-                        ]}
-                      >
-                        {fmtScheduled(q) ??
-                          effectiveWindows[q.window].label.toLowerCase()}
-                      </Text>
-                    )}
-                    <Pressable
-                      onPress={() => surfaceNow(q)}
-                      hitSlop={6}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Surface now: ${q.title}`}
-                      style={[
-                        styles.kindPillRow,
-                        {
-                          backgroundColor: `${kind.color}1F`,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.kindPillRowText,
-                          { color: kind.color },
-                        ]}
-                      >
-                        {kind.label}
-                      </Text>
-                    </Pressable>
-                  </Pressable>
-                  );
-                })}
+                  )}
+                  // Virtualized inside the card: past ~7 rows it caps
+                  // its height and scrolls internally, so a 200-task
+                  // pile neither mounts 200 rows in one synchronous
+                  // burst nor swallows the rest of Home below it.
+                  style={rest.length > 7 && { maxHeight: 430 }}
+                  scrollEnabled={rest.length > 7}
+                  nestedScrollEnabled
+                  initialNumToRender={10}
+                  maxToRenderPerBatch={10}
+                  windowSize={7}
+                  removeClippedSubviews
+                  showsVerticalScrollIndicator={rest.length > 7}
+                />
                 <Text style={styles.waitingFooter}>
                   tap a task to edit it — tap its tag to bring it up now
                 </Text>
@@ -6877,3 +6935,14 @@ const makeStyles = (accent: Accent) =>
 // references styles.floaterText). Home itself shadows this with a
 // themed stylesheet via useMemo inside the component.
 const styles = makeStyles(accentFor('ember'));
+
+// Per-tab crash isolation — a render crash here shows a calm in-tab
+// card instead of taking down the whole app (root boundary remains
+// the backstop for the shell itself).
+export default function Home() {
+  return (
+    <TabErrorBoundary tab="home">
+      <HomeInner />
+    </TabErrorBoundary>
+  );
+}

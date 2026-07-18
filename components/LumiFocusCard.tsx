@@ -56,6 +56,7 @@ import {
   isLiveActivityAvailable,
 } from '../lib/focusSession';
 import type { Quest } from '../store/questStore';
+import { isReduceMotionEnabled } from '../lib/useReducedMotion';
 
 // ── Palette ───────────────────────────────────────────────────────────
 // Same 5-color chord Home already uses; kept local so this component
@@ -234,6 +235,7 @@ export function LumiFocusCard({
   const halo = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (mode === 'card') return;
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(halo, {
@@ -287,6 +289,7 @@ export function LumiFocusCard({
         useNativeDriver: false,
       }),
     ]).start();
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const raysLoop = Animated.loop(
       Animated.timing(raysRot, {
         toValue: 1,

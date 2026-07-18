@@ -256,6 +256,11 @@ Deno.serve(async (req: Request) => {
   try {
     upstream = await fetch(ANTHROPIC_URL, {
       method: "POST",
+      // Client cancel propagates: when the app aborts (Untangle
+      // "fresh start" mid-reply), this fetch throws AbortError and we
+      // return WITHOUT logging usage — a cancelled reply no longer
+      // consumes the weekly quota.
+      signal: req.signal,
       headers: {
         "content-type": "application/json",
         "x-api-key": ANTHROPIC_KEY,
@@ -308,6 +313,10 @@ Deno.serve(async (req: Request) => {
       }),
     });
   } catch (e) {
+    if (req.signal.aborted || (e instanceof Error && e.name === "AbortError")) {
+      // Client walked away — nobody is listening and no quota is due.
+      return json({ error: { code: "cancelled", message: "client aborted" } }, 499);
+    }
     return json(
       {
         error: {

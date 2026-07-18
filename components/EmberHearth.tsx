@@ -30,6 +30,7 @@ import Svg, {
   Stop,
   Line,
 } from 'react-native-svg';
+import { isReduceMotionEnabled } from '../lib/useReducedMotion';
 
 const C = {
   bone: '#ECE0CB',
@@ -57,6 +58,7 @@ const WellSheen = ({ size, running }: { size: number; running: boolean }) => {
   const d = size * 0.68; // well interior (r = 0.34 · size)
   const spin = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.timing(spin, {
         toValue: 1,
@@ -131,6 +133,7 @@ const MoteRing = ({
   );
   const spin = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.timing(spin, {
         toValue: 1,
@@ -184,6 +187,7 @@ const Mote = ({
 }) => {
   const tw = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(delay),
@@ -247,6 +251,7 @@ const Spark = ({ size, index }: { size: number; index: number }) => {
   );
   const p = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(plan.delay),
@@ -324,6 +329,7 @@ export function EmberHearth({ frac, running, size = 272 }: EmberHearthProps) {
   const breath = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const dur = running ? 10_000 : 15_600;
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(breath, {

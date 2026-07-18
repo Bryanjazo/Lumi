@@ -59,6 +59,7 @@ import {
 } from '../../store/roomStore';
 import { todayKey, xpProgress, TITLES } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
+import { TabErrorBoundary } from '../../components/TabErrorBoundary';
 
 // ═════════════════════════════════════════════════════════════════════
 // Palette
@@ -1564,7 +1565,7 @@ const hubRowStyles = StyleSheet.create({
   },
 });
 
-export default function MeTab() {
+function MeTabInner() {
   const router = useRouter();
   const accent = useAccent();
   const styles = useMemo(() => makeStyles(accent), [accent]);
@@ -3027,3 +3028,14 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
 
 // Default ember-themed styles for module-level sub-components.
 const styles = makeStyles(accentFor('ember'));
+
+// Per-tab crash isolation — a render crash here shows a calm in-tab
+// card instead of taking down the whole app (root boundary remains
+// the backstop for the shell itself).
+export default function MeTab() {
+  return (
+    <TabErrorBoundary tab="me">
+      <MeTabInner />
+    </TabErrorBoundary>
+  );
+}

@@ -84,6 +84,7 @@ import {
 } from '../../lib/anthropic';
 import { useCompanionMode } from '../../lib/companion-mode';
 import { useFocusEffect } from 'expo-router';
+import { TabErrorBoundary } from '../../components/TabErrorBoundary';
 
 // ═════════════════════════════════════════════════════════════════════
 // Types + constants
@@ -843,7 +844,7 @@ const formatDayLabel = (iso: string): string => {
   return `${DAY_NAMES[d.getDay()]}, ${MONTH_NAMES[d.getMonth()]} ${d.getDate()}`;
 };
 
-export default function Untangle() {
+function UntangleInner() {
   const accent = useAccent();
   const allQuests = useQuestStore((s) => s.quests);
   const moveWindow = useQuestStore((s) => s.moveWindow);
@@ -981,6 +982,10 @@ export default function Untangle() {
   // (two sends in one ms used to collide on Date.now() keys).
   const busyRef = useRef(false);
   const sendGenRef = useRef(0);
+  // Live HTTP handle for the in-flight Untangle call — reset() aborts
+  // it so a cancelled reply doesn't keep burning the weekly quota
+  // server-side (the proxy skips the usage log on client abort).
+  const sendAbortRef = useRef<AbortController | null>(null);
   const msgSeqRef = useRef(0);
   const [msgs, setMsgs] = useState<ChatMsg[]>([
     {
@@ -1909,7 +1914,9 @@ export default function Untangle() {
     setThread(nextThread);
     setBusy(true);
     const ctx = buildLlmContext();
-    llmUntangle(nextThread, ctx)
+    const ctl = new AbortController();
+    sendAbortRef.current = ctl;
+    llmUntangle(nextThread, ctx, ctl.signal)
       .then((res) => {
         // Generation check BEFORE releasing the latch — a stale
         // send#1 resolving mid-flight of send#2 must not unlock the
@@ -2007,6 +2014,10 @@ export default function Untangle() {
     Haptics.selectionAsync();
     // Fence any in-flight turn: its reply must not land in the fresh
     // conversation (and busy must not stay stuck under "Fresh start").
+    // Abort the HTTP call too — the fence alone discarded the reply
+    // but the server still counted it against the weekly quota.
+    sendAbortRef.current?.abort();
+    sendAbortRef.current = null;
     sendGenRef.current += 1;
     busyRef.current = false;
     setBusy(false);
@@ -2978,3 +2989,14 @@ const styles = StyleSheet.create({
 // (accentFor is imported for parity with sibling tab files.)
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _accentFor = accentFor;
+
+// Per-tab crash isolation — a render crash here shows a calm in-tab
+// card instead of taking down the whole app (root boundary remains
+// the backstop for the shell itself).
+export default function Untangle() {
+  return (
+    <TabErrorBoundary tab="untangle">
+      <UntangleInner />
+    </TabErrorBoundary>
+  );
+}
