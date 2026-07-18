@@ -459,6 +459,13 @@ export default function RootLayout() {
       return;
     }
 
+    // 1.5 Password recovery: the deep link signed the user in ONLY so
+    //     they can set a new password on /auth/reset-password. Every
+    //     later step would yank them off the form (onboarding hold,
+    //     trial-choice, the tabs bounce) — leave them alone until the
+    //     screen itself routes onward.
+    if (inAuth && (segments as string[])[1] === 'reset-password') return;
+
     // 2. Then the per-user onboarding gate.
     if (!isOnboardedForCurrentUser) {
       // CHECK FIRST, PROMPT SECOND: a returning user (Google/Apple

@@ -67,12 +67,18 @@ const requireConfigured = () => {
 export const signUp = async (
   email: string,
   password: string,
+  name?: string,
 ): Promise<{ needsEmailConfirmation: boolean }> => {
   requireConfigured();
   const { data, error } = await supabase.auth.signUp({
     email: email.trim().toLowerCase(),
     password,
-    options: { emailRedirectTo: getRedirectUrl() },
+    options: {
+      emailRedirectTo: getRedirectUrl(),
+      // The handle_new_user trigger reads raw_user_meta_data->>'name'
+      // when creating the users row — without this it always wrote ''.
+      ...(name?.trim() ? { data: { name: name.trim() } } : {}),
+    },
   });
   if (error) throw error;
   // Existing-account detection: with confirmations ON, Supabase
@@ -86,8 +92,12 @@ export const signUp = async (
     Array.isArray(data.user.identities) &&
     data.user.identities.length === 0
   ) {
+    // The anti-enumeration response can't tell us WHICH provider the
+    // existing account uses — a Google-only user "trying sign-in"
+    // with a password they never set would just loop on "didn't
+    // match". Name the OAuth buttons too.
     throw new Error(
-      'An account with this email already exists — try signing in instead.',
+      'An account with this email already exists — try signing in, or use the Google/Apple button if that’s how you joined.',
     );
   }
   // No session AND we have a user → confirmation email was sent,
@@ -181,6 +191,18 @@ export const signOut = async (): Promise<void> => {
     // fail-safe: keep local data
   }
   await supabase.auth.signOut();
+  // The pull receipts describe a local store that's about to be wiped
+  // (or already diverged). Leaving them set let a same-session
+  // re-sign-in skip the fresh pull AND open the push gate against
+  // post-wipe defaults — re-clobbering the cloud profile. Nobody is
+  // signed in at this instant, so clearing everything is safe; the
+  // next sign-in re-pulls and re-mints its own receipt.
+  try {
+    const { useSyncStatus } = await import('./sync');
+    useSyncStatus.setState({ pulledFor: {} });
+  } catch {
+    // sync module unavailable (tests) — nothing to clear
+  }
   if (pushed) {
     const { resetLocalUserData } = await import('./localData');
     resetLocalUserData();
@@ -201,6 +223,9 @@ export const signOut = async (): Promise<void> => {
 // Apple Developer Portal + Apple provider configured in Supabase Auth
 // dashboard (Services ID, Team ID, Key ID, .p8 private key).
 
+// Stable marker for a user-cancelled Apple sheet (see GOOGLE_CANCELLED).
+export const APPLE_CANCELLED = 'APPLE_SIGNIN_CANCELLED';
+
 export const signInWithApple = async (): Promise<{
   fullName: string | null;
 }> => {
@@ -218,12 +243,25 @@ export const signInWithApple = async (): Promise<{
   if (!available) {
     throw new Error('Sign in with Apple isn’t available on this device.');
   }
-  const credential = await Apple.signInAsync({
-    requestedScopes: [
-      Apple.AppleAuthenticationScope.FULL_NAME,
-      Apple.AppleAuthenticationScope.EMAIL,
-    ],
-  });
+  let credential;
+  try {
+    credential = await Apple.signInAsync({
+      requestedScopes: [
+        Apple.AppleAuthenticationScope.FULL_NAME,
+        Apple.AppleAuthenticationScope.EMAIL,
+      ],
+    });
+  } catch (e) {
+    // Backing out of the Apple sheet throws ERR_REQUEST_CANCELED with
+    // a generic message that doesn't match /cancel/i — normalize to a
+    // stable marker (mirrors GOOGLE_CANCELLED) so the AuthDoor stays
+    // silent instead of flashing a spurious error banner.
+    const code = (e as { code?: string }).code;
+    if (code === 'ERR_REQUEST_CANCELED') {
+      throw new Error(APPLE_CANCELLED);
+    }
+    throw e;
+  }
   if (!credential.identityToken) {
     throw new Error('Apple didn’t return an identity token — try again.');
   }
@@ -525,7 +563,7 @@ export const deleteAccount = async (): Promise<void> => {
  * Trigger Supabase's password-reset email. The recovery link comes back
  * via deep link → handleAuthDeepLink sets a temporary session → the app
  * can then call supabase.auth.updateUser({ password }) on a reset
- * screen. (Reset screen lands in a later feature.)
+ * screen, where callback.tsx routes to /auth/reset-password.
  */
 export const requestPasswordReset = async (email: string): Promise<void> => {
   requireConfigured();
@@ -537,6 +575,20 @@ export const requestPasswordReset = async (email: string): Promise<void> => {
 };
 
 // ── deep link fallback (for password-reset recovery links) ──────────────
+
+// A recovery link signs the user in ONLY so they can set a new
+// password — landing them in the app as if nothing happened left the
+// forgotten password unchanged (the old dead-end). handleAuthDeepLink
+// raises this flag BEFORE setSession (the session event races the
+// return value); the callback screen consumes it and routes to
+// /auth/reset-password instead of the tabs.
+let pendingRecovery = false;
+export const consumePendingPasswordRecovery = (): boolean => {
+  const was = pendingRecovery;
+  pendingRecovery = false;
+  return was;
+};
+
 export const handleAuthDeepLink = async (url: string): Promise<boolean> => {
   if (!url.includes('access_token')) return false;
   const parsed = Linking.parse(url);
@@ -554,15 +606,28 @@ export const handleAuthDeepLink = async (url: string): Promise<boolean> => {
   const access_token = params.access_token;
   const refresh_token = params.refresh_token;
   if (!access_token || !refresh_token) return false;
+  if (params.type === 'recovery') pendingRecovery = true;
   const { error } = await supabase.auth.setSession({
     access_token,
     refresh_token,
   });
   if (error) {
+    pendingRecovery = false;
     console.warn('[lumi] setSession failed', error.message);
     return false;
   }
   return true;
+};
+
+/**
+ * Set a new password for the signed-in user (the recovery session the
+ * deep link just established). Supabase invalidates the old password
+ * on success.
+ */
+export const updatePassword = async (password: string): Promise<void> => {
+  requireConfigured();
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw error;
 };
 
 // ── session hook ────────────────────────────────────────────────────────

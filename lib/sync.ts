@@ -727,9 +727,18 @@ export const pushAllNow = async (userId: string): Promise<void> => {
     // forceLedgers — this is the sign-out flush before the local wipe;
     // never let it drop the session's doneLog / lifetime counts.
     pushUser(userId, true),
+    // Merge-by-id upserts — an empty/partial local set can't erase
+    // cloud rows, so these are safe to flush even before a clean pull.
     pushQuests(userId),
     pushCheckins(userId),
-    pushPet(userId),
+    // pet_state is a whole-row overwrite with no protective merge. If
+    // this session never completed a pull, local pet is defaults (or
+    // near it) and flushing it would reset the cloud skin/traits/bond
+    // on every device. Skipping loses at most one unpulled session's
+    // care taps — the far smaller harm.
+    ...(useSyncStatus.getState().pulledFor[userId]
+      ? [pushPet(userId)]
+      : []),
   ]);
 };
 
@@ -773,10 +782,13 @@ export const useCloudSync = (session: Session | null) => {
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
-      // Never got a clean pull — re-arm so the next activation (e.g.
-      // offline mode toggled off and on) tries again instead of
-      // trusting a guard that only ever meant "attempted".
-      if (!succeeded && pulledRef.current === userId) {
+      // Re-arm on ANY deactivation — not just failed pulls. Sign-out
+      // wipes local state, so a same-session re-sign-in (even as the
+      // SAME user) must pull again: keeping the "already pulled" guard
+      // across sessions left the user on an empty app with the push
+      // gate wide open against a stale pulledFor (audit C1 — the
+      // same-session clobber the pulledFor gate was built to stop).
+      if (pulledRef.current === userId) {
         pulledRef.current = null;
       }
     };

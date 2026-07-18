@@ -15,7 +15,7 @@ import { useRouter } from 'expo-router';
 
 import { fonts } from '../../constants/fonts';
 import { timeColors as C } from '../../constants/colors';
-import { useSession } from '../../lib/auth';
+import { useSession, consumePendingPasswordRecovery } from '../../lib/auth';
 
 export default function AuthCallbackScreen() {
   const router = useRouter();
@@ -28,7 +28,15 @@ export default function AuthCallbackScreen() {
   useEffect(() => {
     if (loading) return;
     if (session) {
-      router.replace('/');
+      // A recovery link's session exists ONLY so the user can set a
+      // new password — sending them to the tabs left the forgotten
+      // password unchanged (dead-end). The deep-link handler flags
+      // recovery before setSession; consume it here.
+      router.replace(
+        consumePendingPasswordRecovery()
+          ? ('/auth/reset-password' as never)
+          : '/',
+      );
     }
   }, [session, loading, router]);
 

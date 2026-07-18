@@ -1,9 +1,17 @@
+// Set-a-new-password screen — the missing half of "Forgot password?".
+//
+// The recovery email's deep link signs the user in with a temporary
+// session (handleAuthDeepLink flags it, callback.tsx routes here).
+// Until this screen existed, tapping the link just… signed you in
+// once, password unchanged — a dead end the next time you were
+// signed out. The root gate in _layout.tsx explicitly leaves this
+// route alone so the form can't be yanked away mid-typing.
+
 import { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  Pressable,
   KeyboardAvoidingView,
   Platform,
   StatusBar,
@@ -16,35 +24,46 @@ import { fonts } from '../../constants/fonts';
 import { LunaPixel } from '../../components/auth/LunaPixel';
 import { AuthField } from '../../components/auth/AuthField';
 import { AuthButton } from '../../components/auth/AuthButton';
-import { requestPasswordReset } from '../../lib/auth';
+import { updatePassword } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
 
-export default function ForgotPasswordScreen() {
+export default function ResetPasswordScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
+  const [pw, setPw] = useState('');
+  const [done, setDone] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const ambient = useAmbientLunaMood();
 
-  const handleSend = async () => {
+  const handleSave = async () => {
     Haptics.selectionAsync();
-    if (!email.includes('@')) {
-      setError('Enter your email first');
+    if (pw.length < 8) {
+      setError('At least 8 characters');
       return;
     }
     setLoading(true);
     try {
-      await requestPasswordReset(email);
-      setSent(true);
+      await updatePassword(pw);
+      setDone(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Could not send reset link',
-      );
+      const raw =
+        err instanceof Error ? err.message : 'Could not update password';
+      // Supabase refuses a password identical to the current one, and
+      // an expired recovery session comes back as an auth error —
+      // translate both into a next step instead of a raw string.
+      if (/same.*password|different from the old/i.test(raw)) {
+        setError('That’s already your password — pick a new one.');
+      } else if (/expired|invalid|missing/i.test(raw)) {
+        setError(
+          'This reset link has expired — request a fresh one from “Forgot password?”.',
+        );
+      } else {
+        setError(raw);
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
@@ -54,14 +73,6 @@ export default function ForgotPasswordScreen() {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" />
-
-      <Pressable
-        style={[styles.backBtn, { top: insets.top + 14 }]}
-        onPress={() => router.back()}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      >
-        <Text style={styles.backText}>← Back</Text>
-      </Pressable>
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -75,70 +86,55 @@ export default function ForgotPasswordScreen() {
         >
           <View style={styles.lunaArea}>
             <View style={styles.lunaGlow} />
-            {/* `sent` is a real contextual signal — the user just
-                successfully kicked off the reset email — so we
-                upgrade to happy in that moment. Otherwise reflect
-                the ambient state. */}
-            <LunaPixel mood={sent ? 'happy' : ambient} size={80} />
+            <LunaPixel mood={done ? 'happy' : ambient} size={80} />
             <Text selectable={false} style={styles.heading}>
-              {sent ? 'Check your email.' : 'Reset password.'}
+              {done ? 'All set.' : 'New password.'}
             </Text>
           </View>
 
           <View style={styles.card}>
             <View style={styles.shimmer} />
 
-            {sent ? (
+            {done ? (
               <View>
-                <Text style={styles.sentIcon}>📬</Text>
-                <Text style={styles.sentTitle}>We sent you a link</Text>
+                <Text style={styles.sentIcon}>🔒</Text>
+                <Text style={styles.sentTitle}>Password updated</Text>
                 <Text style={styles.sentBody}>
-                  Check{' '}
-                  <Text
-                    style={{ color: colors.text, fontFamily: fonts.sansSemi }}
-                  >
-                    {email}
-                  </Text>{' '}
-                  for a password reset link.{'\n'}It expires in about an hour.
+                  You&apos;re signed in — the old password stops working
+                  from now on.
                 </Text>
-                <AuthButton onPress={() => router.replace('/auth/sign-in')}>
-                  Back to log in
-                </AuthButton>
-                <AuthButton
-                  variant="ghost"
-                  onPress={() => {
-                    setSent(false);
-                    setEmail('');
-                  }}
-                >
-                  Try a different email
+                <AuthButton onPress={() => router.replace('/')}>
+                  Take me in
                 </AuthButton>
               </View>
             ) : (
               <View>
-                <Text style={styles.cardTitle}>Forgot your password?</Text>
+                <Text style={styles.cardTitle}>Pick a new password</Text>
                 <Text style={styles.cardSub}>
-                  Enter your email and we'll send a reset link.
+                  You&apos;re signed in through the reset link — set the
+                  new one and you&apos;re done.
                 </Text>
                 <AuthField
-                  label="Email"
-                  value={email}
+                  label="New password"
+                  value={pw}
                   onChangeText={(v) => {
-                    setEmail(v);
+                    setPw(v);
                     if (error) setError('');
                   }}
-                  placeholder="name@email.com"
-                  keyboardType="email-address"
+                  placeholder="At least 8 characters"
+                  secureTextEntry
                   error={error}
-                  autoComplete="email"
-                  textContentType="emailAddress"
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  returnKeyType="go"
+                  onSubmitEditing={handleSave}
                 />
                 <AuthButton
-                  onPress={handleSend}
+                  onPress={handleSave}
                   loading={loading}
                   disabled={!isSupabaseConfigured}
                 >
-                  Send reset link
+                  Save new password
                 </AuthButton>
               </View>
             )}
@@ -151,12 +147,6 @@ export default function ForgotPasswordScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bgAuth },
-  backBtn: { position: 'absolute', left: 20, zIndex: 10 },
-  backText: {
-    fontFamily: fonts.sansMedium,
-    fontSize: 14,
-    color: colors.text3,
-  },
   body: {
     flex: 1,
     paddingHorizontal: 16,

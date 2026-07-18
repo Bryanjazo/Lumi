@@ -53,6 +53,7 @@ import {
   signInWithApple,
   signInWithGoogle,
   GOOGLE_CANCELLED,
+  APPLE_CANCELLED,
 } from '../../lib/auth';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { useUserStore } from '../../store/userStore';
@@ -83,6 +84,10 @@ const prettySignUpError = (raw: string): string => {
 
 const prettySignInError = (raw: string): string => {
   if (/invalid login/i.test(raw)) return "That email + password didn't match.";
+  if (/not confirmed/i.test(raw))
+    return 'This email hasn’t been confirmed yet — check your inbox.';
+  if (/rate limit/i.test(raw))
+    return 'Too many tries — give it a minute, then try again.';
   return raw;
 };
 
@@ -397,7 +402,7 @@ export const AuthDoor = ({ initialMode }: Props) => {
     try {
       if (isUp) {
         setName_(name.trim());
-        const { needsEmailConfirmation } = await signUp(email, pw);
+        const { needsEmailConfirmation } = await signUp(email, pw, name);
         // Stash creds (memory only) so the verify screen can sign in
         // the moment the confirmation link is clicked — even if the
         // deep link never reaches the app.
@@ -418,13 +423,28 @@ export const AuthDoor = ({ initialMode }: Props) => {
         await signIn(email, pw);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
+      // Success: DON'T reset loading. The root gate may hold this
+      // screen for a beat while the first cloud pull runs — reverting
+      // to an idle, re-tappable door mid-hold read as "sign-in
+      // silently failed". The route change unmounts us.
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Something went wrong';
+      // Sign-in against an unconfirmed email is a soft dead end from
+      // this tab (no resend here). The verify screen has the resend
+      // button AND the quiet auto-sign-in poller — stash the creds it
+      // needs and take them there.
+      if (!isUp && /not confirmed/i.test(raw)) {
+        stashPendingCredentials(email, pw);
+        setLoading(false);
+        router.replace(
+          `/auth/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}` as never,
+        );
+        return;
+      }
       setErrors({
         submit: isUp ? prettySignUpError(raw) : prettySignInError(raw),
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
       setLoading(false);
     }
   };
@@ -447,14 +467,16 @@ export const AuthDoor = ({ initialMode }: Props) => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // Routing is handled by the session listener in _layout.tsx —
       // it'll bounce a new account to onboarding, an existing one
-      // straight into (tabs).
+      // straight into (tabs). Keep `loading` set until then: the root
+      // gate may hold this screen while the first cloud pull runs, and
+      // an idle door mid-hold read as a silent failure.
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Something went wrong';
       // Silent cancellation paths — user backed out, don't show an
-      // error banner. The Google flow throws the stable
-      // GOOGLE_CANCELLED marker; Apple uses ERR_REQUEST_CANCELED.
+      // error banner. Both flows throw stable markers.
       const cancelled =
         raw === GOOGLE_CANCELLED ||
+        raw === APPLE_CANCELLED ||
         /canceled|cancelled|user cancel|ERR_REQUEST_CANCELED/i.test(raw);
       if (cancelled) {
         // silent
@@ -463,7 +485,6 @@ export const AuthDoor = ({ initialMode }: Props) => {
         setErrors({ submit: raw });
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
-    } finally {
       setLoading(false);
     }
   };
@@ -531,7 +552,12 @@ export const AuthDoor = ({ initialMode }: Props) => {
           <View style={styles.socialRow}>
             <Pressable
               onPress={() => handleSocial('apple')}
-              style={[styles.socialBtn, styles.appleBtn]}
+              disabled={loading}
+              style={[
+                styles.socialBtn,
+                styles.appleBtn,
+                loading && { opacity: 0.55 },
+              ]}
             >
               <AppleGlyph color={TC.void} />
               <Text style={[styles.socialText, { color: TC.void }]}>
@@ -540,7 +566,12 @@ export const AuthDoor = ({ initialMode }: Props) => {
             </Pressable>
             <Pressable
               onPress={() => handleSocial('google')}
-              style={[styles.socialBtn, styles.googleBtn]}
+              disabled={loading}
+              style={[
+                styles.socialBtn,
+                styles.googleBtn,
+                loading && { opacity: 0.55 },
+              ]}
             >
               <GoogleGlyph />
               <Text style={[styles.socialText, { color: TC.bone }]}>
@@ -557,7 +588,8 @@ export const AuthDoor = ({ initialMode }: Props) => {
               "sign in with the method you used before" error. */}
           <Text style={styles.socialHint}>
             Same email? I&apos;ll link Google / Apple / password into
-            one account.
+            one account. (Apple&apos;s &ldquo;Hide My Email&rdquo; makes
+            a separate one.)
           </Text>
 
           {/* Divider */}
