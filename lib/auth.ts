@@ -199,7 +199,7 @@ export const signOut = async (): Promise<void> => {
   // next sign-in re-pulls and re-mints its own receipt.
   try {
     const { useSyncStatus } = await import('./sync');
-    useSyncStatus.setState({ pulledFor: {} });
+    useSyncStatus.setState({ pulledFor: {}, petMergedFor: {} });
   } catch {
     // sync module unavailable (tests) — nothing to clear
   }

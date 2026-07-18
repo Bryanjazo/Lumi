@@ -156,7 +156,16 @@ export default function RootLayout() {
     });
     const t = setTimeout(() => void syncParseMetrics(), 6000);
     const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active') void syncParseMetrics();
+      if (s === 'active') {
+        void syncParseMetrics();
+        // Re-arm notifications on every foreground: interval/monthly/
+        // dayless-weekly reminders are ONE-SHOTS at the next real fire
+        // and only re-arm on a sync — without this, a user who
+        // dismissed one without opening the app got silence until the
+        // next cold start (exactly the drifting-away moment the nudge
+        // exists for). Passive → never prompts; serialized internally.
+        void syncNotifications().catch(() => {});
+      }
       // The documented supabase-js RN wiring: pause the token-refresh
       // timer in the background, resume on foreground. Without it a
       // long background can leave a stale access token until the next

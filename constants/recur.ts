@@ -42,6 +42,17 @@ export interface RecurRule {
    * sense) and when `every: '2week'` (legacy — already biweekly).
    */
   interval?: number;
+  /**
+   * STABLE schedule anchor (YYYY-MM-DD) — the rule's original first
+   * occurrence. Without it, firesOnDate anchored on the mutating
+   * lastSpawnedDate: a "monthly on the 31st" habit that clamped to
+   * Feb 28 re-anchored on the 28th FOREVER, and a dayless-weekly
+   * habit respawned late on a Wednesday drifted Mon→Wed permanently.
+   * Lives inside the recur JSON so it round-trips with no migration.
+   * Legacy rules without it keep the old anchor behavior until
+   * refreshRecurring heals them (stamps the current phase once).
+   */
+  anchor?: string;
 }
 
 export const CADENCES: { key: CadenceKey; label: string }[] = [
@@ -178,7 +189,10 @@ export const firesOnDate = (
 ): boolean => {
   const dow = date.getDay();
   const n = effInterval(rule);
-  const anchor = anchorISO ? new Date(anchorISO + 'T12:00:00') : new Date();
+  // The rule's own stable anchor beats the caller-supplied one (which
+  // is usually the drifting lastSpawnedDate).
+  const anchorSrc = rule.anchor ?? anchorISO;
+  const anchor = anchorSrc ? new Date(anchorSrc + 'T12:00:00') : new Date();
   switch (rule.every) {
     case 'day': {
       const diff = dayNumber(date) - dayNumber(anchor);

@@ -1037,12 +1037,17 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
     // the 5 (with the unrelated "at" as context) and anchored 5 PM
     // while the real 11am sat unparsed in the title. Priority:
     // am/pm marker > colon > directly "at "-prefixed > nothing.
+    // Single-letter a/p markers must be ATTACHED to the digits ("11a",
+    // "2p") — with a space allowed, the English article swallowed the
+    // clock: "take 1 a day" parsed 1 AM and deleted "a" from the
+    // title, and "give 1 a day of meds at 9pm" beat the real 9pm.
     const timeRe =
-      /\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|a|p)?\b/g;
+      /\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?(?:\s*(am|pm|a\.m\.|p\.m\.)|([ap]))?\b/g;
     let timeMatch: RegExpExecArray | null = null;
     let bestScore = 0;
     for (let mm = timeRe.exec(lc); mm; mm = timeRe.exec(lc)) {
-      const score = mm[3] ? 3 : mm[2] ? 2 : /^at\s/.test(mm[0]) ? 1 : 0;
+      const marker = mm[3] ?? mm[4];
+      const score = marker ? 3 : mm[2] ? 2 : /^at\s/.test(mm[0]) ? 1 : 0;
       if (score > bestScore) {
         bestScore = score;
         timeMatch = mm;
@@ -1052,7 +1057,7 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
     if (timeMatch) {
       let h = parseInt(timeMatch[1], 10);
       const m = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
-      const apRaw = timeMatch[3];
+      const apRaw = timeMatch[3] ?? timeMatch[4];
       const isPm = apRaw === 'pm' || apRaw === 'p.m.' || apRaw === 'p';
       const isAm = apRaw === 'am' || apRaw === 'a.m.' || apRaw === 'a';
       // "at" must prefix THIS match — not merely appear somewhere.

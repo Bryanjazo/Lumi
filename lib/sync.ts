@@ -281,6 +281,12 @@ const pushCheckins = async (userId: string) => {
 
 // ── push: pet state ─────────────────────────────────────────────────────
 const pushPet = async (userId: string) => {
+  // Own receipt, not the shared pulledFor: pet_state/equipped are
+  // plain overwrites, so pushing before THIS session merged the cloud
+  // pet (pet pull failed while core succeeded) would reset the
+  // account's skin/traits/bond on every device. Skipping loses at
+  // most one unmerged session's care taps — the smaller harm.
+  if (!useSyncStatus.getState().petMergedFor[userId]) return;
   const p = usePetStore.getState();
   const { error: petErr } = await supabase.from('pet_state').upsert(
     {
@@ -364,7 +370,12 @@ const pushPet = async (userId: string) => {
  */
 export const useSyncStatus = create<{
   pulledFor: Record<string, true>;
-}>(() => ({ pulledFor: {} }));
+  /** pet_state/equipped are whole-row overwrites with no protective
+   *  merge — they get their OWN receipt. Core success alone opening
+   *  the shared push gate let a failed pet pull followed by any pet
+   *  write clobber the account's skin/traits/bond with defaults. */
+  petMergedFor: Record<string, true>;
+}>(() => ({ pulledFor: {}, petMergedFor: {} }));
 
 /**
  * Returns true only when EVERY section pulled cleanly. Supabase
@@ -471,9 +482,14 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       offlineMode: userRow.offline_mode ?? false,
       // Cosmetic identity — the picked cat + room color follow the
       // account now. `||` so a null/'' cloud value never wipes local.
+      // roomTint validates against the union: a corrupt cloud string
+      // reached ROOM_TINTS[x] → undefined → hexA crash on the Me tab.
       avatar: (userRow.avatar as string | null) || localState.avatar,
-      roomTint: (((userRow.room_tint as string | null) ||
-        localState.roomTint) as typeof localState.roomTint),
+      roomTint: ['none', 'rose', 'sage', 'sky', 'lavender', 'honey'].includes(
+        (userRow.room_tint as string | null) ?? '',
+      )
+        ? (userRow.room_tint as typeof localState.roomTint)
+        : localState.roomTint,
       // "Member since" = the EARLIEST known date. On a reinstall the
       // local onboardedAt resets, which dropped a long-time user back
       // to "day 1 together" in Profile/Me — restore it from the
@@ -795,6 +811,15 @@ export const pullAll = async (userId: string): Promise<boolean> => {
   if (owned.error) console.warn('[sync] pull owned', owned.error.message);
   if (pet.error) console.warn('[sync] pull pet', pet.error.message);
   if (sos.error) console.warn('[sync] pull sos', sos.error.message);
+  // Pet receipt: the pet + equipped queries SPOKE (a missing row for a
+  // new user still counts — there's nothing to clobber). Without this
+  // receipt every pet push is skipped, so a failed pet pull keeps the
+  // cloud pet safe for the whole session.
+  if (!pet.error && !eq.error) {
+    useSyncStatus.setState((s) => ({
+      petMergedFor: { ...s.petMergedFor, [userId]: true },
+    }));
+  }
   return coreOk;
 };
 
@@ -817,14 +842,10 @@ export const pushAllNow = async (userId: string): Promise<void> => {
     // cloud rows, so these are safe to flush even before a clean pull.
     pushQuests(userId),
     pushCheckins(userId),
-    // pet_state is a whole-row overwrite with no protective merge. If
-    // this session never completed a pull, local pet is defaults (or
-    // near it) and flushing it would reset the cloud skin/traits/bond
-    // on every device. Skipping loses at most one unpulled session's
-    // care taps — the far smaller harm.
-    ...(useSyncStatus.getState().pulledFor[userId]
-      ? [pushPet(userId)]
-      : []),
+    // pushPet self-gates on petMergedFor (its own receipt) — a session
+    // whose pet pull failed must never flush default pet state over
+    // the cloud skin/traits/bond.
+    pushPet(userId),
   ]);
 };
 

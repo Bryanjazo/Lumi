@@ -290,7 +290,14 @@ export const useQuestStore = create<QuestState>()(
           durationMinutes: q.durationMinutes,
           accent: q.accent ?? accents[get().quests.length % accents.length],
           createdAt: new Date().toISOString(),
-          recur: q.recur,
+          // Stamp the rule's STABLE anchor at creation — the intended
+          // first occurrence. Everything downstream (spawn cadence,
+          // ghost projection, reminder scheduling) derives weekday /
+          // day-of-month / interval phase from this, so it must never
+          // drift with lastSpawnedDate.
+          recur: q.recur
+            ? { ...q.recur, anchor: q.recur.anchor ?? q.date ?? todayKey() }
+            : undefined,
           lastSpawnedDate: q.recur ? todayKey() : undefined,
           ...(q.note && q.note.length > 0 ? { note: q.note } : {}),
         };
@@ -525,11 +532,18 @@ export const useQuestStore = create<QuestState>()(
             // and re-charge the user XP/streak. The completion path
             // does NOT clear lastSpawnedDate, so this guard is safe.
             if (q.lastSpawnedDate === today) return q;
+            // Heal legacy rules missing the stable anchor: freeze the
+            // CURRENT phase once so it can't keep drifting with every
+            // late respawn (the 31st→28th ratchet, Mon→Wed weekly
+            // drift). New rules get the anchor at addQuest.
+            const rule = q.recur.anchor
+              ? q.recur
+              : { ...q.recur, anchor: q.lastSpawnedDate ?? q.date };
             const next = nextOccurrence(
-              q.recur,
+              rule,
               q.lastSpawnedDate ?? q.date,
             );
-            if (next > today) return q;
+            if (next > today) return q.recur.anchor ? q : { ...q, recur: rule };
             // Due today (or overdue): reset the row, advance the
             // lastSpawned stamp, and re-anchor `date` to today so it
             // surfaces in Home's today list. Sync scheduledHour/Minute
@@ -538,6 +552,7 @@ export const useQuestStore = create<QuestState>()(
             const recurAt = q.recur.at;
             return {
               ...q,
+              recur: rule,
               completed: false,
               completedAt: null,
               date: today,
