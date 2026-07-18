@@ -13,7 +13,7 @@ import {
   LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { captureRef } from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
@@ -36,6 +36,8 @@ import {
   sundayWeekStart,
 } from '../lib/week';
 import { useLearningDigest, formatStaleDays } from '../lib/learning';
+import { useCheckinStore } from '../store/checkinStore';
+import { energyForSundayWeek } from '../lib/learning/energy';
 import { useCompanionMode, phrasingFor } from '../lib/companion-mode';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
 import { useAccessStatus } from '../lib/subscription';
@@ -274,20 +276,33 @@ export default function RecapScreen() {
   // THE shared week definition (lib/week.ts) — recap, Me's story and
   // Patterns all count the same Sunday-anchored completion week now
   // (they used to disagree on the same screen transition).
+  //
+  // WHICH week: an explicit ?offset= param (the "Your weeks" history
+  // rows) wins. Otherwise: on SUNDAY the "current" Sunday-anchored
+  // week is one day old — the recap notification fires Sunday dinner
+  // and used to grade a 1-day week ("A quiet week", 0/N) right after
+  // a full productive one. Sundays review the JUST-FINISHED week.
+  const params = useLocalSearchParams<{ offset?: string }>();
+  const paramOffset = params.offset != null ? parseInt(params.offset, 10) : NaN;
+  const weekOffset = !isNaN(paramOffset) && paramOffset >= 0
+    ? paramOffset
+    : new Date().getDay() === 0
+      ? 1
+      : 0;
   const quests = useQuestStore((s) => s.quests);
   const doneLog = useUserStore((s) => s.doneLog);
   const doneByDay = useMemo(
-    () => completedByDayForWeek(quests, doneLog),
-    [quests, doneLog],
+    () => completedByDayForWeek(quests, doneLog, weekOffset),
+    [quests, doneLog, weekOffset],
   );
   const done = doneByDay.reduce((x, y) => x + y, 0);
   const set = useMemo(
-    () => plannedForWeek(quests, done),
-    [quests, done],
+    () => plannedForWeek(quests, done, weekOffset),
+    [quests, done, weekOffset],
   );
   const lastWeekDone = useMemo(
-    () => completedForWeek(quests, doneLog, 1),
-    [quests, doneLog],
+    () => completedForWeek(quests, doneLog, weekOffset + 1),
+    [quests, doneLog, weekOffset],
   );
   const dayLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
   const trend = done - lastWeekDone;
@@ -298,7 +313,16 @@ export default function RecapScreen() {
   const showTrendPill = trend > 0 && lastWeekDone > 0;
   const isBestYet = showTrendPill && done > bestEver;
 
-  const energyData = energyTrend;
+  // Energy over the SAME Sunday week the task bars count — the rolling
+  // last-7-days digest curve next to week-anchored bars meant two
+  // different date ranges on one screen (and a wrong curve entirely
+  // for a historical week).
+  const checkins = useCheckinStore((s) => s.checkins);
+  const energyData = useMemo(
+    () => energyForSundayWeek(checkins, weekOffset),
+    [checkins, weekOffset],
+  );
+  void energyTrend; // digest's rolling curve — superseded here
   // Peak/dip come from REPORTED days only — zero-filled no-data days
   // used to "win" the dip ("dipped Saturday" on a day with no
   // check-in), and the day names now come from the real dates (the
@@ -325,9 +349,15 @@ export default function RecapScreen() {
 
   // ── Week label — matches the Sunday-anchored counting window ──────
   const weekLabel = useMemo(() => {
-    const start = sundayWeekStart(0);
-    return `${monthDay(start)} – ${monthDay(new Date())}`;
-  }, []);
+    const start = sundayWeekStart(weekOffset);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const today = new Date();
+    // Current partial week reads "start – today"; a finished/
+    // historical week shows its full span.
+    const shownEnd = weekOffset === 0 && end > today ? today : end;
+    return `${monthDay(start)} – ${monthDay(shownEnd)}`;
+  }, [weekOffset]);
 
   // ── Headline read of the week shape ──────────────────────────────
   const headline = useMemo(() => {

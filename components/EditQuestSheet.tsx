@@ -32,6 +32,8 @@ import * as Haptics from 'expo-haptics';
 
 import { fonts } from '../constants/fonts';
 import type { Quest } from '../store/questStore';
+import { useQuestStore } from '../store/questStore';
+import { cadenceText } from '../constants/recur';
 import { WINDOWS } from '../constants/windows';
 import { useAccent } from '../lib/theme';
 import { useVoice } from '../lib/voice';
@@ -79,6 +81,11 @@ export const EditQuestSheet = ({
   // Two-tap delete confirm — first tap arms, second commits. Re-arms
   // closed every time the sheet opens for a (new) quest.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Same two-tap pattern for stopping a repeat — before this row the
+  // ONLY way to end a habit was deleting the whole task (stopRecurring
+  // existed with zero callers; the cross-device tombstone it feeds was
+  // unreachable).
+  const [confirmingStop, setConfirmingStop] = useState(false);
   const accent = useAccent();
   const voice = useVoice();
 
@@ -100,6 +107,7 @@ export const EditQuestSheet = ({
       setNoteFocused(false);
       setCommentFocused(false);
       setConfirmingDelete(false);
+      setConfirmingStop(false);
     }
   }, [visible, quest]);
 
@@ -339,6 +347,38 @@ export const EditQuestSheet = ({
                 </Text>
               </Pressable>
             </View>
+
+            {/* ── Stop repeating — two-tap confirm, keeps the task ── */}
+            {quest.recur && (
+              <Pressable
+                onPress={() => {
+                  if (!confirmingStop) {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setConfirmingStop(true);
+                    return;
+                  }
+                  Haptics.selectionAsync();
+                  useQuestStore.getState().stopRecurring(quest.id);
+                  onClose();
+                }}
+                style={[
+                  styles.deleteRow,
+                  confirmingStop && styles.deleteRowArmed,
+                ]}
+                hitSlop={4}
+              >
+                <Text
+                  style={[
+                    styles.deleteText,
+                    confirmingStop && { color: '#C9A06A' },
+                  ]}
+                >
+                  {confirmingStop
+                    ? 'Tap again — today’s stays, no more repeats'
+                    : `Repeats ${cadenceText(quest.recur)} · stop repeating`}
+                </Text>
+              </Pressable>
+            )}
 
             {/* ── Delete — two-tap confirm, no system alert ── */}
             {onDelete && (

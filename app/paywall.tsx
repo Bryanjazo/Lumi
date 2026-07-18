@@ -12,7 +12,7 @@
 // All RevenueCat plumbing (purchaseTier, restorePurchases, outcome
 // dispatch, error UX) is preserved from the prior implementation.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -42,7 +42,11 @@ import {
   ANNUAL_SAVE_PCT,
 } from '../lib/subscription';
 import { useUserStore } from '../store/userStore';
-import { purchaseTier, restorePurchases } from '../lib/revenuecat';
+import {
+  purchaseTier,
+  restorePurchases,
+  getCurrentOffering,
+} from '../lib/revenuecat';
 
 const hexA = (hex: string, a: number) => {
   const h = hex.replace('#', '');
@@ -78,6 +82,42 @@ export default function Paywall() {
 
   const [selected, setSelected] = useState<'annual' | 'monthly'>('annual');
   const [purchasing, setPurchasing] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+
+  // Localized store prices — the hardcoded USD constants stay as the
+  // instant fallback (offline / offerings-failed keeps a working
+  // page), but an international user should see what Apple will
+  // actually charge, not "$14.99" beside a €/¥ purchase sheet.
+  const [storePrice, setStorePrice] = useState<{
+    annual?: string;
+    annualIntro?: string;
+    monthly?: string;
+  }>({});
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentOffering().then((offering) => {
+      if (cancelled || !offering) return;
+      const next: { annual?: string; annualIntro?: string; monthly?: string } =
+        {};
+      for (const p of offering.availablePackages) {
+        const price = p.product?.priceString;
+        if (!price) continue;
+        if (p.identifier === '$rc_annual') {
+          next.annual = price;
+          next.annualIntro = p.product?.introPrice?.priceString ?? undefined;
+        }
+        if (p.identifier === '$rc_monthly') next.monthly = price;
+      }
+      setStorePrice(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const monthlyLabel = storePrice.monthly ?? PRICING.monthly.label;
+  const annualRenewLabel = storePrice.annual ?? PRICING.annual.renewalLabel;
+  const annualFirstYearLabel =
+    storePrice.annualIntro ?? PRICING.annual.firstYearLabel;
 
   // Savings % — annual RENEWAL vs paying monthly × 12, so the badge
   // stays true every year the user is subscribed. Comparing against
@@ -111,8 +151,8 @@ export default function Paywall() {
       Alert.alert(
         'You’re on Pro 💛',
         outcome.tier === 'annual'
-          ? `Welcome to Lumi Annual — your first year is $${PRICING.annual.firstYearAmountUSD}. Cancel anytime in Settings.`
-          : `Welcome to Lumi Monthly — $${PRICING.monthly.amountUSD}/month. Cancel anytime in Settings.`,
+          ? `Welcome to Lumi Annual — your first year is ${annualFirstYearLabel}. Cancel anytime in Settings.`
+          : `Welcome to Lumi Monthly — ${monthlyLabel}/month. Cancel anytime in Settings.`,
         [{ text: 'Open Lumi', onPress: () => router.replace('/(tabs)') }],
         { cancelable: false },
       );
@@ -138,8 +178,15 @@ export default function Paywall() {
   };
 
   const handleRestore = async () => {
+    // In-flight guard — double-tapping fired two concurrent restores
+    // and could stack two alerts (manage-subscription already guards;
+    // this screen didn't).
+    if (restoring) return;
+    setRestoring(true);
     Haptics.selectionAsync();
-    const outcome = await restorePurchases();
+    const outcome = await restorePurchases().finally(() =>
+      setRestoring(false),
+    );
     if (outcome.kind === 'restored') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert(
@@ -180,8 +227,8 @@ export default function Paywall() {
   // will see in the Apple sheet.
   const ctaLabel =
     selected === 'annual'
-      ? `Upgrade to Pro · ${PRICING.annual.firstYearLabel} / year`
-      : `Upgrade to Pro · ${PRICING.monthly.label} / month`;
+      ? `Upgrade to Pro · ${annualFirstYearLabel} / year`
+      : `Upgrade to Pro · ${monthlyLabel} / month`;
 
   // Status card varies per access state. Free is the mockup baseline;
   // trial and active land here occasionally (deep link, profile row)
@@ -325,12 +372,12 @@ export default function Paywall() {
                   const label = k === 'annual' ? 'Yearly' : 'Monthly';
                   const price =
                     k === 'annual'
-                      ? PRICING.annual.firstYearLabel
-                      : PRICING.monthly.label;
+                      ? annualFirstYearLabel
+                      : monthlyLabel;
                   const per = k === 'annual' ? '/yr' : '/mo';
                   const note =
                     k === 'annual'
-                      ? `then ${PRICING.annual.renewalLabel}/yr · billed yearly`
+                      ? `then ${annualRenewLabel}/yr · billed yearly`
                       : 'billed monthly';
                   const save =
                     k === 'annual' && annualSavePct > 0
@@ -417,12 +464,12 @@ export default function Paywall() {
               </Pressable>
               <Text style={styles.ctaDisclaimer}>
                 {selected === 'annual'
-                  ? `${PRICING.annual.firstYearLabel} first year, renews at ${PRICING.annual.renewalLabel}/yr. Cancel anytime — your free plan never expires.`
+                  ? `${annualFirstYearLabel} first year, renews at ${annualRenewLabel}/yr. Cancel anytime — your free plan never expires.`
                   : access.trialAlreadyUsed
                     ? // Don't promise a trial the user already spent —
                       // mirror Profile's upgrade card, which adapts.
-                      `${PRICING.monthly.label}/mo. Cancel anytime — your free plan never expires.`
-                    : `7-day free trial, then ${PRICING.monthly.label}/mo. Cancel anytime — your free plan never expires.`}
+                      `${monthlyLabel}/mo. Cancel anytime — your free plan never expires.`
+                    : `7-day free trial, then ${monthlyLabel}/mo. Cancel anytime — your free plan never expires.`}
               </Text>
             </>
           )}

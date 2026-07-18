@@ -26,11 +26,13 @@ import {
   Share,
   Switch,
   TextInput,
+  ActivityIndicator,
   LayoutAnimation,
   UIManager,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { supabase } from '../lib/supabase';
 import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
 import Svg, { Circle, Rect, Path } from 'react-native-svg';
@@ -723,6 +725,9 @@ export default function AccountScreen() {
 
   // Sheet visibility
   const [editOpen, setEditOpen] = useState(false);
+  // Non-null while a sign-out / delete network flush is in flight —
+  // renders a spinner row + disables both account buttons.
+  const [accountBusy, setAccountBusy] = useState<string | null>(null);
   const [langOpen, setLangOpen] = useState(false);
   const [windowsOpen, setWindowsOpen] = useState(false);
 
@@ -778,8 +783,12 @@ export default function AccountScreen() {
     value: boolean,
   ) => {
     setNotifPref(key, value);
-    void syncNotifications({ interactive: value }).then(({ granted }) => {
-      if (!granted && value) {
+    // Quiet hours SUPPRESSES notifications — demanding notification
+    // permission to enable it (and reverting on denial) was backwards.
+    // It re-syncs passively and never prompts.
+    const wantsPermission = value && key !== 'quiet';
+    void syncNotifications({ interactive: wantsPermission }).then(({ granted }) => {
+      if (!granted && wantsPermission) {
         setNotifPref(key, false);
         Alert.alert(
           'Notifications are off',
@@ -966,7 +975,7 @@ export default function AccountScreen() {
               await changeEmail(trimmed);
               Alert.alert(
                 'Check both inboxes',
-                "Supabase sent a confirmation link to your old AND new address. Click both to finish the switch — you stay signed in under the old email until then.",
+                "We sent a confirmation link to your old AND new address. Click both to finish the switch — you stay signed in under the old email until then.",
               );
             } catch (e) {
               Alert.alert(
@@ -990,7 +999,26 @@ export default function AccountScreen() {
         text: 'Sign out',
         style: 'destructive',
         onPress: async () => {
-          await signOut();
+          // Busy state + bounded wait: the pre-wipe cloud flush has no
+          // timeout of its own, so on a bad network the screen used to
+          // sit frozen with an idle button for the whole TCP timeout.
+          // 15s cap → signOut's own fail-safe (push failed → local
+          // data retained) handles the slow path.
+          setAccountBusy('Signing out…');
+          try {
+            await Promise.race([
+              signOut(),
+              new Promise((_, rej) =>
+                setTimeout(() => rej(new Error('timeout')), 15000),
+              ),
+            ]);
+          } catch {
+            // flush timed out — session may still be live; force it.
+            try {
+              await supabase.auth.signOut();
+            } catch { /* offline — local sign-out only */ }
+          }
+          setAccountBusy(null);
           router.replace('/auth/sign-in');
         },
       },
@@ -1121,6 +1149,7 @@ export default function AccountScreen() {
                     // confirms — this used to run at the first tap,
                     // so tapping Delete then "Cancel" silently
                     // killed every scheduled nudge.
+                    setAccountBusy('Erasing…');
                     void cancelAllReminders().catch(() => {});
                     let serverPurged = true;
                     try {
@@ -1137,7 +1166,22 @@ export default function AccountScreen() {
                     // pet store (SOS events, meds timestamps) on
                     // device after "permanently erase everything".
                     resetLocalUserData();
-                    await signOut().catch(() => {});
+                    // Bare auth sign-out: the full signOut() would try
+                    // to FLUSH the just-wiped defaults to an account
+                    // that no longer exists — wasted round-trip during
+                    // a flow the user wants to be fast. Still clear
+                    // the sync receipts (the full signOut does this).
+                    try {
+                      await supabase.auth.signOut();
+                    } catch { /* offline — session dies locally */ }
+                    try {
+                      const { useSyncStatus } = await import('../lib/sync');
+                      useSyncStatus.setState({
+                        pulledFor: {},
+                        petMergedFor: {},
+                      });
+                    } catch { /* nothing to clear */ }
+                    setAccountBusy(null);
                     router.replace('/onboarding/welcome');
                     if (!serverPurged) {
                       Alert.alert(
@@ -2366,7 +2410,16 @@ export default function AccountScreen() {
               {weeks.map((w) => (
                 <Pressable
                   key={w.start.toISOString()}
-                  onPress={() => router.push('/recap')}
+                  // Pass the row's WEEK to the recap — every row used
+                  // to open the current week regardless of its label.
+                  onPress={() => {
+                    const ms = Date.now() - w.start.getTime();
+                    const offset = Math.max(
+                      0,
+                      Math.round(ms / (7 * 86400000) - 0.5),
+                    );
+                    router.push(`/recap?offset=${offset}` as never);
+                  }}
                   style={styles.weekCard}
                 >
                   <View
@@ -2604,7 +2657,7 @@ export default function AccountScreen() {
             onPress={() =>
               Alert.alert(
                 'Privacy',
-                'Your pattern data lives on your device first. When signed in it syncs to Supabase under row-level security so only you can read it. AI calls send the minimum needed and never train on your data.',
+                'Your pattern data lives on your device first. When signed in it syncs to Lumi’s secure cloud, locked so only you can read it. AI calls send the minimum needed and never train on your data.',
               )
             }
             last
@@ -2659,12 +2712,24 @@ export default function AccountScreen() {
           </View>
         </View>
 
-        <Pressable onPress={handleSignOut} style={styles.signOutBtn}>
-          <Text style={styles.signOutText}>Sign out</Text>
+        <Pressable
+          onPress={handleSignOut}
+          disabled={accountBusy != null}
+          style={[styles.signOutBtn, accountBusy != null && { opacity: 0.55 }]}
+        >
+          {accountBusy != null ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <ActivityIndicator size="small" color={C.boneDim} />
+              <Text style={styles.signOutText}>{accountBusy}</Text>
+            </View>
+          ) : (
+            <Text style={styles.signOutText}>Sign out</Text>
+          )}
         </Pressable>
 
         <Pressable
           onPress={handleDelete}
+          disabled={accountBusy != null}
           style={{ alignItems: 'center', paddingVertical: 8, marginTop: 4 }}
         >
           <Text style={styles.deleteLink}>Delete account</Text>

@@ -280,6 +280,35 @@ export const last7DaysEnergy = (
   return out;
 };
 
+/** Energy series for a SUNDAY-ANCHORED calendar week (offset weeks
+ *  back, 0 = current) — the same window lib/week.ts counts
+ *  completions in. The recap used to draw the rolling last-7-days
+ *  curve next to Sunday-week task bars: two different date ranges on
+ *  one screen. Future days (current week) report 0 = "no data". */
+export const energyForSundayWeek = (
+  checkins: Checkin[],
+  offset = 0,
+  now = new Date(),
+): { day: string; v: number; date: string }[] => {
+  const byDate = new Map<string, number>();
+  checkins.forEach((c) => {
+    const d = ymdLocal(new Date(c.createdAt));
+    if (!byDate.has(d)) byDate.set(d, c.energy);
+  });
+  const start = new Date(now);
+  start.setHours(12, 0, 0, 0);
+  start.setDate(start.getDate() - start.getDay() - offset * 7);
+  const letters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  const out: { day: string; v: number; date: string }[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const key = ymdLocal(d);
+    out.push({ day: letters[d.getDay()], v: byDate.get(key) ?? 0, date: key });
+  }
+  return out;
+};
+
 /** Average energy over the last N days (default 7). */
 export const avgRecentEnergy = (checkins: Checkin[], days = 7): number => {
   const cutoff = new Date();

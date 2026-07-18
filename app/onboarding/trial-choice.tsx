@@ -128,7 +128,12 @@ export default function TrialChoiceScreen() {
   const markTrialChoiceSeen = useUserStore((s) => s.markTrialChoiceSeen);
   const lunaMood = useAmbientLunaMood();
 
+  // One-shot latch — double-tapping fired the RPC + navigation twice.
+  const decidedRef = useRef(false);
+
   const acceptTrial = () => {
+    if (decidedRef.current) return;
+    decidedRef.current = true;
     Haptics.selectionAsync();
     startTrial();
     // Register the trial server-side too (once-only, immutable RPC) —
@@ -152,6 +157,8 @@ export default function TrialChoiceScreen() {
   };
 
   const declineTrial = () => {
+    if (decidedRef.current) return;
+    decidedRef.current = true;
     Haptics.selectionAsync();
     markTrialChoiceSeen();
     router.replace('/(tabs)');

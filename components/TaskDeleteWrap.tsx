@@ -102,7 +102,8 @@ export const DeleteConfirmProvider = ({
                 Delete &ldquo;{pending?.title || 'this task'}&rdquo;?
               </Text>
               <Text style={styles.body}>
-                This can&apos;t be undone — the task and its history go away.
+                This can&apos;t be undone — the task goes away. Anything you
+                already finished stays counted.
               </Text>
               <View style={styles.btnRow}>
                 <Pressable onPress={cancel} style={styles.cancelBtn}>

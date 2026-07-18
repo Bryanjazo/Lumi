@@ -420,13 +420,37 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       | null;
     const localIsActive = localState.subscriptionStatus === 'active';
     const dbIsActive = dbSub === 'active';
-    const nextSubStatus = localIsActive && !dbIsActive
-      ? localState.subscriptionStatus // protect a fresh purchase
+    // TRIAL PROTECTION: opting into the soft trial calls the
+    // start_trial RPC once — if that single call failed (flaky network
+    // at tap time), the server row stayed 'free' and this merge used
+    // to flatten the local 'trial' to 'free' on the next pull. Since
+    // trialStartedAt persisted, startTrial() then refused forever: the
+    // trial was CONSUMED but never delivered. A local trial that's
+    // still inside its window wins here, and we re-fire the idempotent
+    // RPC (server uses coalesce — it can only ever set it once).
+    const trialStartMs = localState.trialStartedAt
+      ? Date.parse(localState.trialStartedAt)
+      : NaN;
+    const localTrialLive =
+      localState.subscriptionStatus === 'trial' &&
+      !isNaN(trialStartMs) &&
+      Date.now() - trialStartMs < 7 * 86400000;
+    if (localTrialLive && dbSub !== 'trial' && !dbIsActive) {
+      void supabase
+        .rpc('start_trial')
+        .then(({ error }) => {
+          if (error) console.warn('[sync] trial reconcile', error.message);
+        });
+    }
+    const protectLocal =
+      (localIsActive || localTrialLive) && !dbIsActive && dbSub !== 'trial';
+    const nextSubStatus = protectLocal
+      ? localState.subscriptionStatus // protect a fresh purchase / live trial
       : (dbSub ?? 'free');
-    const nextSubTier = localIsActive && !dbIsActive
+    const nextSubTier = protectLocal
       ? localState.subscriptionTier
       : (userRow.subscription_tier ?? null);
-    const nextSubEnd = localIsActive && !dbIsActive
+    const nextSubEnd = protectLocal
       ? localState.subscriptionCurrentPeriodEnd
       : (userRow.subscription_current_period_end ?? null);
 
@@ -601,6 +625,18 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         prior?.recur != null &&
         (prior.lastSpawnedDate ?? '') >
           ((r.last_spawned_date as string | null) ?? '');
+      // FRESH-COMPLETION GUARD: a completion made seconds ago races
+      // the debounced push — a mid-session re-pull (offline toggle,
+      // re-sign-in) adopting the stale cloud `false` un-did it, and
+      // the forced xpPaid stamp then denied XP for re-completing. A
+      // local completion from the last few minutes outranks a stale
+      // cloud row; cross-device undo settles on the next pull cycle.
+      const freshLocalDone =
+        !localRespawnNewer &&
+        prior?.completed === true &&
+        r.completed === false &&
+        prior.completedAt != null &&
+        Date.now() - Date.parse(prior.completedAt) < 10 * 60000;
       byId.set(r.id, {
         id: r.id,
         title: r.title,
@@ -608,10 +644,16 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         importance: importanceFromDifficulty(r.difficulty),
         window: win,
         xpReward: r.xp_reward,
-        completed: localRespawnNewer ? (prior?.completed ?? false) : r.completed,
+        completed: localRespawnNewer
+          ? (prior?.completed ?? false)
+          : freshLocalDone
+            ? true
+            : r.completed,
         completedAt: localRespawnNewer
           ? (prior?.completedAt ?? null)
-          : r.completed_at,
+          : freshLocalDone
+            ? (prior?.completedAt ?? null)
+            : r.completed_at,
         date: localRespawnNewer ? (prior?.date ?? r.date) : r.date,
         scheduledHour: r.scheduled_hour ?? undefined,
         scheduledMinute: r.scheduled_minute ?? undefined,

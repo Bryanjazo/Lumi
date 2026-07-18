@@ -428,6 +428,16 @@ export const useQuestStore = create<QuestState>()(
               : q,
           ),
         }));
+        // Calendar event bodies are built from comment + note — a
+        // title edit re-mirrored but these didn't, leaving stale
+        // notes on the mirrored event.
+        const afterNote = get().quests.find((q) => q.id === id);
+        if (
+          afterNote?.calendarEventIds &&
+          Object.keys(afterNote.calendarEventIds).length > 0
+        ) {
+          mirrorUpsert(afterNote);
+        }
       },
       setComment: (id, comment) => {
         // Same pattern as setNote — cap at 280 to match the spec
@@ -446,6 +456,13 @@ export const useQuestStore = create<QuestState>()(
               : q,
           ),
         }));
+        const afterComment = get().quests.find((q) => q.id === id);
+        if (
+          afterComment?.calendarEventIds &&
+          Object.keys(afterComment.calendarEventIds).length > 0
+        ) {
+          mirrorUpsert(afterComment);
+        }
       },
       toggle: (id) => {
         const q = get().quests.find((x) => x.id === id);

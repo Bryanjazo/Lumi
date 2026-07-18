@@ -66,9 +66,10 @@ export const completedForWeek = (
 export const plannedForWeek = (
   quests: Quest[],
   doneCount: number,
+  offset = 0,
   now = new Date(),
 ): number => {
-  const start = sundayWeekStart(0, now);
+  const start = sundayWeekStart(offset, now);
   const startK = localYmd(start);
   const end = new Date(start);
   end.setDate(start.getDate() + 6);

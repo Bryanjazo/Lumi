@@ -1288,9 +1288,24 @@ export default function Home() {
     color: string;
   } | null>(null);
 
-  // Tick the clock every minute so greeting + current window stay fresh.
+  // Tick the clock every minute so greeting + current window stay
+  // fresh — but only while THIS tab is focused. Tabs stay mounted
+  // after first visit, so the tick was re-rendering this whole ~7k-
+  // line tree every minute while the user sat on another tab.
+  const clockFocusedRef = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      clockFocusedRef.current = true;
+      setNow(new Date()); // catch up instantly on return
+      return () => {
+        clockFocusedRef.current = false;
+      };
+    }, []),
+  );
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 60 * 1000);
+    const id = setInterval(() => {
+      if (clockFocusedRef.current) setNow(new Date());
+    }, 60 * 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -3269,6 +3284,15 @@ export default function Home() {
             STICKY,
           );
         } else {
+          // Tapping the recovery notification is an explicit "yes,
+          // help" — clear a same-day dismissal, or the banner claimed
+          // "Opened Rescue Mode" while the dismissed card stayed
+          // hidden (rescueActive gates on rescueDismissedDate).
+          if (
+            useUserStore.getState().rescueDismissedDate === todayKey()
+          ) {
+            useUserStore.setState({ rescueDismissedDate: null });
+          }
           setForceRescue(true);
           showNotifBanner(
             origin,
@@ -5255,8 +5279,13 @@ export default function Home() {
       {/* "Let the day set" — evening close ritual. */}
       <DaySetSheet
         visible={daySetOpen}
+        // Recurring habits are excluded: "carry to tomorrow" fought
+        // the respawn (it reappears tomorrow anyway, minus its rule
+        // time), and "let go" moved the RULE's window to someday —
+        // hiding the habit forever. A habit skipping a day is already
+        // its normal, guilt-free behavior.
         leftovers={todayQuests.filter(
-          (q) => !q.completed && q.window !== 'someday',
+          (q) => !q.completed && q.window !== 'someday' && !q.recur,
         )}
         onCarry={(q) => {
           Haptics.selectionAsync();

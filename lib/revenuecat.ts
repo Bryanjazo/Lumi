@@ -46,8 +46,16 @@ interface CustomerInfo {
   };
 }
 
+interface PurchasesStoreProduct {
+  /** Localized, currency-formatted price ("$14.99", "\u00a52,200"). */
+  priceString?: string;
+  /** Localized intro offer (the $59.99-first-year deal), when set. */
+  introPrice?: { priceString?: string } | null;
+}
+
 interface PurchasesPackage {
   identifier: string;
+  product?: PurchasesStoreProduct;
 }
 
 interface PurchasesOffering {

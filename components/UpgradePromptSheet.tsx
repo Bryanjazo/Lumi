@@ -13,7 +13,7 @@
 // power-use), we show a quieter "let's keep it quick for now" line
 // with no CTA, per lumi-ai-cost-economics-v2.md §5.
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -42,6 +42,8 @@ const FREE_WEEKLY_CAP: Record<string, number> = {
   brain_dump: 3,
   followup: 5,
   weekly_report: 2,
+  // clarify is Pro-shaped (free cap 0) — no number to show; the
+  // headline drops the count when the cap is missing/zero.
 };
 
 const labelForKind = (kind: QuotaKind | null): string => {
@@ -56,6 +58,8 @@ const labelForKind = (kind: QuotaKind | null): string => {
       return 'follow-ups';
     case 'weekly_report':
       return 'recap narratives';
+    case 'clarify':
+      return 'AI touch-ups';
     default:
       return 'AI helpers';
   }
@@ -72,9 +76,10 @@ export const UpgradePromptSheet = () => {
   const trialStartedAt = useUserStore((s) => s.trialStartedAt);
   const subscriptionStatus = useUserStore((s) => s.subscriptionStatus);
 
-  // Pop-in animation on open.
-  const translateY = new Animated.Value(40);
-  const opacity = new Animated.Value(0);
+  // Pop-in animation on open. Refs, not per-render `new` — a re-render
+  // while the sheet was open reset the values mid-animation.
+  const translateY = useRef(new Animated.Value(40)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!open) return;
     translateY.setValue(40);
@@ -100,7 +105,15 @@ export const UpgradePromptSheet = () => {
 
   const feature = labelForKind(kind);
   const trialAlreadyUsed = trialStartedAt != null;
-  const onTrial = subscriptionStatus === 'trial';
+  // A trial is only "on" while it's actually LIVE. Nothing ever flips
+  // the stored status from 'trial' back to 'free' on expiry, so raw
+  // status showed a LAPSED-trial user the "you're already Pro — got
+  // it" dead end at the exact moment they'd upgrade. Recompute.
+  const trialStartMs = trialStartedAt ? Date.parse(trialStartedAt) : NaN;
+  const onTrial =
+    subscriptionStatus === 'trial' &&
+    !isNaN(trialStartMs) &&
+    Date.now() - trialStartMs < 7 * 86400000;
 
   // ── Premium soft-ceiling: warm note, no CTA. They're already paid;
   //    the proxy is bounding worst-case cost (whale). ──
@@ -148,11 +161,14 @@ export const UpgradePromptSheet = () => {
   }
 
   // ── Free user hit the weekly cap → upgrade conversation. ──
+  const capN = FREE_WEEKLY_CAP[kind ?? ''];
   const headlineTitle = onTrial
     ? `You've used your ${feature} for this week.`
     : trialAlreadyUsed
       ? `You've used your free ${feature} for the week.`
-      : `You've used your ${FREE_WEEKLY_CAP[kind ?? ''] ?? ''} free ${feature} for this week.`;
+      : capN
+        ? `You've used your ${capN} free ${feature} for this week.`
+        : `${feature[0].toUpperCase()}${feature.slice(1)} are a Pro thing.`;
 
   const headlineBody = onTrial
     ? "Even Pro has a fair-use ceiling, but it resets soon. The quick sorts below still work in the meantime."

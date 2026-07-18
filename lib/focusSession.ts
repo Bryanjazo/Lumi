@@ -403,7 +403,15 @@ export const rearmFocusEnd = (): void => {
  *  snapshot ("12 minutes is 12 minutes" must survive a force-quit),
  *  and cancels the stale end notification so it can't fire over a
  *  session that no longer exists. */
+let orphanSweepInFlight = false;
 export const clearOrphanFocusActivities = async (): Promise<void> => {
+  // In-flight latch + live-session gate: two concurrent invocations
+  // (dev fast-refresh remounts) could both read the snapshot before
+  // either removed it → double-bank; and a call while a session is
+  // legitimately running must not strip its snapshot.
+  if (orphanSweepInFlight) return;
+  if (useFocusSession.getState().current) return;
+  orphanSweepInFlight = true;
   try {
     const raw = await AsyncStorage.getItem(SNAPSHOT_KEY);
     if (raw) {
@@ -433,6 +441,8 @@ export const clearOrphanFocusActivities = async (): Promise<void> => {
     }
   } catch {
     // snapshot unreadable — fall through to the activity sweep
+  } finally {
+    orphanSweepInFlight = false;
   }
   if (!isLiveActivityAvailable()) return;
   await endAllTaskActivities();

@@ -562,7 +562,12 @@ export default function Onboarding() {
     );
   };
 
-  /** Nudge an anchor by +/- minutes, clamped to its cascading bounds. */
+  /** Nudge an anchor by +/- minutes, clamped to its bounds, CASCADING
+   *  the later anchors forward like the store's setAnchor does.
+   *  Without the cascade, holding + on Wake leapfrogged every meal and
+   *  Sleep (wake 23:59 > sleep) — committed verbatim, that inverted
+   *  day silently suppressed all notifications (withinWakingHours
+   *  always false with quiet hours on) and collapsed the day windows. */
   const nudgeAnchor = (
     k: keyof DailyAnchors,
     delta: number,
@@ -573,7 +578,24 @@ export default function Onboarding() {
       const { min, max } = anchorBounds(k, cur);
       const raw = cur[k] + delta;
       const clamped = Math.max(min, Math.min(max, raw));
-      return { ...cur, [k]: clamped };
+      const next: DailyAnchors = { ...cur, [k]: clamped };
+      // Push each LATER anchor forward so ordering always holds
+      // (wake < breakfast < lunch < dinner < sleep), capped at the
+      // hard ceiling.
+      const order: (keyof DailyAnchors)[] = [
+        'wake',
+        'breakfast',
+        'lunch',
+        'dinner',
+        'sleep',
+      ];
+      for (let i = order.indexOf(k) + 1; i < order.length; i++) {
+        const prev = next[order[i - 1]];
+        if (next[order[i]] < prev + GAP) {
+          next[order[i]] = Math.min(HARD_MAX, prev + GAP);
+        }
+      }
+      return next;
     });
   };
 

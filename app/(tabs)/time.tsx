@@ -1988,14 +1988,20 @@ export default function Time() {
   const digest = useLearningDigest();
 
   const [now, setNow] = useState(() => new Date());
+  // Only tick while this tab is focused — mounted-but-hidden tabs
+  // were re-rendering the whole day view every minute from another
+  // tab. Refocus catches up instantly below.
+  const timeClockFocusedRef = useRef(true);
   useEffect(() => {
     // Aligned to the wall-clock minute — a plain 60s interval left
     // the "now" line up to 59s stale after mount.
     let iv: ReturnType<typeof setInterval> | null = null;
     const to = setTimeout(
       () => {
-        setNow(new Date());
-        iv = setInterval(() => setNow(new Date()), 60 * 1000);
+        if (timeClockFocusedRef.current) setNow(new Date());
+        iv = setInterval(() => {
+          if (timeClockFocusedRef.current) setNow(new Date());
+        }, 60 * 1000);
       },
       (60 - new Date().getSeconds()) * 1000,
     );
@@ -2011,7 +2017,12 @@ export default function Time() {
   const refreshRecurring = useQuestStore((s) => s.refreshRecurring);
   useFocusEffect(
     useCallback(() => {
+      timeClockFocusedRef.current = true;
+      setNow(new Date());
       refreshRecurring();
+      return () => {
+        timeClockFocusedRef.current = false;
+      };
     }, [refreshRecurring]),
   );
 

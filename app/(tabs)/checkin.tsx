@@ -1619,6 +1619,14 @@ export default function Untangle() {
         // or it stays invisible in "Later" (moveBackToDate rule).
         if (q.window === 'someday') moveWindow(p.taskId, 'morning');
         applied += 1;
+        // Home handoff parity with schedule/surface: "move the report
+        // to today at 2" expressed as a reschedule used to NOT switch
+        // Home's hero while the identical intent as `schedule` did —
+        // an inconsistency keyed on which verb the model picked.
+        if (p.date === todayKey()) {
+          scheduledId = p.taskId;
+          actionableCount += 1;
+        }
       } else if (p.action === 'defer') {
         // Deferring a task already parked in Later is a no-op — don't
         // count it toward "N sorted" (honest data).
