@@ -6,7 +6,7 @@
 <title>Lumi — Brain Dump to Done</title>
 <meta name="description" content="Your brain won't shut off. Lumi's listening. The AI companion that remembers everything so you don't have to — join the waitlist.">
 <meta property="og:title" content="Meet Lumi — Brain Dump to Done">
-<meta property="og:description" content="Try it right on the page: dump a thought, watch it get sorted. Then let Luna hold your spot until launch.">
+<meta property="og:description" content="Try it right on the page: dump a thought, watch it get sorted. Then let Lumi hold your spot until launch.">
 <meta property="og:url" content="https://lumitasks.app">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90' fill='%23E07A4F'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -44,8 +44,33 @@ main{flex:1;width:100%;max-width:620px;margin:0 auto;padding:34px 24px 60px}
 img.luna{image-rendering:pixelated;display:block;position:relative}
 .eyebrow{font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--dusk);font-weight:700}
 .hero .eyebrow{margin:10px 0 14px}
-h1{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:46px;line-height:1.1;letter-spacing:-1.2px;text-wrap:pretty}
+h1{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:46px;line-height:1.1;letter-spacing:-1.2px;text-wrap:pretty;
+   background:linear-gradient(150deg,var(--bone) 30%,var(--emberLt) 90%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .hero .sub{font-size:15.5px;color:var(--boneDim);line-height:1.6;margin:16px auto 0;max-width:400px}
+.hero{position:relative}
+.mote{position:absolute;color:var(--glow);opacity:.35;font-size:11px;pointer-events:none;animation:wmote 5.5s ease-in-out infinite}
+.mote.m2{animation-delay:1.8s;font-size:9px}
+.mote.m3{animation-delay:3.2s;font-size:13px;opacity:.25}
+@keyframes wmote{0%,100%{transform:translateY(0);opacity:.18}50%{transform:translateY(-9px);opacity:.5}}
+
+/* ── beta (TestFlight) CTA — hidden until the link is configured ── */
+.tf{display:none}
+body.has-tf .tf{display:flex}
+.beta-cta{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;color:var(--bone);text-decoration:none;
+  background:rgba(142,160,180,0.10);border:1px solid rgba(142,160,180,0.35);border-radius:999px;padding:11px 20px;
+  transition:border-color .18s,background .18s,transform .18s}
+.beta-cta:hover{border-color:var(--dusk);background:rgba(142,160,180,0.18);transform:translateY(-1px)}
+.beta-cta .arrow{color:var(--dusk)}
+.hero-beta{justify-content:center;margin-top:20px}
+.capture-beta{justify-content:center;margin-top:18px}
+.capture-beta .hint{display:block;font-size:11px;color:var(--mute);margin-top:8px}
+
+/* ── share ── */
+.share{margin-top:56px;text-align:center;background:var(--void2);border:1px solid var(--hair);border-radius:18px;padding:22px 24px}
+.share .line{font-family:'Fraunces',serif;font-style:italic;font-size:16.5px;color:var(--boneDim)}
+.share button{margin-top:14px;font-size:13px;font-weight:600;color:var(--bone);background:none;border:1px solid var(--hair);border-radius:999px;padding:10px 22px;cursor:pointer;transition:border-color .15s,color .15s}
+.share button:hover{border-color:var(--honey);color:var(--glow)}
+.share .copied{font-size:11.5px;color:var(--honey);margin-top:8px;min-height:15px}
 
 .demo{margin-top:44px;background:var(--void2);border:1px solid var(--hair);border-radius:22px;padding:24px 24px 20px;box-shadow:0 24px 60px rgba(0,0,0,0.4)}
 .demo-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;gap:12px}
@@ -81,8 +106,8 @@ h1{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:46px
 .email-row input{flex:1;min-width:0;background:var(--void2);border:1.5px solid var(--hair);border-radius:999px;padding:16px 20px;font-size:15px;color:var(--bone);font-family:inherit;outline:none;transition:border-color .18s}
 .email-row input:focus{border-color:var(--ember)}
 .email-row button{display:flex;align-items:center;background:var(--ash);color:var(--void);border:none;border-radius:999px;padding:0 26px;font-size:14.5px;font-weight:600;cursor:pointer;transition:background .2s;white-space:nowrap}
-.email-row button.ready{background:var(--ember)}
-.email-row button.ready:hover{background:var(--emberLt)}
+.email-row button.ready{background:var(--ember);box-shadow:0 0 26px rgba(224,122,79,0.30)}
+.email-row button.ready:hover{background:var(--emberLt);box-shadow:0 0 34px rgba(224,122,79,0.45)}
 .email-row button:disabled{cursor:default;opacity:.75}
 .consent{font-size:11.5px;color:var(--mute);margin-top:10px;display:none}
 .teaser{font-size:12px;color:var(--mute);margin-top:14px}
@@ -97,7 +122,7 @@ h1{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:46px
 #joined .luna-halo::before{inset:-30px;background:radial-gradient(circle, rgba(244,201,138,0.2), transparent 70%)}
 #joined .eyebrow{margin:4px 0 14px}
 #joined h1{font-size:44px;line-height:1.12;letter-spacing:-1px}
-#joined h1 .spot{color:var(--ember)}
+#joined h1 .spot{color:var(--ember);-webkit-text-fill-color:var(--ember)}
 #joined .sub{font-size:15px;color:var(--boneDim);line-height:1.6;margin:16px auto 0;max-width:380px}
 .held{margin:30px auto 0;max-width:400px;text-align:left;background:var(--void2);border:1px solid var(--hair);border-radius:18px;padding:18px 20px;display:none}
 .held .label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mute);font-weight:600;margin-bottom:12px}
@@ -141,11 +166,23 @@ footer a{text-decoration:underline;color:var(--mute)}
   <!-- ============ MAIN STATE ============ -->
   <div id="signup">
     <div class="hero">
-      <div class="luna-wrap"><div class="luna-halo"><img class="luna" id="luna1" src="/luna-idle.gif" alt="Luna, a small pixel cat" style="width:108px;height:108px"></div></div>
-      <div class="eyebrow">✦ Meet Lumi — coming soon</div>
+      <span class="mote" style="left:12%;top:18%" aria-hidden="true">✦</span>
+      <span class="mote m2" style="right:14%;top:30%" aria-hidden="true">✦</span>
+      <span class="mote m3" style="left:22%;bottom:8%" aria-hidden="true">✦</span>
+      <div class="luna-wrap"><div class="luna-halo"><img class="luna" id="luna1" src="/luna-idle.gif" alt="Lumi, a small pixel cat" style="width:108px;height:108px"></div></div>
+      <div class="eyebrow">✦ Meet Lumi — coming soon to the App Store</div>
       <h1>Your brain won't shut off.<br>Lumi's listening.</h1>
       <div class="sub">The AI companion that remembers everything so you don't have to.</div>
+      <div class="tf hero-beta">
+        <a class="beta-cta tf-link" href="#" rel="noopener">On iPhone? Try the beta today <span class="arrow">→</span></a>
+      </div>
     </div>
+
+    <!-- DEMO VIDEO SLOT: when the 15-sec screen recording exists, drop it
+         here — <video autoplay muted loop playsinline poster="..."> with
+         the brain-dump → sorted transformation. Keep it above the
+         interactive demo so non-tappers still see the magic. -->
+
 
     <div class="demo">
       <div class="demo-head">
@@ -172,7 +209,7 @@ footer a{text-decoration:underline;color:var(--mute)}
 
     <div class="capture">
       <h2 id="ctaHeadline">Be first through the door.</h2>
-      <div class="sub">Early access + founding-member perks. Luna writes once, when it's time.</div>
+      <div class="sub">Early access + founding-member perks. Lumi writes once, when it's time.</div>
       <form class="email-row" id="joinForm" novalidate>
         <input class="hp" type="text" name="website" tabindex="-1" aria-hidden="true" autocomplete="off">
         <input id="email" type="email" placeholder="you@email.com" inputmode="email" autocomplete="email" maxlength="320">
@@ -181,18 +218,28 @@ footer a{text-decoration:underline;color:var(--mute)}
       <div class="consent" id="consent">Saving your spot sends your email and these thoughts to Lumi — nothing else, ever.</div>
       <div class="err" id="joinErr" role="status"></div>
       <div class="teaser" id="teaser">Founding spots are open — the earliest minds get the best perks.</div>
+      <div class="tf capture-beta" style="flex-direction:column;align-items:center">
+        <a class="beta-cta tf-link" href="#" rel="noopener">Can't wait? Skip the line — beta's open <span class="arrow">→</span></a>
+        <span class="hint">iPhone only for now · free via Apple TestFlight</span>
+      </div>
     </div>
 
     <div class="quote">
       <div class="q">"I have 30 things to do and I don't even know where to start."</div>
       <div class="a">That feeling is what Lumi is for.</div>
     </div>
+
+    <div class="share">
+      <div class="line">Know someone whose brain never stops?</div>
+      <button id="shareBtn" type="button">Send them this ✦</button>
+      <div class="copied" id="shareCopied"></div>
+    </div>
   </div>
 
   <!-- ============ JOINED STATE ============ -->
   <div id="joined">
-    <div class="luna-wrap"><div class="luna-halo"><img class="luna" id="luna2" src="/luna-happy.gif" alt="Luna, happy" style="width:116px;height:116px"></div></div>
-    <div class="eyebrow">Luna will remember you</div>
+    <div class="luna-wrap"><div class="luna-halo"><img class="luna" id="luna2" src="/luna-happy.gif" alt="Lumi, happy" style="width:116px;height:116px"></div></div>
+    <div class="eyebrow">Lumi will remember you</div>
     <h1>You're <span class="spot" id="spotNum">in line</span>.</h1>
     <div class="sub" id="joinedSub">We saved your spot — and your thoughts. When Lumi opens the door, they'll be waiting, sorted.</div>
     <div class="held" id="held">
@@ -200,6 +247,15 @@ footer a{text-decoration:underline;color:var(--mute)}
       <div class="rows" id="heldRows"></div>
     </div>
     <div class="perks"><span>✦ Founding-member pricing</span><span>✦ First in when doors open</span></div>
+    <div class="tf capture-beta" style="flex-direction:column;align-items:center">
+      <a class="beta-cta tf-link" href="#" rel="noopener">Why wait? The beta's open right now <span class="arrow">→</span></a>
+      <span class="hint">iPhone only · free via Apple TestFlight</span>
+    </div>
+    <div class="share" style="max-width:400px;margin-left:auto;margin-right:auto">
+      <div class="line">Know someone whose brain never stops?</div>
+      <button id="shareBtn2" type="button">Send them this ✦</button>
+      <div class="copied" id="shareCopied2"></div>
+    </div>
     <button class="again" id="again" type="button">dump another thought while you wait</button>
   </div>
 </main>
@@ -508,7 +564,7 @@ footer a{text-decoration:underline;color:var(--mute)}
         spotNum.textContent = (typeof n === 'number' && n > 0) ? '#' + n : 'in line';
         joinedSub.textContent = wasDuplicate
           ? (thoughts.length
-              ? 'You were already on the list — spot safe. And these thoughts? Luna heard them.'
+              ? 'You were already on the list — spot safe. And these thoughts? Lumi heard them.'
               : 'You were already on the list — your spot is safe and sound.')
           : (thoughts.length
               ? "We saved your spot — and your thoughts. When Lumi opens the door, they'll be waiting, sorted."
@@ -596,11 +652,51 @@ footer a{text-decoration:underline;color:var(--mute)}
     } catch (e) { /* corrupted storage — start fresh */ }
   }
 
+  /* ── beta (TestFlight) ──────────────────────────────────────────
+     Paste the public TestFlight invite link below and every beta CTA
+     lights up (hero, under the form, joined state). Left unset, the
+     buttons stay hidden — the page never ships a dead link. */
+  var TESTFLIGHT = '';
+  if (/^https:\/\/testflight\.apple\.com\//.test(TESTFLIGHT)) {
+    document.body.classList.add('has-tf');
+    var links = document.querySelectorAll('.tf-link');
+    for (var li = 0; li < links.length; li++) {
+      links[li].href = TESTFLIGHT;
+      links[li].target = '_blank';
+    }
+  }
+
+  /* ── share ──────────────────────────────────────────────────── */
+  var SHARE_URL = 'https://lumitasks.app';
+  var SHARE_TEXT = 'Your brain won’t shut off. Lumi’s listening — dump a thought, watch it get sorted.';
+  function wireShare(btnId, copiedId) {
+    var btn = $(btnId), copied = $(copiedId);
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (navigator.share) {
+        navigator.share({ title: 'Meet Lumi', text: SHARE_TEXT, url: SHARE_URL }).catch(function () {});
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(SHARE_URL).then(function () {
+          if (copied) {
+            copied.textContent = 'link copied — send it anywhere ✦';
+            setTimeout(function () { copied.textContent = ''; }, 3200);
+          }
+        }).catch(function () {
+          if (copied) copied.textContent = SHARE_URL;
+        });
+      } else if (copied) {
+        copied.textContent = SHARE_URL;
+      }
+    });
+  }
+  wireShare('shareBtn', 'shareCopied');
+  wireShare('shareBtn2', 'shareCopied2');
+
   /* ── boot ───────────────────────────────────────────────────── */
   restore();
   fetchCount().then(function (n) {
     if (typeof n === 'number' && n >= 25) {
-      teaserEl.textContent = n + ' minds already in line';
+      teaserEl.textContent = '✦ ' + n + ' minds already in line';
     }
   });
 })();
