@@ -15,7 +15,7 @@
 // router.replace('/auth/done') after sign-up, Forgot password
 // route, pretty error mapping, haptics.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import {
   View,
   Text,
@@ -196,6 +196,7 @@ interface FieldProps {
   returnKeyType?: TextInputProps['returnKeyType'];
   onSubmitEditing?: () => void;
   hasError?: boolean;
+  inputRef?: RefObject<TextInput | null>;
 }
 
 const Field = ({
@@ -217,6 +218,7 @@ const Field = ({
   returnKeyType,
   onSubmitEditing,
   hasError,
+  inputRef,
 }: FieldProps) => {
   const on = focus === focusKey;
   const iconColor = on ? TC.ember : TC.mute;
@@ -235,6 +237,7 @@ const Field = ({
           {icon === 'user' && <UserIcon color={iconColor} />}
         </View>
         <TextInput
+          ref={inputRef}
           value={value}
           onChangeText={onChange}
           onFocus={() => setFocus(focusKey)}
@@ -366,6 +369,8 @@ export const AuthDoor = ({ initialMode }: Props) => {
   const [pw, setPw] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [focus, setFocus] = useState<FocusKey>(null);
+  const emailRef = useRef<TextInput>(null);
+  const pwRef = useRef<TextInput>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [loading, setLoading] = useState(false);
 
@@ -394,6 +399,10 @@ export const AuthDoor = ({ initialMode }: Props) => {
   };
 
   const handleSubmit = async () => {
+    // Keyboard "go" calls this directly, bypassing the CTA's disabled
+    // prop — a rapid second fire during the in-flight sign-in could
+    // reset `loading` and paint a bogus error over a succeeding one.
+    if (loading) return;
     Haptics.selectionAsync();
     const e = validate();
     setErrors(e);
@@ -408,6 +417,11 @@ export const AuthDoor = ({ initialMode }: Props) => {
         // deep link never reaches the app.
         stashPendingCredentials(email, pw);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // There is NO session on this path, so the root gate can't
+        // rescue a missed navigation and no timeout arms — reset
+        // loading BEFORE the replace so the door can never spin
+        // forever if the route change is dropped.
+        setLoading(false);
         if (needsEmailConfirmation) {
           // Supabase withheld the session — user needs to click the
           // link in their email. Send them to the verify screen; the
@@ -450,6 +464,7 @@ export const AuthDoor = ({ initialMode }: Props) => {
   };
 
   const handleSocial = async (provider: 'apple' | 'google') => {
+    if (loading) return;
     Haptics.selectionAsync();
     setErrors({});
     setLoading(true);
@@ -616,6 +631,8 @@ export const AuthDoor = ({ initialMode }: Props) => {
                 placeholder="what should Lumi call you?"
                 autoCapitalize="words"
                 autoComplete="name"
+                returnKeyType="next"
+                onSubmitEditing={() => emailRef.current?.focus()}
                 hasError={!!errors.name}
               />
             )}
@@ -634,6 +651,9 @@ export const AuthDoor = ({ initialMode }: Props) => {
               keyboardType="email-address"
               autoComplete="email"
               textContentType="emailAddress"
+              returnKeyType="next"
+              onSubmitEditing={() => pwRef.current?.focus()}
+              inputRef={emailRef}
               hasError={!!errors.email}
             />
             <Field
@@ -653,8 +673,9 @@ export const AuthDoor = ({ initialMode }: Props) => {
               onToggleSecure={() => setShowPw((s) => !s)}
               autoComplete={isUp ? 'new-password' : 'current-password'}
               textContentType={isUp ? 'newPassword' : 'password'}
-              returnKeyType={isUp ? 'next' : 'go'}
-              onSubmitEditing={isUp ? undefined : handleSubmit}
+              returnKeyType="go"
+              onSubmitEditing={handleSubmit}
+              inputRef={pwRef}
               hasError={!!errors.pass}
             />
           </View>
@@ -728,7 +749,7 @@ export const AuthDoor = ({ initialMode }: Props) => {
             <Text style={styles.toggleText}>
               {isUp ? 'Already have a space? ' : 'New here? '}
             </Text>
-            <Pressable onPress={switchMode} hitSlop={6}>
+            <Pressable onPress={switchMode} disabled={loading} hitSlop={6}>
               <Text style={styles.toggleLink}>
                 {isUp ? 'Sign in' : 'Create one'}
               </Text>

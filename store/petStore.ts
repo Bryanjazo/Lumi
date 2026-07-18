@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { secureStorage } from '../lib/secureStorage';
 import { defaultEquipped, ItemCategory } from '../constants/items';
 
 export interface Adventure {
@@ -166,7 +166,11 @@ export const usePetStore = create<PetState>()(
     }),
     {
       name: 'lumi.pet',
-      storage: createJSONStorage(() => AsyncStorage),
+      // SOS events (RSD / depersonalization) + meds timestamps are the
+      // most sensitive rows on the device — AES at rest like the user/
+      // checkin stores. secureStorage adopts a legacy plaintext value
+      // in place, so existing installs migrate losslessly.
+      storage: createJSONStorage(() => secureStorage),
     },
   ),
 );

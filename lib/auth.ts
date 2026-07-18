@@ -287,6 +287,24 @@ export const signInWithApple = async (): Promise<{
 
   // Apple gives the name ONLY on the first sign-in for this Services
   // ID. Caller (sign-up flow) uses this to seed the userStore name.
+  // Apple hands us the name exactly ONCE, client-side only — the
+  // identity token carries no name claim, so the server row and auth
+  // metadata would stay nameless forever. Persist it into metadata now
+  // (best-effort) so reinstalls and the cross-account wipe's metadata
+  // reseed can recover it.
+  const appleName = credential.fullName
+    ? [credential.fullName.givenName, credential.fullName.familyName]
+        .filter(Boolean)
+        .join(' ')
+        .trim()
+    : '';
+  if (appleName) {
+    try {
+      await supabase.auth.updateUser({ data: { name: appleName } });
+    } catch {
+      // metadata write is a nice-to-have; the local store still has it
+    }
+  }
   const fullName = credential.fullName
     ? [credential.fullName.givenName, credential.fullName.familyName]
         .filter(Boolean)
@@ -590,6 +608,13 @@ export const consumePendingPasswordRecovery = (): boolean => {
 };
 
 export const handleAuthDeepLink = async (url: string): Promise<boolean> => {
+  // LOAD-BEARING: this whole path assumes the IMPLICIT auth flow
+  // (supabase-js default; lib/supabase.ts sets no flowType). Implicit
+  // links arrive as lumi://auth/callback#access_token=…&type=… — if
+  // anyone ever sets flowType:'pkce', links become ?code=… with no
+  // access_token and BOTH email confirmation AND password reset
+  // silently die right here. Don't change the flow without rewriting
+  // this handler.
   if (!url.includes('access_token')) return false;
   const parsed = Linking.parse(url);
   const params = { ...(parsed.queryParams ?? {}) } as Record<

@@ -40,7 +40,7 @@ import { resetLocalUserData } from '../lib/localData';
 import { useQuestStore } from '../store/questStore';
 import { useSession, handleAuthDeepLink } from '../lib/auth';
 import { syncNotifications } from '../lib/notifications';
-import { isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useCloudSync, useSyncStatus } from '../lib/sync';
 import { useWidgetSync } from '../lib/widget';
 import {
@@ -157,7 +157,15 @@ export default function RootLayout() {
     const t = setTimeout(() => void syncParseMetrics(), 6000);
     const sub = AppState.addEventListener('change', (s) => {
       if (s === 'active') void syncParseMetrics();
+      // The documented supabase-js RN wiring: pause the token-refresh
+      // timer in the background, resume on foreground. Without it a
+      // long background can leave a stale access token until the next
+      // request trips a refresh.
+      if (!isSupabaseConfigured) return;
+      if (s === 'active') supabase.auth.startAutoRefresh();
+      else supabase.auth.stopAutoRefresh();
     });
+    if (isSupabaseConfigured) supabase.auth.startAutoRefresh();
     return () => {
       clearTimeout(t);
       sub.remove();
@@ -336,6 +344,17 @@ export default function RootLayout() {
       // slipped through and leaked into the new account. resetLocalUser
       // Data is idempotent, so wiping a truly-empty device is harmless.
       resetLocalUserData();
+      // The wipe also erased the NEW user's own name — the one they
+      // typed at sign-up (or Google/Apple provided), which the pull
+      // had just merged in and onboarding never re-asks for. Without
+      // this, every new account greeted blank AND the next push wrote
+      // '' to the cloud. Auth metadata is the one source the wipe
+      // can't poison with a previous user's data.
+      const meta = session?.user.user_metadata as
+        | { name?: string; full_name?: string }
+        | undefined;
+      const metaName = (meta?.name ?? meta?.full_name ?? '').trim();
+      if (metaName) useUserStore.getState().setName(metaName);
     } catch (e) {
       console.warn('[lumi] cross-account wipe failed', e);
     }

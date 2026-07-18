@@ -32,11 +32,20 @@ export default function AuthCallbackScreen() {
       // new password — sending them to the tabs left the forgotten
       // password unchanged (dead-end). The deep-link handler flags
       // recovery before setSession; consume it here.
-      router.replace(
-        consumePendingPasswordRecovery()
-          ? ('/auth/reset-password' as never)
-          : '/',
-      );
+      //
+      // Small delay: on a COLD start with a persisted session, this
+      // effect fires with the OLD session immediately, racing
+      // Linking.getInitialURL → handleAuthDeepLink (which sets the
+      // recovery flag). Waiting a beat lets the flag land so a valid
+      // recovery isn't silently dropped into the tabs.
+      const t = setTimeout(() => {
+        router.replace(
+          consumePendingPasswordRecovery()
+            ? ('/auth/reset-password' as never)
+            : '/',
+        );
+      }, 400);
+      return () => clearTimeout(t);
     }
   }, [session, loading, router]);
 
@@ -48,10 +57,12 @@ export default function AuthCallbackScreen() {
   const [stale, setStale] = useState(false);
   useEffect(() => {
     if (loading || session) return;
-    // Tell them WHY before moving them — a silent 6s redirect reads
-    // as a glitch on a slow connection.
-    const warn = setTimeout(() => setStale(true), 3200);
-    const t = setTimeout(() => router.replace('/auth/sign-in'), 6500);
+    // Tell them WHY before moving them — a silent redirect reads as a
+    // glitch on a slow connection. Generous timers: setSession on a
+    // bad network can legitimately take several seconds, and bouncing
+    // to sign-in mid-exchange silently killed valid recovery links.
+    const warn = setTimeout(() => setStale(true), 6000);
+    const t = setTimeout(() => router.replace('/auth/sign-in'), 15000);
     return () => {
       clearTimeout(warn);
       clearTimeout(t);

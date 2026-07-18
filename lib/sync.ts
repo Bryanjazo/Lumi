@@ -64,10 +64,16 @@ const pushUser = async (userId: string, forceLedgers = false) => {
   let xp = s.xp;
   let streak = s.streak;
   let lastActiveDate = s.lastActiveDate;
+  let petName = s.petName;
+  let shieldAvailable = s.shieldAvailable;
+  let shieldUsedThisWeek = s.shieldUsedThisWeek;
+  let offlineMode = s.offlineMode;
   if (!pulled) {
     const { data: cur, error: readErr } = await supabase
       .from('users')
-      .select('onboarded, adhd_type, name, xp, streak, last_active_date')
+      .select(
+        'onboarded, adhd_type, name, xp, streak, last_active_date, pet_name, shield_available, shield_used_this_week, offline_mode',
+      )
       .eq('id', userId)
       .maybeSingle();
     if (readErr) {
@@ -86,6 +92,18 @@ const pushUser = async (userId: string, forceLedgers = false) => {
         streak = (cur.streak as number | null) ?? 0;
         lastActiveDate = cloudDate;
       }
+      // A session that never merged the cloud can't be trusted on the
+      // shield either — a blind default-true push let a spent shield
+      // regenerate. Used-if-either-says-used; available only if both
+      // agree. Same conservatism for pet_name/offline_mode: prefer the
+      // cloud (this session's local values are unmerged defaults).
+      shieldUsedThisWeek =
+        shieldUsedThisWeek || cur.shield_used_this_week === true;
+      shieldAvailable =
+        shieldAvailable && (cur.shield_available as boolean | null) !== false;
+      const cloudPet = cur.pet_name as string | null;
+      if (cloudPet) petName = cloudPet === 'Luna' ? 'Lumi' : cloudPet;
+      offlineMode = (cur.offline_mode as boolean | null) ?? offlineMode;
     }
   }
   // Subscription columns are owned by the server / IAP webhook — we read
@@ -94,17 +112,21 @@ const pushUser = async (userId: string, forceLedgers = false) => {
   const { error } = await supabase.from('users').upsert(
     {
       id: userId,
-      name,
-      pet_name: s.petName,
+      // Never overwrite a real cloud name with '' — the signup trigger
+      // writes the name from auth metadata, and an empty local (post-
+      // wipe, or Apple's nameless token) must not erase it. Omitting
+      // the key leaves the column untouched on conflict-update.
+      ...(name ? { name } : {}),
+      pet_name: petName,
       adhd_type: adhdType,
       level: 1,
       xp,
       streak,
       last_active_date: lastActiveDate,
-      shield_available: s.shieldAvailable,
-      shield_used_this_week: s.shieldUsedThisWeek,
+      shield_available: shieldAvailable,
+      shield_used_this_week: shieldUsedThisWeek,
       onboarded,
-      offline_mode: s.offlineMode,
+      offline_mode: offlineMode,
     },
     { onConflict: 'id' },
   );
@@ -384,7 +406,10 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       : (userRow.subscription_current_period_end ?? null);
 
     useUserStore.setState({
-      name: userRow.name ?? localState.name,
+      // `||`, not `??` — Apple's identity token carries no name, so the
+      // trigger writes '' for Apple users; empty string is not nullish
+      // and was overwriting the local name AuthDoor just captured.
+      name: userRow.name || localState.name,
       // The cat is "Lumi" everywhere user-visible. Older rows still
       // carry the legacy 'Luna' pet_name; adopting it verbatim was
       // re-corrupting the local value the store migration had already
@@ -448,7 +473,12 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       // popped for someone long past onboarding, mid-normal-use. A
       // restored user is by definition not a first-run user: mark the
       // tour seen alongside the restore.
-      ...(localState.onboardedAt == null && userRow.created_at != null
+      // Gate on the server's onboarded flag, NOT created_at — the
+      // trigger creates the row (with created_at) BEFORE a brand-new
+      // user has onboarded, and stamping tourSeen off that killed the
+      // first-run tour for every new account. `onboarded === true` is
+      // the real "returning user" signal.
+      ...(localState.onboardedAt == null && userRow.onboarded === true
         ? { tourSeen: true }
         : {}),
       // Lifetime ledgers — monotonic merge (never lose history): counts

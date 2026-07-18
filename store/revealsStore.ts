@@ -14,7 +14,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { secureStorage } from '../lib/secureStorage';
 
 interface RevealsState {
   /** Reveal keys the user has seen (card shown + dismissed/tapped). */
@@ -60,7 +60,9 @@ export const useRevealsStore = create<RevealsState>()(
     }),
     {
       name: 'lumi.reveals',
-      storage: createJSONStorage(() => AsyncStorage),
+      // Learned behavioral inferences — encrypt at rest like the other
+      // sensitive stores. secureStorage adopts legacy plaintext.
+      storage: createJSONStorage(() => secureStorage),
       version: 1,
     },
   ),

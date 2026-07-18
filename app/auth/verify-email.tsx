@@ -34,6 +34,7 @@ import { LunaPixel } from '../../components/auth/LunaPixel';
 import {
   resendConfirmation,
   tryPendingSignIn,
+  clearPendingCredentials,
   useSession,
 } from '../../lib/auth';
 
@@ -87,6 +88,12 @@ export default function VerifyEmailScreen() {
       sub.remove();
     };
   }, [session]);
+
+  // The stashed email+password exist only to feed the poller above.
+  // Leaving this screen (change-email, back, or success — where
+  // they're already consumed) must not leave a password sitting in
+  // memory for the rest of the process lifetime.
+  useEffect(() => clearPendingCredentials, []);
 
   useEffect(() => {
     const loop = Animated.loop(
