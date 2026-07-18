@@ -176,6 +176,16 @@ const syncNotificationsInner = async (opts?: {
 
   if (!anyOn) {
     await Notifications.cancelAllScheduledNotificationsAsync();
+    // The blanket cancel also killed an IN-FLIGHT focus session's end
+    // notification — that one isn't a preference nudge, it's the
+    // running timer's alarm. Re-arm it just like the main path does.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { rearmFocusEnd } = require('./focusSession') as typeof import('./focusSession');
+      rearmFocusEnd();
+    } catch {
+      // focus session module unavailable — nothing to re-arm
+    }
     return { granted: true };
   }
 
@@ -284,12 +294,24 @@ const syncNotificationsInner = async (opts?: {
   }
 
   // ── Recurring-quest reminders ──
+  // Repeating calendar triggers are only used where they EXACTLY match
+  // the rule (plain daily, weekly-with-a-day at interval 1, weekdays).
+  // Everything else — "every 3 days", biweekly, monthly, dayless
+  // weekly, and a quest already completed for today — gets a ONE-SHOT
+  // at the rule's true next fire (computed with the same firesOnDate
+  // predicate the spawn/projection use), re-armed on every sync. The
+  // old approximations nagged daily for "every 3 days" rules and gave
+  // dayless-weekly habits no reminder at all.
   if (prefs.recurring) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { firesOnDate } = require('../constants/recur') as typeof import('../constants/recur');
     const effective = getEffectiveWindows();
     const quests = useQuestStore
       .getState()
-      .quests.filter((q) => q.recur && !q.completed)
+      .quests.filter((q) => q.recur && !q.recurStopped)
       .slice(0, 20); // sane ceiling on scheduled ids
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
     for (const q of quests) {
       const r = q.recur!;
       const winStart = effective[q.window]?.start;
@@ -306,7 +328,14 @@ const syncNotificationsInner = async (opts?: {
         minute: min % 60,
         repeats: true,
       };
-      if (r.every === 'day') {
+      const interval = r.interval ?? 1;
+      const anchorISO = q.lastSpawnedDate ?? q.date;
+      const simpleRepeat =
+        !q.completed &&
+        ((r.every === 'day' && interval <= 1) ||
+          (r.every === 'week' && interval <= 1 && !!r.day) ||
+          r.every === 'weekday');
+      if (simpleRepeat && r.every === 'day') {
         await Notifications.scheduleNotificationAsync({
           identifier: `lumi-recur-${q.id}`,
           content,
@@ -315,24 +344,17 @@ const syncNotificationsInner = async (opts?: {
             ...base,
           } as Notifications.CalendarTriggerInput,
         });
-      } else if (
-        (r.every === 'week' || r.every === '2week') &&
-        r.day &&
-        WEEKDAY_INDEX[r.day]
-      ) {
-        // 2week approximated weekly — expo calendar triggers can't
-        // express biweekly; a gentle extra reminder beats a missing
-        // one for a habit surface.
+      } else if (simpleRepeat && r.every === 'week') {
         await Notifications.scheduleNotificationAsync({
           identifier: `lumi-recur-${q.id}`,
           content,
           trigger: {
             type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
-            weekday: WEEKDAY_INDEX[r.day],
+            weekday: WEEKDAY_INDEX[r.day!],
             ...base,
           } as Notifications.CalendarTriggerInput,
         });
-      } else if (r.every === 'weekday') {
+      } else if (simpleRepeat && r.every === 'weekday') {
         for (let wd = 2; wd <= 6; wd++) {
           await Notifications.scheduleNotificationAsync({
             identifier: `lumi-recur-${q.id}-${wd}`,
@@ -344,8 +366,39 @@ const syncNotificationsInner = async (opts?: {
             } as Notifications.CalendarTriggerInput,
           });
         }
+      } else {
+        // One-shot at the next real fire. Skip today when the quest is
+        // already done for today or the reminder minute has passed.
+        let fireDate: Date | null = null;
+        for (let i = 0; i <= 366; i++) {
+          const cand = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate() + i,
+          );
+          if (i === 0 && (q.completed || min <= nowMin)) continue;
+          if (firesOnDate(r, cand, anchorISO)) {
+            fireDate = new Date(
+              cand.getFullYear(),
+              cand.getMonth(),
+              cand.getDate(),
+              Math.floor(min / 60),
+              min % 60,
+            );
+            break;
+          }
+        }
+        if (fireDate) {
+          await Notifications.scheduleNotificationAsync({
+            identifier: `lumi-recur-${q.id}`,
+            content,
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.DATE,
+              date: fireDate,
+            } as Notifications.DateTriggerInput,
+          });
+        }
       }
-      // monthly cadence: skipped v1 (rare + iOS day-of-month quirks)
     }
   }
 

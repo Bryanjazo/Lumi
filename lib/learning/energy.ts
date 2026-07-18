@@ -307,7 +307,15 @@ export const peakAndLowDays = (
     sums[dow] += c.energy;
     counts[dow]++;
   }
-  const avgs = sums.map((s, i) => (counts[i] ? s / counts[i] : null));
+  // HONEST-DATA GUARD: "Tuesdays tend to be your day" must rest on
+  // more than one Tuesday. A weekday only competes once it has ≥2
+  // observations in the window — with 5 check-ins spread over 5
+  // different weekdays, every day had n=1 and the "trend" was a
+  // single sample.
+  const MIN_DOW_SAMPLES = 2;
+  const avgs = sums.map((s, i) =>
+    counts[i] >= MIN_DOW_SAMPLES ? s / counts[i] : null,
+  );
   let peakDow: number | null = null;
   let lowDow: number | null = null;
   let peakVal = -Infinity;

@@ -12,6 +12,7 @@
 
 import { Platform } from 'react-native';
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   startTaskActivity,
   updateTaskActivity,
@@ -164,6 +165,33 @@ const scheduleFocusEnd = async (seconds: number) => {
     // notifications unavailable — the in-app done screen still lands
   }
 };
+// Crash-safe snapshot of the running session. The store itself is
+// deliberately in-memory (a stale "running" session resurrecting on
+// cold start would be spooky), but a force-quit mid-block used to lose
+// EVERY banked minute — and the leftover end notification then claimed
+// "that counted" over minutes that were never counted. The snapshot
+// lets the cold-start sweep bank honestly, then discards itself.
+const SNAPSHOT_KEY = 'lumi.focusSnapshot';
+const persistSnapshot = (cur: FocusSession | null) => {
+  try {
+    if (!cur) {
+      void AsyncStorage.removeItem(SNAPSHOT_KEY);
+      return;
+    }
+    void AsyncStorage.setItem(
+      SNAPSHOT_KEY,
+      JSON.stringify({
+        startedAt: cur.startedAt,
+        durationSec: cur.durationSec,
+        pauseTotalMs: cur.pauseTotalMs ?? 0,
+        pausedAt: cur.pausedAt ?? null,
+      }),
+    );
+  } catch {
+    // best-effort — losing the snapshot only reverts to old behavior
+  }
+};
+
 const cancelFocusEnd = () => {
   if (Platform.OS === 'web') return;
   try {
@@ -211,6 +239,7 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
       pausedAt: null,
     };
     set({ current: session });
+    persistSnapshot(session);
     void scheduleFocusEnd(durationSec);
     stopTick();
     tickHandle = setInterval(() => {
@@ -232,7 +261,9 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
     // last-pushed elapsed value stays on-screen in the Dynamic
     // Island, which reads as a frozen timer (correct behavior).
     stopTick();
-    set({ current: { ...cur, pausedAt: Date.now() } });
+    const paused = { ...cur, pausedAt: Date.now() };
+    set({ current: paused });
+    persistSnapshot(paused);
   },
 
   resume: async () => {
@@ -249,6 +280,7 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
       pausedAt: null,
     };
     set({ current: next });
+    persistSnapshot(next);
     // Re-arm the session-end notification AFTER folding the pause in
     // — computing remaining first counted the pause as elapsed and
     // fired "the block is done" early by exactly the pause length.
@@ -262,6 +294,7 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
   end: async ({ reason } = {}) => {
     stopTick();
     cancelFocusEnd();
+    persistSnapshot(null);
     const cur = get().current;
     if (cur?.activityId) {
       await endTaskActivity(cur.activityId, true);
@@ -365,9 +398,42 @@ export const rearmFocusEnd = (): void => {
 };
 
 /** Cleanup helper called from app launch — kills any orphaned
- *  Live Activities left over from a previous process (crash, kill).
- *  No-op if ActivityKit isn't available. */
+ *  Live Activities left over from a previous process (crash, kill),
+ *  banks the orphaned session's real minutes from the crash-safe
+ *  snapshot ("12 minutes is 12 minutes" must survive a force-quit),
+ *  and cancels the stale end notification so it can't fire over a
+ *  session that no longer exists. */
 export const clearOrphanFocusActivities = async (): Promise<void> => {
+  try {
+    const raw = await AsyncStorage.getItem(SNAPSHOT_KEY);
+    if (raw) {
+      await AsyncStorage.removeItem(SNAPSHOT_KEY);
+      const snap = JSON.parse(raw) as {
+        startedAt: number;
+        durationSec: number;
+        pauseTotalMs?: number;
+        pausedAt?: number | null;
+      };
+      const elapsedMs =
+        (snap.pausedAt ?? Date.now()) -
+        snap.startedAt -
+        (snap.pauseTotalMs ?? 0);
+      const mins = Math.min(
+        Math.round(snap.durationSec / 60),
+        Math.round(elapsedMs / 60000),
+      );
+      // No ≥1 floor here — a sub-30s accidental start that crashed
+      // shouldn't pad the ledger.
+      if (mins > 0 && Number.isFinite(mins)) {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { useUserStore } = require('../store/userStore') as typeof import('../store/userStore');
+        useUserStore.getState().addFocusMinutes(mins);
+      }
+      cancelFocusEnd();
+    }
+  } catch {
+    // snapshot unreadable — fall through to the activity sweep
+  }
   if (!isLiveActivityAvailable()) return;
   await endAllTaskActivities();
 };

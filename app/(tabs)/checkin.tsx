@@ -1309,15 +1309,22 @@ export default function Untangle() {
       todayISO: today,
       sharpWindow,
       foggyWindow,
+      // Same honest-data gate as Home's understand context: trusted =
+      // LEARNED from real check-ins, and baseline peak/slump ranges
+      // never reach the model as if they were the user's own rhythm.
       peakRange:
-        digest.curve.peakStart != null && digest.curve.peakEnd != null
+        digest.curve.source !== 'baseline' &&
+        digest.curve.peakStart != null &&
+        digest.curve.peakEnd != null
           ? `${fmtAnchor(digest.curve.peakStart)}–${fmtAnchor(digest.curve.peakEnd)}`
           : null,
       slumpRange:
-        digest.curve.slumpStart != null && digest.curve.slumpEnd != null
+        digest.curve.source !== 'baseline' &&
+        digest.curve.slumpStart != null &&
+        digest.curve.slumpEnd != null
           ? `${fmtAnchor(digest.curve.slumpStart)}–${fmtAnchor(digest.curve.slumpEnd)}`
           : null,
-      curveTrusted: allQuests.filter((q) => q.completed).length >= 14,
+      curveTrusted: digest.curve.source === 'learned',
       anchors: {
         wake: fmtAnchor(anchors.wake),
         breakfast: fmtAnchor(anchors.breakfast),
@@ -1415,6 +1422,11 @@ export default function Untangle() {
         if (p.date && localYmd(localDateFromISO(p.date)) !== p.date) {
           continue;
         }
+        // PAST-DATE CLAMP: malformed dates were defended above, but a
+        // hallucinated (or literally-requested) PAST date was applied
+        // verbatim, minting a task that's instantly "carried over".
+        // Clamp to today — the closest honest reading of the intent.
+        if (p.date && p.date < todayKey()) p.date = todayKey();
         const imp = p.importance ?? 'medium';
         const difficulty: 'easy' | 'medium' | 'hard' =
           imp === 'high' ? 'hard' : imp === 'medium' ? 'medium' : 'easy';
@@ -1571,6 +1583,9 @@ export default function Untangle() {
         // Round-trip validation — the sanitizer regex admits
         // "2026-13-45", which setDate would write verbatim.
         if (localYmd(localDateFromISO(p.date)) !== p.date) continue;
+        // PAST-DATE CLAMP (mirrors the create branch): a hallucinated
+        // past date silently buried the task in "carried over".
+        if (p.date < todayKey()) p.date = todayKey();
         // No-op reschedule (same day, no new time) must not strip
         // the quest's anchor + calendar event via setDate.
         if (p.date === q.date && !p.at) continue;
@@ -1888,8 +1903,11 @@ export default function Untangle() {
     const ctx = buildLlmContext();
     llmUntangle(nextThread, ctx)
       .then((res) => {
-        busyRef.current = false;
+        // Generation check BEFORE releasing the latch — a stale
+        // send#1 resolving mid-flight of send#2 must not unlock the
+        // double-send guard under it.
         if (gen !== sendGenRef.current) return; // reset() happened
+        busyRef.current = false;
         if (!res) {
           setBusy(false);
           fallbackTurn(t);
@@ -1970,8 +1988,8 @@ export default function Untangle() {
         ]);
       })
       .catch(() => {
-        busyRef.current = false;
         if (gen !== sendGenRef.current) return; // reset() happened
+        busyRef.current = false;
         setBusy(false);
         fallbackTurn(t);
       });

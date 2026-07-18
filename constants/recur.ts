@@ -204,7 +204,18 @@ export const firesOnDate = (
       return weeks >= 0 && weeks % 2 === 0;
     }
     case 'month': {
-      if (date.getDate() !== anchor.getDate()) return false;
+      // Clamp to short months: a "monthly" anchored on the 29th–31st
+      // fires on the month's LAST day when the anchor day doesn't
+      // exist (Jan 31 → Feb 28/29 → Mar 31). The strict-equality
+      // version silently skipped those months (~7 fires/year for a
+      // 31st anchor), which contradicts the "monthly" label.
+      const daysInMonth = new Date(
+        date.getFullYear(),
+        date.getMonth() + 1,
+        0,
+      ).getDate();
+      const targetDay = Math.min(anchor.getDate(), daysInMonth);
+      if (date.getDate() !== targetDay) return false;
       const months =
         (date.getFullYear() - anchor.getFullYear()) * 12 +
         (date.getMonth() - anchor.getMonth());

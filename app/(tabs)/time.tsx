@@ -2241,6 +2241,20 @@ export default function Time() {
         )
         .map((q) => q.scheduledHour! * 60 + (q.scheduledMinute ?? 0)),
     );
+    // WINDOWED + GHOST ROWS TOO: unanchored tasks have no stored
+    // minute, but they're rendered at a de-stacked DISPLAY minute —
+    // and that minute is right there in each row target's key
+    // (row:iso:min:dur:questId). Without this, a drop could land on a
+    // windowed neighbor's exact slot and the next render's de-stack
+    // pass made THAT task visibly hop instead of the drop the user
+    // watched. Same for projected recurring ghosts on future days.
+    for (const k2 of targetRects.keys()) {
+      if (!k2.startsWith('row:')) continue;
+      const p2 = k2.split(':');
+      if (p2[1] !== iso || p2[4] === excludeId) continue;
+      const m2 = parseInt(p2[2], 10);
+      if (Number.isFinite(m2)) taken.add(m2);
+    }
     let guard = 0;
     while (taken.has(landing) && landing < 1425 && guard++ < 96) {
       landing += 15;

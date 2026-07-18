@@ -2194,15 +2194,24 @@ export default function Home() {
       todayISO,
       sharpWindow,
       foggyWindow,
+      // HONEST DATA: the curve is only "trusted" when it's LEARNED
+      // from ≥14 real check-in days (digest.curve.source) — the old
+      // proxy (14 completed tasks) let the AI narrate the BASELINE
+      // curve's peak as fact for a user who never checked in. Peak/
+      // slump ranges are nulled on baseline for the same reason.
       peakRange:
-        digest.curve.peakStart != null && digest.curve.peakEnd != null
+        digest.curve.source !== 'baseline' &&
+        digest.curve.peakStart != null &&
+        digest.curve.peakEnd != null
           ? `${fmtAnchor(digest.curve.peakStart)}–${fmtAnchor(digest.curve.peakEnd)}`
           : null,
       slumpRange:
-        digest.curve.slumpStart != null && digest.curve.slumpEnd != null
+        digest.curve.source !== 'baseline' &&
+        digest.curve.slumpStart != null &&
+        digest.curve.slumpEnd != null
           ? `${fmtAnchor(digest.curve.slumpStart)}–${fmtAnchor(digest.curve.slumpEnd)}`
           : null,
-      curveTrusted: quests.filter((q) => q.completed).length >= 14,
+      curveTrusted: digest.curve.source === 'learned',
       anchors: {
         wake: fmtAnchor(anchors.wake),
         breakfast: fmtAnchor(anchors.breakfast),
@@ -4492,7 +4501,11 @@ export default function Home() {
             )}
             {waitingOpen && (
               <>
-                {rest.map((q) => (
+                {rest.map((q) => {
+                  // Once per row, not 3× per render (and the tree
+                  // re-renders every clock minute).
+                  const kind = classifyKind(q.title);
+                  return (
                   <Pressable
                     key={q.id}
                     // TAP opens the edit sheet — long-press-only was
@@ -4564,21 +4577,22 @@ export default function Home() {
                       style={[
                         styles.kindPillRow,
                         {
-                          backgroundColor: `${classifyKind(q.title).color}1F`,
+                          backgroundColor: `${kind.color}1F`,
                         },
                       ]}
                     >
                       <Text
                         style={[
                           styles.kindPillRowText,
-                          { color: classifyKind(q.title).color },
+                          { color: kind.color },
                         ]}
                       >
-                        {classifyKind(q.title).label}
+                        {kind.label}
                       </Text>
                     </Pressable>
                   </Pressable>
-                ))}
+                  );
+                })}
                 <Text style={styles.waitingFooter}>
                   tap a task to edit it — tap its tag to bring it up now
                 </Text>
@@ -4750,7 +4764,16 @@ export default function Home() {
           {!dymHint &&
             !ventText &&
             tasksEverCompleted >= 3 &&
-            !hintsSeen.includes('widgetIntro') && (
+            !hintsSeen.includes('widgetIntro') &&
+            // One calm card at a time — yield to the morning ritual
+            // invite when it's eligible (it's the daily, time-boxed
+            // one; this intro can wait an hour).
+            !(
+              now.getHours() >= 5 &&
+              now.getHours() < 12 &&
+              morningLineDismissedDate !== todayKey() &&
+              !capturedToday
+            ) && (
               <View style={styles.dymHint}>
                 <Text style={[styles.dymHintText, { flex: 1 }]}>
                   Lumi can live on your Home Screen — long-press it →
@@ -4817,6 +4840,13 @@ export default function Home() {
             // widget card the moment both conditions held.
             !(
               tasksEverCompleted >= 3 && !hintsSeen.includes('widgetIntro')
+            ) &&
+            // …and yield to the morning ritual invite too.
+            !(
+              now.getHours() >= 5 &&
+              now.getHours() < 12 &&
+              morningLineDismissedDate !== todayKey() &&
+              !capturedToday
             ) && (
               <View style={styles.dymHint}>
                 <Text style={styles.dymHintText}>

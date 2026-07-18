@@ -51,6 +51,12 @@ export interface Quest {
   recur?: RecurRule;
   /** ISO date the recurring quest was last surfaced (or last completed). */
   lastSpawnedDate?: string;
+  /** Explicit "user turned the repeat OFF" tombstone. Round-tripped so
+   *  a cancellation on one device reaches the others — without it, a
+   *  cloud row with recur:null is indistinguishable from a
+   *  pre-migration row, and the local-preferred merge resurrected the
+   *  cancelled rule on every other device forever. */
+  recurStopped?: boolean;
   /**
    * Short freeform context the LLM extracted ("bring the charger",
    * "the blue folder") or the user added. Surfaced as a subtitle
@@ -499,7 +505,9 @@ export const useQuestStore = create<QuestState>()(
       stopRecurring: (id) =>
         set((s) => ({
           quests: s.quests.map((q) =>
-            q.id === id ? { ...q, recur: undefined, lastSpawnedDate: undefined } : q,
+            q.id === id
+              ? { ...q, recur: undefined, lastSpawnedDate: undefined, recurStopped: true }
+              : q,
           ),
         })),
       refreshRecurring: () => {

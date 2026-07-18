@@ -419,10 +419,18 @@ export default function RootLayout() {
   // permission — only the profile toggles do that.
   const notifPrefs = useUserStore((s) => s.notifPrefs);
   const notifAnchors = useUserStore((s) => s.anchors);
+  // Signature hashes the rule CONTENT, not just the id roster —
+  // editing a habit's time/cadence/title in place used to leave the
+  // old reminder firing until an unrelated sync rebuilt the schedule.
+  // Includes completed (the scheduler now arms the NEXT occurrence
+  // for a habit already done today) and the recurStopped tombstone.
   const recurSignature = useQuestStore((s) =>
     s.quests
-      .filter((q) => q.recur && !q.completed)
-      .map((q) => q.id)
+      .filter((q) => q.recur && !q.recurStopped)
+      .map(
+        (q) =>
+          `${q.id}:${q.title}:${q.completed ? 1 : 0}:${q.lastSpawnedDate ?? ''}:${JSON.stringify(q.recur)}`,
+      )
       .join(','),
   );
   useEffect(() => {

@@ -1031,16 +1031,32 @@ const parseTimeAndDate = (lc: string, ctx: CaptureContext): ParsedTime => {
   // ── Explicit clock time ──
   // "at 2", "at 2pm", "2pm", "14:00", "2:30 pm"
   if (at == null) {
-    const timeMatch = lc.match(
-      /\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|a|p)?\b/,
-    );
+    // Scan ALL number candidates and pick the most time-like one.
+    // The old first-match + "does 'at' appear ANYWHERE" logic let a
+    // stray quantity hijack the clock: "buy 5 apples at 11am" parsed
+    // the 5 (with the unrelated "at" as context) and anchored 5 PM
+    // while the real 11am sat unparsed in the title. Priority:
+    // am/pm marker > colon > directly "at "-prefixed > nothing.
+    const timeRe =
+      /\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|a|p)?\b/g;
+    let timeMatch: RegExpExecArray | null = null;
+    let bestScore = 0;
+    for (let mm = timeRe.exec(lc); mm; mm = timeRe.exec(lc)) {
+      const score = mm[3] ? 3 : mm[2] ? 2 : /^at\s/.test(mm[0]) ? 1 : 0;
+      if (score > bestScore) {
+        bestScore = score;
+        timeMatch = mm;
+        if (score === 3) break;
+      }
+    }
     if (timeMatch) {
       let h = parseInt(timeMatch[1], 10);
       const m = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
       const apRaw = timeMatch[3];
       const isPm = apRaw === 'pm' || apRaw === 'p.m.' || apRaw === 'p';
       const isAm = apRaw === 'am' || apRaw === 'a.m.' || apRaw === 'a';
-      const hasAt = /\bat\s/.test(lc);
+      // "at" must prefix THIS match — not merely appear somewhere.
+      const hasAt = /^at\s/.test(timeMatch[0]);
       const hasColon = !!timeMatch[2];
       // Only treat as a time if there's enough context — bare numbers
       // are too ambiguous ("call mom 3" doesn't mean 3pm).

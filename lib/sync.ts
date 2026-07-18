@@ -68,11 +68,13 @@ const pushUser = async (userId: string, forceLedgers = false) => {
   let shieldAvailable = s.shieldAvailable;
   let shieldUsedThisWeek = s.shieldUsedThisWeek;
   let offlineMode = s.offlineMode;
+  let avatar = s.avatar;
+  let roomTint = s.roomTint;
   if (!pulled) {
     const { data: cur, error: readErr } = await supabase
       .from('users')
       .select(
-        'onboarded, adhd_type, name, xp, streak, last_active_date, pet_name, shield_available, shield_used_this_week, offline_mode',
+        'onboarded, adhd_type, name, xp, streak, last_active_date, pet_name, shield_available, shield_used_this_week, offline_mode, avatar, room_tint',
       )
       .eq('id', userId)
       .maybeSingle();
@@ -104,6 +106,8 @@ const pushUser = async (userId: string, forceLedgers = false) => {
       const cloudPet = cur.pet_name as string | null;
       if (cloudPet) petName = cloudPet === 'Luna' ? 'Lumi' : cloudPet;
       offlineMode = (cur.offline_mode as boolean | null) ?? offlineMode;
+      if (cur.avatar) avatar = cur.avatar as string;
+      if (cur.room_tint) roomTint = cur.room_tint as typeof roomTint;
     }
   }
   // Subscription columns are owned by the server / IAP webhook — we read
@@ -127,6 +131,11 @@ const pushUser = async (userId: string, forceLedgers = false) => {
       shield_used_this_week: shieldUsedThisWeek,
       onboarded,
       offline_mode: offlineMode,
+      // The picked cat skin + room color — device-local until
+      // migration 20260719000000; without these a reinstall/2nd
+      // device reverted everyone to the default cat.
+      avatar,
+      room_tint: roomTint,
     },
     { onConflict: 'id' },
   );
@@ -235,6 +244,7 @@ const pushQuests = async (userId: string) => {
       recur: q.recur ?? null,
       last_spawned_date: q.lastSpawnedDate ?? null,
       xp_paid: q.xpPaid ?? false,
+      recur_stopped: q.recurStopped ?? false,
     }));
   if (rows.length === 0) return;
   const { error } = await supabase.from('quests').upsert(rows, {
@@ -258,6 +268,10 @@ const pushCheckins = async (userId: string) => {
       action: c.action,
     }),
     emotional_state: c.state,
+    // The real coordinates the user placed — without these a 2nd
+    // device planted every cloud check-in at a fabricated neutral 50.
+    mood_x: c.x,
+    mood_y: c.y,
   }));
   const { error } = await supabase.from('checkins').upsert(rows, {
     onConflict: 'id',
@@ -455,6 +469,11 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       onboarded: userRow.onboarded === true || localState.onboarded,
       isTester: userRow.is_tester === true,
       offlineMode: userRow.offline_mode ?? false,
+      // Cosmetic identity — the picked cat + room color follow the
+      // account now. `||` so a null/'' cloud value never wipes local.
+      avatar: (userRow.avatar as string | null) || localState.avatar,
+      roomTint: (((userRow.room_tint as string | null) ||
+        localState.roomTint) as typeof localState.roomTint),
       // "Member since" = the EARLIEST known date. On a reinstall the
       // local onboardedAt resets, which dropped a long-time user back
       // to "day 1 together" in Profile/Me — restore it from the
@@ -554,6 +573,18 @@ export const pullAll = async (userId: string): Promise<boolean> => {
               r.scheduled_hour * 60 + (r.scheduled_minute ?? 0),
             )
           : 'midday');
+      // RESPAWN GUARD (critical): on a morning cold start the local
+      // refreshRecurring re-arms a daily habit BEFORE this pull lands.
+      // The cloud row is still yesterday's (completed, dated yesterday)
+      // — blindly adopting its completed/date silently marked the fresh
+      // instance done, moved it off today, and the same-day spawn guard
+      // then blocked a re-spawn: the habit vanished for the day. When
+      // the LOCAL spawn stamp is strictly newer than the cloud's, the
+      // local respawn is the truth for completion state and date.
+      const localRespawnNewer =
+        prior?.recur != null &&
+        (prior.lastSpawnedDate ?? '') >
+          ((r.last_spawned_date as string | null) ?? '');
       byId.set(r.id, {
         id: r.id,
         title: r.title,
@@ -561,9 +592,11 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         importance: importanceFromDifficulty(r.difficulty),
         window: win,
         xpReward: r.xp_reward,
-        completed: r.completed,
-        completedAt: r.completed_at,
-        date: r.date,
+        completed: localRespawnNewer ? (prior?.completed ?? false) : r.completed,
+        completedAt: localRespawnNewer
+          ? (prior?.completedAt ?? null)
+          : r.completed_at,
+        date: localRespawnNewer ? (prior?.date ?? r.date) : r.date,
         scheduledHour: r.scheduled_hour ?? undefined,
         scheduledMinute: r.scheduled_minute ?? undefined,
         durationMinutes: r.duration_minutes ?? undefined,
@@ -576,12 +609,20 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         ...((prior?.comment ?? r.comment) != null && {
           comment: prior?.comment ?? r.comment,
         }),
-        ...((prior?.recur ?? r.recur) != null && {
-          recur: prior?.recur ?? r.recur,
-        }),
-        ...((prior?.lastSpawnedDate ?? r.last_spawned_date) != null && {
-          lastSpawnedDate: prior?.lastSpawnedDate ?? r.last_spawned_date,
-        }),
+        // An explicit stop (either side) beats any surviving rule —
+        // the tombstone is what lets "turned the repeat off" on one
+        // device actually reach the others.
+        ...(prior?.recurStopped || r.recur_stopped
+          ? { recurStopped: true }
+          : {
+              ...((prior?.recur ?? r.recur) != null && {
+                recur: prior?.recur ?? r.recur,
+              }),
+              ...((prior?.lastSpawnedDate ?? r.last_spawned_date) != null && {
+                lastSpawnedDate:
+                  prior?.lastSpawnedDate ?? r.last_spawned_date,
+              }),
+            }),
         // calendarEventIds is DEVICE-specific (event ids differ per
         // OS calendar) — keep local only; never adopt from cloud.
         // Dropping it made mirrorDelete skip cleanup (orphaned events)
@@ -592,8 +633,13 @@ export const pullAll = async (userId: string): Promise<boolean> => {
           }),
         // xpPaid: local stamp OR the cloud stamp OR completed (a
         // completed task has already been paid) — force true so a
-        // re-complete after undo can never re-award XP/shards.
-        ...((prior?.xpPaid || r.xp_paid || r.completed) && { xpPaid: true }),
+        // re-complete after undo can never re-award XP/shards. For a
+        // locally-respawned occurrence the STALE cloud row's paid/
+        // completed stamps belong to the PREVIOUS occurrence — trusting
+        // them would deny XP for today's completion.
+        ...((localRespawnNewer
+          ? prior?.xpPaid
+          : prior?.xpPaid || r.xp_paid || r.completed) && { xpPaid: true }),
       });
     }
     useQuestStore.setState({ quests: Array.from(byId.values()) });
@@ -625,10 +671,17 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       } catch {
         /* ignore malformed */
       }
-      // Coordinate fields aren't yet round-tripped to Supabase — plant
-      // never-seen cloud rows at center and derive zone/energy from it.
-      const x = 0.5;
-      const y = 0.5;
+      // Adopt the real coordinates when the cloud row carries them
+      // (migration 20260719000000). Legacy rows without coords still
+      // plant at center — a shrinking, honest-enough fallback.
+      const x =
+        typeof r.mood_x === 'number' && r.mood_x >= 0 && r.mood_x <= 1
+          ? (r.mood_x as number)
+          : 0.5;
+      const y =
+        typeof r.mood_y === 'number' && r.mood_y >= 0 && r.mood_y <= 1
+          ? (r.mood_y as number)
+          : 0.5;
       byId.set(r.id, {
         id: r.id,
         x,
@@ -732,14 +785,17 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       pulledFor: { ...s.pulledFor, [userId]: true },
     }));
   }
-  return (
-    coreOk &&
-    !c.error &&
-    !eq.error &&
-    !owned.error &&
-    !pet.error &&
-    !sos.error
-  );
+  // Success = the CORE queries spoke. Grading on the secondary tables
+  // too meant one persistently-failing side table (sos/owned/pet) kept
+  // the retry loop knocking every 60s for the whole session even
+  // though profile+quests were fully merged and pushes were flowing.
+  // Secondary hiccups self-heal on the next session's pull.
+  if (c.error) console.warn('[sync] pull checkins', c.error.message);
+  if (eq.error) console.warn('[sync] pull equipped', eq.error.message);
+  if (owned.error) console.warn('[sync] pull owned', owned.error.message);
+  if (pet.error) console.warn('[sync] pull pet', pet.error.message);
+  if (sos.error) console.warn('[sync] pull sos', sos.error.message);
+  return coreOk;
 };
 
 /**

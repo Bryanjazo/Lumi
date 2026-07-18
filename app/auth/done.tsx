@@ -33,9 +33,15 @@ export default function DoneScreen() {
   const [xpAwarded, setXpAwarded] = useState(false);
 
   useEffect(() => {
-    // Award XP once on mount.
+    // Award XP once EVER — the component-state guard alone re-paid on
+    // any remount (e.g. a returning unconfirmed user routed back
+    // through here). hintsSeen is the persisted once-ever ledger.
     if (xpAwarded) return;
-    addXp(SIGNUP_XP_REWARD);
+    const { hintsSeen, markHintSeen } = useUserStore.getState();
+    if (!hintsSeen.includes('signupXp')) {
+      addXp(SIGNUP_XP_REWARD);
+      markHintSeen('signupXp');
+    }
     registerActivity();
     setXpAwarded(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
