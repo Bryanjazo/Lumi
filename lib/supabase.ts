@@ -78,10 +78,3 @@ export type DbCheckin = {
   created_at: string;
 };
 
-export type DbSosEvent = {
-  id: string;
-  user_id: string;
-  type: 'rsd' | 'depersonalization';
-  duration_seconds: number;
-  created_at: string;
-};

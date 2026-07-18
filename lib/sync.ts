@@ -343,19 +343,6 @@ const pushPet = async (userId: string) => {
     if (ownedErr) console.warn('[sync] pushOwned', ownedErr.message);
   }
 
-  // SOS events: insert any not yet known by remote.
-  if (p.sosEvents.length) {
-    const rows = p.sosEvents.map((e) => ({
-      id: e.id,
-      user_id: userId,
-      type: e.type,
-      duration_seconds: e.durationSeconds,
-    }));
-    const { error: sosErr } = await supabase
-      .from('sos_events')
-      .upsert(rows, { onConflict: 'id' });
-    if (sosErr) console.warn('[sync] pushSos', sosErr.message);
-  }
 };
 
 // ── pull: full snapshot → local stores ──────────────────────────────────
@@ -380,24 +367,19 @@ export const useSyncStatus = create<{
 /**
  * Returns true only when EVERY section pulled cleanly. Supabase
  * queries don't throw — a dead network right after login returns
- * `{data: null, error}` on all seven, which used to read as a
+ * `{data: null, error}` on all six, which used to read as a
  * "successful" pull: no quests landed, no onboarding receipt was
  * minted, and the pulled flag was set anyway. The user stared at
  * "Nothing on the day yet" until a manual reload re-ran the pull.
  */
 export const pullAll = async (userId: string): Promise<boolean> => {
-  const [u, q, c, eq, owned, pet, sos] = await Promise.all([
+  const [u, q, c, eq, owned, pet] = await Promise.all([
     supabase.from('users').select('*').eq('id', userId).maybeSingle(),
     supabase.from('quests').select('*').eq('user_id', userId),
     supabase.from('checkins').select('*').eq('user_id', userId),
     supabase.from('equipped_items').select('*').eq('user_id', userId),
     supabase.from('owned_items').select('*').eq('user_id', userId),
     supabase.from('pet_state').select('*').eq('user_id', userId).maybeSingle(),
-    supabase
-      .from('sos_events')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
   ]);
 
   // Profile — cloud wins for fields that exist remotely, else keep local.
@@ -810,24 +792,6 @@ export const pullAll = async (userId: string): Promise<boolean> => {
     });
   }
 
-  // SOS events.
-  if (sos.data) {
-    const local = usePetStore.getState().sosEvents;
-    const byId = new Map(local.map((e) => [e.id, e]));
-    for (const r of sos.data) {
-      byId.set(r.id, {
-        id: r.id,
-        type: r.type,
-        durationSeconds: r.duration_seconds,
-        createdAt: r.created_at,
-      });
-    }
-    usePetStore.setState({
-      sosEvents: Array.from(byId.values()).sort((a, b) =>
-        b.createdAt.localeCompare(a.createdAt),
-      ),
-    });
-  }
 
   // The wipe gate only opens when the CORE queries (profile + quests)
   // actually spoke — they're what mint the onboarding receipt. Setting
@@ -844,7 +808,7 @@ export const pullAll = async (userId: string): Promise<boolean> => {
     }));
   }
   // Success = the CORE queries spoke. Grading on the secondary tables
-  // too meant one persistently-failing side table (sos/owned/pet) kept
+  // too meant one persistently-failing side table (owned/pet) kept
   // the retry loop knocking every 60s for the whole session even
   // though profile+quests were fully merged and pushes were flowing.
   // Secondary hiccups self-heal on the next session's pull.
@@ -852,7 +816,6 @@ export const pullAll = async (userId: string): Promise<boolean> => {
   if (eq.error) console.warn('[sync] pull equipped', eq.error.message);
   if (owned.error) console.warn('[sync] pull owned', owned.error.message);
   if (pet.error) console.warn('[sync] pull pet', pet.error.message);
-  if (sos.error) console.warn('[sync] pull sos', sos.error.message);
   // Pet receipt: the pet + equipped queries SPOKE (a missing row for a
   // new user still counts — there's nothing to clobber). Without this
   // receipt every pet push is skipped, so a failed pet pull keeps the

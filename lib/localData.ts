@@ -45,9 +45,9 @@ export const resetLocalUserData = (): void => {
   useCorrectionsStore.getState().reset();
   // Routing/edit metrics describe the previous user's captures.
   useAiMetricsStore.getState().reset();
-  // Pet state carries the previous user's SOS mental-health events
-  // and meds-care timestamps — by far the most sensitive rows on the
-  // device. It must never survive into another account's session.
+  // Pet state carries the previous user's meds-care timestamps —
+  // among the most sensitive rows on the device. It must never
+  // survive into another account's session.
   try {
     usePetStore.getState().reset();
   } catch {

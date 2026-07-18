@@ -11,13 +11,6 @@ export interface Adventure {
   collected: boolean;
 }
 
-export interface SosEvent {
-  id: string;
-  type: 'rsd' | 'depersonalization';
-  durationSeconds: number;
-  createdAt: string;
-}
-
 interface PetState {
   skinId: string;
   ownedSkins: string[];
@@ -36,7 +29,6 @@ interface PetState {
     move: string | null;
     windDown: string | null;
   };
-  sosEvents: SosEvent[];
 
   equipSkin: (id: string) => void;
   unlockSkin: (id: string) => void;
@@ -46,7 +38,6 @@ interface PetState {
   startAdventure: () => Adventure;
   collectAdventure: () => Adventure | null;
   care: (action: keyof PetState['lastCare']) => void;
-  logSos: (e: Omit<SosEvent, 'id' | 'createdAt'>) => SosEvent;
   reset: () => void;
 }
 
@@ -78,7 +69,6 @@ export const usePetStore = create<PetState>()(
       },
       adventure: null,
       lastCare: { checkin: null, meds: null, move: null, windDown: null },
-      sosEvents: [],
 
       equipSkin: (id) => {
         if (!get().ownedSkins.includes(id)) return;
@@ -138,15 +128,6 @@ export const usePetStore = create<PetState>()(
           lastCare: { ...s.lastCare, [action]: new Date().toISOString() },
           traits: bumpForCare(s.traits, action),
         })),
-      logSos: (e) => {
-        const ev: SosEvent = {
-          ...e,
-          id: newId(),
-          createdAt: new Date().toISOString(),
-        };
-        set((s) => ({ sosEvents: [ev, ...s.sosEvents] }));
-        return ev;
-      },
       reset: () =>
         set({
           skinId: 'cream',
@@ -161,15 +142,16 @@ export const usePetStore = create<PetState>()(
           },
           adventure: null,
           lastCare: { checkin: null, meds: null, move: null, windDown: null },
-          sosEvents: [],
         }),
     }),
     {
       name: 'lumi.pet',
-      // SOS events (RSD / depersonalization) + meds timestamps are the
-      // most sensitive rows on the device — AES at rest like the user/
-      // checkin stores. secureStorage adopts a legacy plaintext value
-      // in place, so existing installs migrate losslessly.
+      // Meds timestamps + care history are sensitive — AES at rest
+      // like the user/checkin stores. secureStorage adopts a legacy
+      // plaintext value in place, so existing installs migrate
+      // losslessly. (A persisted sosEvents array from the retired SOS
+      // prototype may linger in old blobs; zustand ignores unknown
+      // keys on hydrate.)
       storage: createJSONStorage(() => secureStorage),
     },
   ),
