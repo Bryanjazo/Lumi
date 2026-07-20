@@ -23,7 +23,6 @@
       },
       "entitlements": {
         "com.apple.security.application-groups": [
-          "group.app.lumi.ios",
           "group.app.lumi.ios"
         ]
       }
@@ -31,9 +30,6 @@
     "android": {
       "package": "com.lumi.app",
       "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.READ_CALENDAR",
-        "android.permission.WRITE_CALENDAR",
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_CALENDAR",
         "android.permission.WRITE_CALENDAR"
@@ -72,7 +68,7 @@
         "expo-speech-recognition",
         {
           "microphonePermission": "Lumi uses your microphone so you can speak your check-ins instead of typing.",
-          "speechRecognitionPermission": "Lumi transcribes your voice to text on this device so Luna can respond."
+          "speechRecognitionPermission": "Lumi transcribes your voice to text on this device so Lumi can respond."
         }
       ],
       "expo-apple-authentication",

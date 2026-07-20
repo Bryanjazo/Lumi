@@ -1,4 +1,4 @@
-# Lumi · App Store metadata (v1.0)
+# Lumi · App Store metadata (v1.1.32)
 
 Paste-ready. Swap lumitasks.app once the domain exists.
 
@@ -39,7 +39,7 @@ Lumi notices when you actually finish things — your sharp mornings, your 3pm d
 NEVER SHAMED FOR BEING HUMAN
 No red overdue walls. No guilt notifications. Miss a few days and Lumi greets you like a friend — "Life happened. What feels possible today?" — then shrinks your backlog to something doable. Finish the thing you've been avoiding for a week and THAT's when Lumi celebrates.
 
-MEET LUNA
+MEET LUMI
 A small pixel cat keeps you company — content when you're on a roll, asleep when you should be, sitting beside you when you say you're overwhelmed. Never disappointed in you. (Prefer a plain, calm tool? Companion mode turns the whole game layer off.)
 
 ALSO IN LUMI
@@ -58,9 +58,9 @@ Built for ADHD brains. Made for anyone whose mind is loud.
 Privacy: your tasks sync securely, encrypted on device, never sold, never used for ads. Full policy: lumitasks.app/privacy
 ```
 
-## What's New (v1.0)
+## What's New (v1.1.32)
 ```
-Hello, world. Lumi 1.0 — brain dump to done.
+Hello, world. Lumi 1.1 — brain dump to done.
 ```
 
 ---
@@ -98,7 +98,7 @@ Order sells the transformation first, the soul second:
 3. **Untangle mid-conversation.** The "I'm so overwhelmed" exchange with the warm reply + Arrange it button. Caption: **"Overwhelmed? Say so. Watch it lighten."**
 4. **Load Map month view.** Heat dots + month pulse panel. Caption: **"See how heavy each day really is."**
 5. **Focus session.** Timer + Live Activity. Caption: **"Focus that follows you to the lock screen."**
-6. **Luna's room (Me tab).** Warm room, cat by the fire. Caption: **"A companion, not a taskmaster."**
+6. **Lumi's room (Me tab).** Warm room, cat by the fire. Caption: **"A companion, not a taskmaster."**
 7. *(Optional)* Weekly Lumi Story share card. Caption: **"Your week, told like a story."**
 
 Style: real app frames on the dark palette, one short Fraunces-italic caption per shot, no feature-list walls. Shots must show realistic tasks (dentist, groceries, report — not lorem).
@@ -113,5 +113,5 @@ Style: real app frames on the dark palette, one short Fraunces-italic caption pe
 - [ ] Privacy Policy URL (App Privacy section): https://lumitasks.app/privacy
 - [ ] App Review Information: demo account email/password + notes (above) + your contact phone/email
 - [ ] Version release: "Manually release this version" (recommended for launch-day control)
-- [ ] Attach build 52
+- [ ] Attach build 55
 ```
