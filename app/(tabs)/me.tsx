@@ -1667,19 +1667,21 @@ function MeTabInner() {
   const questGoal = Math.max(3, todayQuests.length || 5);
 
   const today = todayKey();
-  // Untangle-era vitality signals (Lumi BUILD-STATUS §2.2 rebalance):
-  //   - untangledToday: did the user open Untangle and use a move today
-  //   - capturedToday: did anything reach quests via a new addition today
-  // Both are proxied off the existing stores — we don't track
-  // capture-time explicitly yet, but a quest whose createdAt-equivalent
-  // (date == today and not from yesterday's rollover) is a reasonable
-  // signal that something landed today.
-  const untangledToday = checkins.some(
-    (c) => localYmdFromIso(c.createdAt) === today,
+  // Untangle-era vitality signals (Lumi BUILD-STATUS §2.2 rebalance).
+  // Both proxy off the quest pile now. `untangledToday` used to read
+  // the check-in store, but that flow was retired and never writes —
+  // so the Untangle lever was stuck at 0 forever (vitality capped, the
+  // room dimmer than earned). Untangle mints quests with today's
+  // createdAt, so a fresh createdAt IS "you organized your head today".
+  //   - untangledToday: did anything land in the pile today (createdAt)
+  //   - capturedToday: is anything scheduled for today (q.date)
+  const untangledToday = quests.some(
+    (q) => localYmdFromIso(q.createdAt) === today,
   );
   const capturedToday = quests.some((q) => q.date === today);
-  // avgEnergy left here for the recap section that still surfaces it;
-  // it no longer feeds vitality.
+  // Recent self-reported energy — only the "Your rhythm" row below reads
+  // it, and only when real (historical) check-in data exists. Not a
+  // vitality input.
   const avgEnergy = useMemo(() => {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
@@ -1935,10 +1937,16 @@ function MeTabInner() {
   // Learning digest — drives "What Lumi noticed" + the Week card.
   const digest = useLearningDigest();
 
-  // 7-day energy bars — shared helper from learning layer, which
-  // does LOCAL date bucketing (so today's Untangle activity shows up
-  // on today's bar, not on tomorrow's UTC date).
+  // 7-day energy bars — reads self-reported check-in values. That
+  // capture flow was retired, so for anyone who never logged one the
+  // series is all-zero. Gate the "Your rhythm" row on real data
+  // (below) rather than render seven empty bars + "avg 0" as if live;
+  // old users whose cloud history still carries values keep the row.
   const energyTrend = useMemo(() => last7DaysEnergy(checkins), [checkins]);
+  const hasEnergyData = useMemo(
+    () => energyTrend.some((d) => d.v > 0),
+    [energyTrend],
+  );
 
   // ── Your Week card numbers — real, not lifetime. ──────────────────
   // Counts completions within the last 7 days (rolling window) so a
@@ -2336,29 +2344,32 @@ function MeTabInner() {
                 Shards keep accruing silently in the store; restore
                 the teaser + UnlocksShop when the shop ships. */}
 
-            <HubRow
-              first
-              glyph="◷"
-              color="#8EA0B4"
-              label="Your rhythm"
-              sub={`energy this week · avg ${avgEnergy}`}
-              open={hub === 'rhythm'}
-              onToggle={() => setHub(hub === 'rhythm' ? null : 'rhythm')}
-            >
-              <View style={styles.rhythmCard}>
-                <EnergyTrend data={energyTrend} />
-                <Text style={styles.rhythmNote}>
-                  ✦{' '}
-                  {avgEnergy > 0
-                    ? 'Your energy story builds with every check-in.'
-                    : 'A few check-ins and Lumi will start to see your rhythm.'}
-                </Text>
-              </View>
-            </HubRow>
+            {/* "Your rhythm" only renders with real energy data — see
+                hasEnergyData. No permanently-empty "avg 0" row. */}
+            {hasEnergyData && (
+              <HubRow
+                first
+                glyph="◷"
+                color="#8EA0B4"
+                label="Your rhythm"
+                sub={`energy this week · avg ${avgEnergy}`}
+                open={hub === 'rhythm'}
+                onToggle={() => setHub(hub === 'rhythm' ? null : 'rhythm')}
+              >
+                <View style={styles.rhythmCard}>
+                  <EnergyTrend data={energyTrend} />
+                  <Text style={styles.rhythmNote}>
+                    ✦ Your recent energy, drawn from your check-ins.
+                  </Text>
+                </View>
+              </HubRow>
+            )}
 
             {/* The self-knowledge surface — a fully built screen that
-                had no door until the Jul-9 deep dive found it. */}
+                had no door until the Jul-9 deep dive found it. When the
+                rhythm row is hidden, this becomes the first row. */}
             <HubRow
+              first={!hasEnergyData}
               glyph="✦"
               color="#8EA0B4"
               label="What Lumi knows"

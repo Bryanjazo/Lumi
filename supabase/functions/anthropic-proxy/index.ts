@@ -35,6 +35,7 @@ type AiKind =
   | "followup"
   | "title_clean"
   | "clarify"
+  | "first_step"
   | "weekly_report";
 
 // Only kinds with a LIVE client caller are accepted. Dead kinds

@@ -218,6 +218,24 @@ export const firesOnDate = (
       return weeks >= 0 && weeks % 2 === 0;
     }
     case 'month': {
+      // Month-interval phase first (shared by both variants): the month
+      // must be on-cadence from the anchor month and never before it.
+      const months =
+        (date.getFullYear() - anchor.getFullYear()) * 12 +
+        (date.getMonth() - anchor.getMonth());
+      if (months < 0 || months % n !== 0) return false;
+      if (rule.day) {
+        // SEMANTIC: a month cadence with an explicit weekday fires on
+        // the FIRST such weekday of each on-cadence month — e.g.
+        // "first Monday of the month". Exactly one date per month
+        // qualifies (the target weekday within the opening 7 days), so
+        // there's no clamp/skip like the day-of-month branch. Guard the
+        // anchor's own month so we don't fire on a first-weekday that
+        // fell BEFORE the anchor date (occurrences never precede it).
+        const target = WEEKDAY_INDEX[rule.day];
+        if (dow !== target || date.getDate() > 7) return false;
+        return dayNumber(date) >= dayNumber(anchor);
+      }
       // Clamp to short months: a "monthly" anchored on the 29th–31st
       // fires on the month's LAST day when the anchor day doesn't
       // exist (Jan 31 → Feb 28/29 → Mar 31). The strict-equality
@@ -229,11 +247,7 @@ export const firesOnDate = (
         0,
       ).getDate();
       const targetDay = Math.min(anchor.getDate(), daysInMonth);
-      if (date.getDate() !== targetDay) return false;
-      const months =
-        (date.getFullYear() - anchor.getFullYear()) * 12 +
-        (date.getMonth() - anchor.getMonth());
-      return months >= 0 && months % n === 0;
+      return date.getDate() === targetDay;
     }
     default:
       return false;

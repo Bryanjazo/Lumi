@@ -91,10 +91,10 @@ export const WinBackSheet = ({ visible }: { visible: boolean }) => {
             style={[styles.sheet, { transform: [{ translateY }], opacity }]}
           >
             <Text style={styles.eyebrow}>WELCOME BACK</Text>
-            <Text style={styles.title}>you had the extras before</Text>
+            <Text style={styles.title}>the extras are right where you left them</Text>
             <Text style={styles.body}>
-              everything you did while you were away is safe — and the
-              extras are right where you left them. want them back?
+              everything you did while you were away is safe. want the
+              extras back?
             </Text>
 
             <Pressable

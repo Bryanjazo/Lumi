@@ -2549,6 +2549,26 @@ function HomeInner() {
     upsellNudgeDate,
   ]);
 
+  // ── Single soft-banner slot ──────────────────────────────────────
+  // dayFit (the thin fit line) is exempt — it's a quiet text row, not
+  // a card. Among the soft CARDS above the hero, only ONE may own the
+  // slot per render so they can't pile up. Priority (highest first):
+  // welcome-back > learning reveal > shield note > upsell. Each entry
+  // still respects its own visibility precondition; the losers simply
+  // wait for a later render. This ONLY gates display — it stamps /
+  // consumes nothing, so a reveal or shield note that never showed
+  // stays unseen and gets its turn next time.
+  const bannerSlot: 'welcome' | 'reveal' | 'shield' | 'upsell' | null =
+    awaySnap?.stage && !rescueActive && !welcomeDismissed
+      ? 'welcome'
+      : learningReveal && !rescueActive
+        ? 'reveal'
+        : shieldUsedThisWeek && !shieldNoteDismissed
+          ? 'shield'
+          : upsellMoment && !notifBanner
+            ? 'upsell'
+            : null;
+
   const backlogSnooze = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     for (const q of overdueOpen) setQuestDate(q.id, offsetDate(1));
@@ -4144,6 +4164,17 @@ function HomeInner() {
       while (d.getDay() !== target) d.setDate(d.getDate() + 1);
     } else if (rule.every === 'weekday') {
       while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    } else if (rule.every === 'month' && rule.day) {
+      // Monthly on an explicit weekday → the FIRST such weekday of the
+      // month (matches firesOnDate's month+day semantic). Walk forward
+      // to the first target weekday that lands in the month's opening
+      // week; if this month's is already past, that lands us on next
+      // month's. Dayless monthly needs no seed — it fires on today's
+      // day-of-month (the anchor), so today is the correct first due.
+      const target = DOW_IDX[rule.day] ?? d.getDay();
+      while (!(d.getDay() === target && d.getDate() <= 7)) {
+        d.setDate(d.getDate() + 1);
+      }
     }
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
@@ -4558,7 +4589,7 @@ function HomeInner() {
             spent the weekly shield on a 2+ day miss without a word;
             say it warmly so the save is felt, never a guilt-trip.
             Dismissible; the flag resets each new week in userStore. */}
-        {shieldUsedThisWeek && !shieldNoteDismissed && (
+        {bannerSlot === 'shield' && (
           <View style={styles.shieldNote}>
             <Text style={styles.shieldNoteGlyph}>🛡</Text>
             <Text style={styles.shieldNoteText}>
@@ -4584,7 +4615,7 @@ function HomeInner() {
             a vanishing toast) until tapped or dismissed; at most one
             per ~day via the reveals store; dusk = her intelligence.
             Tap → the Patterns page where the insight lives. */}
-        {learningReveal && !rescueActive && (
+        {bannerSlot === 'reveal' && learningReveal && (
           <View style={styles.revealCard}>
             <Text style={styles.revealSpark}>✦</Text>
             <Pressable
@@ -4622,7 +4653,7 @@ function HomeInner() {
 
         {/* ── Welcome back (emotional-model spec §2) — after time
             away, Lumi kept your spot warm. Never "you missed X". */}
-        {awaySnap?.stage && !rescueActive && !welcomeDismissed && (
+        {bannerSlot === 'welcome' && awaySnap?.stage && (
           <WelcomeBackCard
             stage={awaySnap.stage}
             line={awaySnap.line ?? ''}
@@ -4639,11 +4670,7 @@ function HomeInner() {
             banner, shield note, learning reveal, welcome-back). Both
             the CTA and the ✕ stamp the ask — a shown moment is spent.
             Free is the floor; this never locks anything. */}
-        {upsellMoment &&
-          !notifBanner &&
-          !(shieldUsedThisWeek && !shieldNoteDismissed) &&
-          !learningReveal &&
-          !(awaySnap?.stage && !welcomeDismissed) && (
+        {bannerSlot === 'upsell' && (
             <View style={styles.upsellCard}>
               <Text style={styles.upsellSpark}>✦</Text>
               <Pressable

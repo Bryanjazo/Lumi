@@ -201,9 +201,17 @@ const callMessages = async (params: {
     if (httpStatus === 429) {
       // Quota is NOT an outage — the service is fine, the user hit
       // their cap. Don't trip the breaker.
-      useQuotaPromptStore
-        .getState()
-        .openPrompt(params.kind, isCurrentlyPremium());
+      //
+      // first_step is the one exception: a 2-second micro-assist
+      // shouldn't open a full-screen sell. The chip's own gentle
+      // toast ("couldn't split it just now…") is the right weight;
+      // the deliberate cap-hit upsells live on the conversation /
+      // capture surfaces. Still throw so the caller degrades identically.
+      if (params.kind !== 'first_step') {
+        useQuotaPromptStore
+          .getState()
+          .openPrompt(params.kind, isCurrentlyPremium());
+      }
       throw new QuotaExceededError(params.kind);
     }
     recordLlmFailure();

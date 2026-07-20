@@ -271,7 +271,7 @@ export default function RecapScreen() {
 
   // Single hook runs every detector over the user's own data.
   const digest = useLearningDigest();
-  const { followThrough, energyTrend, pattern, avoidance, win } = digest;
+  const { followThrough, pattern, avoidance, win } = digest;
 
   // THE shared week definition (lib/week.ts) — recap, Me's story and
   // Patterns all count the same Sunday-anchored completion week now
@@ -322,7 +322,6 @@ export default function RecapScreen() {
     () => energyForSundayWeek(checkins, weekOffset),
     [checkins, weekOffset],
   );
-  void energyTrend; // digest's rolling curve — superseded here
   // Peak/dip come from REPORTED days only — zero-filled no-data days
   // used to "win" the dip ("dipped Saturday" on a day with no
   // check-in), and the day names now come from the real dates (the
@@ -629,7 +628,15 @@ export default function RecapScreen() {
 
         {pro && (
         <>
-        {/* ── 3 · ENERGY STORY ── */}
+        {/* ── 3 · ENERGY STORY — only when real reported energy exists.
+            The series reads self-reported check-in values, and that
+            capture flow was retired: for anyone who never logged one,
+            energyData is all-zero forever. Rendering it anyway drew an
+            empty curve under a "a week or two and Lumi will sketch your
+            energy shape" promise that could never come true. Old users
+            whose cloud history still carries real values keep the
+            section (reported.length > 0). */}
+        {reported.length > 0 && (
         <Section delay={0.15} style={{ paddingHorizontal: 28, paddingTop: 56 }}>
           <Text style={styles.sectionLabel}>Your energy</Text>
           {/* Only narrate peak/dip when the math has at least two
@@ -676,6 +683,7 @@ export default function RecapScreen() {
             </>
           )}
         </Section>
+        )}
 
         {/* ── 4 · PATTERN — only when the math finds a real signal ── */}
         {pattern && (

@@ -38,6 +38,18 @@ interface PurchasesEntitlementInfo {
   identifier: string;
   productIdentifier: string;
   expirationDate: string | null;
+  /**
+   * RC period type of the CURRENTLY active period:
+   *   'NORMAL' — a genuinely PAID period (money changed hands).
+   *   'TRIAL' / 'INTRO' — a StoreKit intro offer that hasn't been paid
+   *      for yet. An intro free-trial reports the entitlement as active
+   *      too, so `status === 'active'` alone can't tell "paying" from
+   *      "still tasting". We read this so a card-attached StoreKit trial
+   *      isn't mistaken for a real payment (drives wasEverPaid truth).
+   * Optional: older SDKs / partial payloads may omit it — treated as
+   * "unknown" (see `_activePeriodIsPaid`).
+   */
+  periodType?: 'NORMAL' | 'INTRO' | 'TRIAL';
 }
 
 interface CustomerInfo {
@@ -321,6 +333,28 @@ export const restorePurchases = async (): Promise<RestoreOutcome> => {
 // ─────────────────────────────────────────────────────────────────────
 
 /**
+ * Whether the RC entitlement that's CURRENTLY active is a genuinely
+ * PAID period.
+ *   true  — active + periodType 'NORMAL' (real payment).
+ *   false — active but periodType 'TRIAL'/'INTRO' (StoreKit intro
+ *           offer, not yet paid).
+ *   null  — RC has no active entitlement, or didn't report a
+ *           periodType (unknown). Callers treat null as "don't know" —
+ *           the subscription hook then trusts the SERVER's 'active'
+ *           (webhook-authoritative) rather than denying paid history.
+ *
+ * The subscription hook reads this via `activeEntitlementIsPaid()` to
+ * keep wasEverPaid honest: a StoreKit intro trial makes the entitlement
+ * active, but the user hasn't paid, so the win-back sheet must not later
+ * claim they were a subscriber. Module-scoped (not a store field) — it's
+ * a transient RC-layer signal, refreshed on every customer-info sync.
+ */
+let _activePeriodIsPaid: boolean | null = null;
+
+/** Read the last-synced paid-period signal (see `_activePeriodIsPaid`). */
+export const activeEntitlementIsPaid = (): boolean | null => _activePeriodIsPaid;
+
+/**
  * Map a RevenueCat CustomerInfo payload into our local subscription
  * fields. Returns the inferred tier when active, null otherwise.
  *
@@ -336,6 +370,8 @@ export const syncFromCustomerInfo = (
   const set = useUserStore.getState().setSubscription;
 
   if (!ent) {
+    // RC reports no active entitlement → no paid-period claim to make.
+    _activePeriodIsPaid = null;
     // Don't clobber a local trial. Server-side webhook handles the
     // free downgrade on EXPIRATION events.
     const s = useUserStore.getState();
@@ -370,6 +406,13 @@ export const syncFromCustomerInfo = (
     }
     return null;
   }
+
+  // Paid-period truth: 'NORMAL' = paid, 'TRIAL'/'INTRO' = not yet paid.
+  // A missing periodType is left as null ("unknown") so we don't wrongly
+  // DENY a real payer their paid-history flag — the hook falls back to
+  // trusting the server's 'active' in that case.
+  _activePeriodIsPaid =
+    ent.periodType == null ? null : ent.periodType === 'NORMAL';
 
   const tier: SubscriptionTier = ent.productIdentifier
     .toLowerCase()

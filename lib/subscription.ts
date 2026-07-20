@@ -19,6 +19,7 @@
 import { useEffect, useMemo } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { useUserStore, SubscriptionStatus } from '../store/userStore';
+import { activeEntitlementIsPaid } from './revenuecat';
 
 const TRIAL_DAYS = 7;
 const DAY_MS = 86_400_000;
@@ -124,8 +125,11 @@ export interface AccessStatus {
    * True the moment a former PAID subscriber (wasEverPaid) has fallen
    * back to a lapsed shape and hasn't yet seen the one-time win-back
    * sheet. Drives WinBackSheet. A cancelled-but-still-paid-through
-   * user is excluded (they still have premium); a lapsed TRIAL alone
-   * never triggers it (wasEverPaid is only ever set on 'active').
+   * user is excluded (they still have premium); a lapsed trial alone
+   * never triggers it — wasEverPaid only flips on an active period that
+   * RC didn't flag as a StoreKit intro/trial (see shouldMarkPaid), so
+   * neither the card-less soft trial nor a card-attached intro trial
+   * counts as former payment.
    */
   winBackDue: boolean;
 
@@ -186,12 +190,20 @@ export const useAccessStatus = (
 
   // Remember the paid milestone — the ONE place wasEverPaid ever flips
   // true. Same one-shot-flip-in-an-effect shape as the trial lapse
-  // above (never during render, idempotent). Gating it strictly on
-  // status === 'active' is what keeps a lapsed *trial* from ever
-  // masquerading as a former payer: a trial never touches this flag,
-  // so the win-back sheet below can't fire for someone who only ever
-  // tasted the trial.
-  const shouldMarkPaid = status === 'active' && !wasEverPaid;
+  // above (never during render, idempotent).
+  //
+  // 'active' alone isn't proof of payment: a StoreKit intro FREE trial
+  // (INITIAL_PURCHASE, periodType TRIAL/INTRO) also reports the
+  // entitlement as active. So we additionally require that RC's active
+  // period isn't a known-unpaid one — activeEntitlementIsPaid() is
+  // `false` only when RC affirmatively says TRIAL/INTRO. When it's
+  // `null` (RC has no info — SDK absent, or a server-only 'active' from
+  // the purchase webhook) we still mark: that path only reaches 'active'
+  // via a real INITIAL_PURCHASE on the server. This keeps a card-less
+  // *soft* trial (status 'trial', never 'active') and a card-attached
+  // *intro* trial both from masquerading as a former payer.
+  const shouldMarkPaid =
+    status === 'active' && !wasEverPaid && activeEntitlementIsPaid() !== false;
   useEffect(() => {
     if (shouldMarkPaid) {
       useUserStore.getState().markWasEverPaid();

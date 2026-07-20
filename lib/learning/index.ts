@@ -7,7 +7,6 @@
 
 import { useMemo } from 'react';
 import { useQuestStore } from '../../store/questStore';
-import { useCheckinStore } from '../../store/checkinStore';
 import { useSuggestionsStore } from '../../store/suggestionsStore';
 import { useUserStore } from '../../store/userStore';
 
@@ -17,8 +16,6 @@ import {
 } from './recurrence';
 import {
   computeEnergyCurve,
-  last7DaysEnergy,
-  avgRecentEnergy,
   peakAndLowDays,
   chronotypeFromWindow,
   type EnergyCurve,
@@ -42,10 +39,12 @@ import type { Suggestion } from '../../store/suggestionsStore';
 export interface LearningDigest {
   // Recurrence
   recurrence: Suggestion[];
-  // Energy
+  // Energy — the curve + peak/low DAY math run on completions now
+  // (WHEN you finish things). The old self-reported daily-energy series
+  // (last7DaysEnergy / avgRecentEnergy) was dropped from the digest: it
+  // read the retired check-in store, so it was permanently empty, and
+  // its only reader (Recap) supersedes it with energyForSundayWeek.
   curve: EnergyCurve;
-  energyTrend: { day: string; v: number; date: string }[];
-  avgEnergy7: number;
   peakDow: number | null;
   lowDow: number | null;
   // Follow-through
@@ -75,7 +74,6 @@ export const useLearningDigest = (
   override?: Chronotype,
 ): LearningDigest => {
   const quests = useQuestStore((s) => s.quests);
-  const checkins = useCheckinStore((s) => s.checkins);
   const suppressed = useSuggestionsStore((s) => s.suppressed);
   const sharpWindow = useUserStore((s) => s.sharpWindow);
   const foggyWindow = useUserStore((s) => s.foggyWindow);
@@ -106,8 +104,7 @@ export const useLearningDigest = (
     // The energy curve + peak/low-day math now run on COMPLETIONS —
     // WHEN you finish things is the activity signal (check-ins were
     // retired and never populated). completedAt carries the hour +
-    // weekday we need. The self-reported daily-energy series below
-    // (Me tab / Recap) still reads check-in mood coordinates.
+    // weekday we need.
     const completions = quests
       .filter((q) => q.completed && q.completedAt)
       .map((q) => ({ completedAt: q.completedAt as string }));
@@ -118,8 +115,6 @@ export const useLearningDigest = (
       wakeHour,
       sleepHour,
     );
-    const energyTrend = last7DaysEnergy(checkins);
-    const avgEnergy7 = avgRecentEnergy(checkins, 7);
     const { peakDow, lowDow } = peakAndLowDays(completions);
 
     const followThrough = computeFollowThrough(quests);
@@ -133,8 +128,6 @@ export const useLearningDigest = (
     return {
       recurrence,
       curve,
-      energyTrend,
-      avgEnergy7,
       peakDow,
       lowDow,
       followThrough,
@@ -143,7 +136,7 @@ export const useLearningDigest = (
       avoidance,
       win,
     };
-  }, [quests, checkins, suppressed, chronotype, wakeHour, sleepHour]);
+  }, [quests, suppressed, chronotype, wakeHour, sleepHour]);
 };
 
 // Re-export the detectors so callers don't have to know the layout.
