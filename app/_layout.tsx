@@ -268,6 +268,11 @@ export default function RootLayout() {
     const t = setTimeout(() => setLaunchSettled(true), 1500);
     return () => clearTimeout(t);
   }, []);
+  // One global sheet at a time: subscribe to the quota/upgrade sheet's
+  // open flag HERE, with the other hooks — this must run on every
+  // render, INCLUDING the fonts/hydration loading path below, or the
+  // hook count changes when the app settles ("Rendered more hooks").
+  const quotaSheetOpen = useQuotaPromptStore((s) => s.open);
   // First-pull-per-user flags — the cross-account wipe waits on these.
   const pulledFor = useSyncStatus((s) => s.pulledFor);
   // Push the cat's mood + completion count to the iOS home-screen
@@ -620,8 +625,8 @@ export default function RootLayout() {
   // 429 in the first 1.5s beats the launchSettled timer), stacking a
   // second transparent Modal on top tangles iOS presentation. Win-back
   // simply waits — winBackDue stays true, so it presents on the next
-  // render after the quota sheet closes.
-  const quotaSheetOpen = useQuotaPromptStore((s) => s.open);
+  // render after the quota sheet closes. (quotaSheetOpen is subscribed
+  // up top, before the loading early-return — rules of hooks.)
   const showWinBack =
     winBackDue && launchSettled && !inOnboardingOrAuth && !quotaSheetOpen;
 
