@@ -8,6 +8,10 @@
 //   1. Validate the caller's Supabase JWT (Authorization: Bearer ...).
 //   2. Look up has_ai_quota(user_id, kind) — premium users are
 //      unlimited, free users get N per kind per 7-day rolling window.
+//   2b. Check global_ai_budget_ok() — a whole-app kill switch + daily
+//      cost ceiling (app_config, see ..._ai_cost_breaker migration).
+//      Trips to a 429 exactly like a quota hit, so the client falls
+//      back to deterministic with zero changes.
 //   3. Call Anthropic with the validated body.
 //   4. Log a row to ai_usage so the quota check sees this call next
 //      time.
@@ -40,6 +44,7 @@ const ALLOWED_KINDS: AiKind[] = [
   "untangle",
   "title_clean",
   "clarify",
+  "first_step",
 ];
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -49,6 +54,9 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 // faster (the "did you mean" suggestion appears sooner).
 const KIND_MODEL: Partial<Record<AiKind, string>> = {
   clarify: "claude-haiku-4-5-20251001",
+  // first_step is a ~15-token single-line generation — same
+  // cheap/fast tier as clarify.
+  first_step: "claude-haiku-4-5-20251001",
 };
 
 // Per-kind temperature — extraction wants near-deterministic output
@@ -245,6 +253,45 @@ Deno.serve(async (req: Request) => {
           message: isPremium
             ? "Let's keep it quick for now — try again in a bit."
             : "Free tier weekly cap reached for this AI feature. Upgrade for unlimited.",
+        },
+      },
+      429,
+    );
+  }
+
+  // ── 2b. Global cost breaker + kill switch ──────────────────────
+  // Per-user quota caps individuals; this caps the WHOLE app. Two
+  // failure modes it defends against, neither visible to any single
+  // user's quota:
+  //   • a bug / abuse pattern that fans AI calls across many accounts
+  //     (each under its own cap, but the aggregate bill runs away);
+  //   • an emergency where we need to cut ALL AI instantly without a
+  //     client release — flip app_config.ai_killswitch = true.
+  // global_ai_budget_ok() (see ..._ai_cost_breaker migration) returns
+  // false if the kill switch is on OR today's total logged usage in
+  // ai_usage crosses the generous ceiling in app_config.ai_daily_budget.
+  const { data: budgetOk, error: budgetErr } = await adminClient.rpc(
+    "global_ai_budget_ok",
+  );
+  if (budgetErr) {
+    // FAIL-OPEN on rpc errors — this guard exists to stop runaway
+    // spend, not to add a new single point of failure. If the RPC
+    // itself breaks (most likely: the function deployed before the
+    // ai_cost_breaker migration was applied), a 500 here would make
+    // the client record an outage, trip ITS circuit breaker after two
+    // calls, and silently disable all AI while Anthropic is healthy.
+    // Log and proceed; the per-user quota above still bounds spend.
+    console.error("[proxy] global_ai_budget_ok rpc failed (fail-open):", budgetErr.message);
+  } else if (budgetOk !== true) {
+    // Explicit false = kill switch on or daily ceiling crossed. Same
+    // 429 shape a quota hit returns, so the client falls back to the
+    // deterministic engine silently — no client change needed.
+    return json(
+      {
+        error: {
+          code: "quota",
+          message:
+            "Lumi's taking a quick breather — carrying on without AI for now.",
         },
       },
       429,
