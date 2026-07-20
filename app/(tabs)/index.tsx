@@ -576,17 +576,35 @@ const WaitingRow = memo(function WaitingRow({
           {timeLabel}
         </Text>
       )}
-      <Pressable
-        onPress={() => onSurface(q)}
-        hitSlop={6}
-        accessibilityRole="button"
-        accessibilityLabel={`Surface now: ${q.title}`}
-        style={[hs.kindPillRow, { backgroundColor: `${kind.color}1F` }]}
-      >
-        <Text style={[hs.kindPillRowText, { color: kind.color }]}>
-          {kind.label}
-        </Text>
-      </Pressable>
+      {timeLabel == null ? (
+        // Someday rows: an EXPLICIT "→ today" action instead of the
+        // kind tag. The tag-as-button read as a label — users tapped
+        // "ERRAND" expecting nothing and the task jumped onto today
+        // with no visible way back. Same handler, honest name.
+        <Pressable
+          onPress={() => onSurface(q)}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel={`Move onto today: ${q.title}`}
+          style={[hs.kindPillRow, { backgroundColor: `${C.ember}1F` }]}
+        >
+          <Text style={[hs.kindPillRowText, { color: C.ember }]}>
+            → today
+          </Text>
+        </Pressable>
+      ) : (
+        <Pressable
+          onPress={() => onSurface(q)}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel={`Surface now: ${q.title}`}
+          style={[hs.kindPillRow, { backgroundColor: `${kind.color}1F` }]}
+        >
+          <Text style={[hs.kindPillRowText, { color: kind.color }]}>
+            {kind.label}
+          </Text>
+        </Pressable>
+      )}
     </Pressable>
   );
 });
@@ -611,9 +629,14 @@ const WaitingRow = memo(function WaitingRow({
 const HeroOverflowMenu = ({
   quest,
   onEdit,
+  onTuck,
 }: {
   quest: Quest;
   onEdit: (q: Quest) => void;
+  /** Move this task back into the someday pile — the reverse of the
+   *  someday card's "→ today". Without it, a task pulled onto today
+   *  (accidentally or not) had no road back. */
+  onTuck: (q: Quest) => void;
 }) => {
   const [open, setOpen] = useState(false);
   // Screen-absolute anchor for the popover, captured the moment the
@@ -754,6 +777,49 @@ const HeroOverflowMenu = ({
                     }}
                   >
                     Edit task
+                  </Text>
+                </Pressable>
+                <View
+                  style={{
+                    height: 1,
+                    backgroundColor: 'rgba(176,163,139,0.12)',
+                    marginHorizontal: 12,
+                  }}
+                />
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setOpen(false);
+                    onTuck(quest);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Tuck into someday: ${quest.title}`}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    paddingHorizontal: 14,
+                    paddingVertical: 12,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: fonts.inter,
+                      fontSize: 14,
+                      color: '#ECE0CB',
+                    }}
+                  >
+                    ☾
+                  </Text>
+                  <Text
+                    style={{
+                      fontFamily: fonts.interSemi,
+                      fontSize: 14,
+                      color: '#ECE0CB',
+                      letterSpacing: -0.1,
+                    }}
+                  >
+                    Tuck into someday
                   </Text>
                 </Pressable>
                 <View
@@ -1486,6 +1552,16 @@ function HomeInner() {
   const moveQuestBack = (q: Quest, dateISO: string) => {
     setQuestDate(q.id, dateISO);
     moveQuestWindow(q.id, 'morning');
+  };
+
+  /** The reverse road — tuck a today/windowed task back into the
+   *  someday pile. Before this, a task moved onto today (even by an
+   *  accidental tap in the someday card) was stuck there: someday was
+   *  reachable only via capture, DaySet "let go", or the backlog
+   *  nudge. Offered from the hero ⋯ menu and the edit sheet. */
+  const tuckToSomeday = (q: Quest) => {
+    moveQuestWindow(q.id, 'someday');
+    showToast(`Tucked into someday · ${q.title}`);
   };
   const [toast, setToast] = useState<string | null>(null);
   // Undo state for accidental "Mark it done" taps. Lives a hair longer
@@ -4702,7 +4778,11 @@ function HomeInner() {
               swapAvailable={candidates.length > 1}
               onFocusStart={triggerLick}
               headerRight={
-                <HeroOverflowMenu quest={hero} onEdit={setEditingQuest} />
+                <HeroOverflowMenu
+                  quest={hero}
+                  onEdit={setEditingQuest}
+                  onTuck={tuckToSomeday}
+                />
               }
               aboveTitleSlot={
                 hero.comment ? (
@@ -5278,8 +5358,8 @@ function HomeInner() {
                   showsVerticalScrollIndicator={somedayPile.length > 7}
                 />
                 <Text style={styles.waitingFooter}>
-                  tap “someday” to give it a day — tap its tag to bring
-                  it onto today
+                  tap “someday” to give it a day — “→ today” brings it
+                  onto today
                 </Text>
               </>
             )}
@@ -5878,6 +5958,18 @@ function HomeInner() {
           setEditingQuest(null);
           showToast('Deleted — gone for good.');
         }}
+        // The reverse of "→ today": any non-someday task can be tucked
+        // back into the pile from its edit sheet. Omitted for tasks
+        // already in someday (nothing to tuck).
+        onTuck={
+          editingQuest && editingQuest.window !== 'someday'
+            ? () => {
+                if (!editingQuest) return;
+                tuckToSomeday(editingQuest);
+                setEditingQuest(null);
+              }
+            : undefined
+        }
         onSave={({ title, note, comment }) => {
           if (!editingQuest) return;
           if (title !== editingQuest.title) {

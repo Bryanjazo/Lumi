@@ -67,6 +67,10 @@ interface Props {
   /** Destructive path — renders a two-tap "Delete this task" row at
    *  the bottom of the sheet. Omit to hide deletion entirely. */
   onDelete?: () => void;
+  /** Tuck the task back into the someday pile — the reverse of the
+   *  someday card's "→ today". Callers omit it for tasks already in
+   *  someday (nothing to tuck). Non-destructive, single tap. */
+  onTuck?: () => void;
   quest: Quest | null;
   onSave: (next: { title: string; note: string; comment: string }) => void;
 }
@@ -75,6 +79,7 @@ export const EditQuestSheet = ({
   visible,
   onClose,
   onDelete,
+  onTuck,
   quest,
   onSave,
 }: Props) => {
@@ -380,6 +385,27 @@ export const EditQuestSheet = ({
               </Pressable>
             )}
 
+            {/* ── Tuck into someday — single tap, non-destructive.
+                The task keeps everything (note, comment, recur) and
+                waits in the someday pile; "→ today" brings it back. ── */}
+            {onTuck && (
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  onTuck();
+                  onClose();
+                }}
+                style={styles.tuckRow}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel="Tuck into someday"
+              >
+                <Text style={styles.tuckText}>
+                  ☾ Tuck into someday — it’ll wait quietly
+                </Text>
+              </Pressable>
+            )}
+
             {/* ── Delete — two-tap confirm, no system alert ── */}
             {onDelete && (
               <Pressable
@@ -618,6 +644,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(224,122,79,0.4)',
   },
   deleteText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 13,
+    color: C.mute,
+  },
+  tuckRow: {
+    marginTop: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 14,
+  },
+  tuckText: {
     fontFamily: fonts.interSemi,
     fontSize: 13,
     color: C.mute,
