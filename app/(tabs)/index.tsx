@@ -132,6 +132,7 @@ import {
   llmUnderstand,
   isLlmAvailable,
   llmClarify,
+  llmFirstStep,
   type UnderstandContext,
   type UnderstoodTask,
 } from '../../lib/anthropic';
@@ -993,6 +994,163 @@ const HeroDescription = ({
   );
 };
 
+/**
+ * HeroFirstStep — the "break off the first step" affordance on the
+ * hero card (v1 of the onboarding promise: one small first step, never
+ * the whole mountain). Two states:
+ *   - no firstStep yet + a heavy task (high importance or ≥45 min):
+ *     a small chip that asks llmFirstStep for one concrete tiny move.
+ *   - firstStep set: a prominent accent line UNDER the title so a
+ *     paralyzed brain sees the small thing, not the mountain — with a
+ *     tiny ✕ to clear it.
+ * Device-local field (Quest.firstStep) — see questStore. The chip is
+ * hidden when the proxy is down so it never dead-taps; a null result
+ * (offline / cap / bad reply) leaves state untouched and toasts.
+ */
+const HeroFirstStep = ({
+  quest,
+  accentColor,
+  onToast,
+}: {
+  quest: Quest;
+  accentColor: string;
+  onToast: (t: string) => void;
+}) => {
+  const setFirstStep = useQuestStore((s) => s.setFirstStep);
+  const [loading, setLoading] = useState(false);
+
+  // Once a step exists, it always shows — a heavy task with a step
+  // gets the calm "first step · …" line regardless of the chip gate.
+  if (quest.firstStep) {
+    return (
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          gap: 9,
+          paddingVertical: 11,
+          paddingHorizontal: 13,
+          borderRadius: 13,
+          backgroundColor: hexA(accentColor, 0.12),
+          borderWidth: 1,
+          borderColor: hexA(accentColor, 0.34),
+          marginBottom: 16,
+        }}
+      >
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            style={{
+              fontFamily: fonts.interSemi,
+              fontSize: 9,
+              letterSpacing: 1.2,
+              textTransform: 'uppercase',
+              color: accentColor,
+              marginBottom: 3,
+            }}
+          >
+            first step
+          </Text>
+          <Text
+            style={{
+              fontFamily: fonts.fraunces,
+              fontStyle: 'italic',
+              fontSize: 16,
+              color: '#ECE0CB',
+              lineHeight: 22,
+              letterSpacing: -0.2,
+            }}
+          >
+            {quest.firstStep}
+          </Text>
+        </View>
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync();
+            setFirstStep(quest.id, null);
+          }}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="Clear first step"
+          style={{ flexShrink: 0, paddingTop: 1 }}
+        >
+          <Text
+            style={{
+              fontFamily: fonts.inter,
+              fontSize: 16,
+              color: '#6E655A',
+              lineHeight: 18,
+            }}
+          >
+            ✕
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // Only offer to break down the genuinely heavy tasks — the big rock
+  // or a real block of time is where paralysis lives; a 10-minute whim
+  // doesn't need splitting. Hide when the proxy can't answer.
+  const heavy =
+    quest.importance === 'high' || (quest.durationMinutes ?? 0) >= 45;
+  if (!heavy || !isLlmAvailable()) return null;
+
+  const generate = async () => {
+    if (loading) return;
+    Haptics.selectionAsync();
+    setLoading(true);
+    try {
+      const step = await llmFirstStep(quest.title, quest.note);
+      if (step) {
+        setFirstStep(quest.id, step);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        onToast('couldn’t split it just now — try again in a bit');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Pressable
+      onPress={generate}
+      disabled={loading}
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityLabel="Break off the first step"
+      style={{
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+        paddingVertical: 7,
+        paddingHorizontal: 12,
+        borderRadius: 100,
+        borderWidth: 1,
+        borderColor: hexA(accentColor, loading ? 0.28 : 0.4),
+        backgroundColor: hexA(accentColor, 0.1),
+        marginBottom: 16,
+        opacity: loading ? 0.7 : 1,
+      }}
+    >
+      <Text style={{ fontFamily: fonts.inter, fontSize: 12, color: accentColor }}>
+        ⌁
+      </Text>
+      <Text
+        style={{
+          fontFamily: fonts.interSemi,
+          fontSize: 12.5,
+          color: accentColor,
+          letterSpacing: -0.1,
+        }}
+      >
+        {loading ? 'breaking it down…' : 'break off the first step'}
+      </Text>
+    </Pressable>
+  );
+};
+
 /** ISO completedAt → "just now" / "12 min ago" / "1 hr ago". Used in
  *  the "Done today" history list so the user sees how recently they
  *  finished each thing. Returns null if we can't read the timestamp. */
@@ -1027,6 +1185,49 @@ const hexA = (hex: string, a: number): string => {
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);
   return `rgba(${r},${g},${b},${a})`;
+};
+
+/**
+ * Diff a committed SmartTask against what the LLM first proposed for
+ * it, producing a corrections delta the model learns from (TASK 4 /
+ * lumi-smarter-ai-spec.md §6). Only the fields the user actually
+ * changed appear; an all-equal diff yields `{}`, which the corrections
+ * store skips. Shared by the inline preview editor and the Accept-all
+ * path so every way a preview gets tweaked feeds the same signal.
+ */
+const diffSmartTaskCorrection = (
+  orig: SmartTask,
+  next: SmartTask,
+): Correction['delta'] => {
+  const delta: Correction['delta'] = {};
+  if (next.title.trim() !== orig.title.trim()) {
+    delta.title = { from: orig.title, to: next.title };
+  }
+  if (next.window !== orig.window) {
+    delta.window = { from: orig.window, to: next.window };
+  }
+  if (next.importance !== orig.importance) {
+    delta.importance = { from: orig.importance, to: next.importance };
+  }
+  if (
+    next.durationMinutes != null &&
+    next.durationMinutes !== orig.durationMinutes
+  ) {
+    delta.durationMinutes = {
+      from: orig.durationMinutes,
+      to: next.durationMinutes,
+    };
+  }
+  if ((next.date ?? null) !== (orig.date ?? null)) {
+    delta.date = {
+      from: orig.date ?? todayKey(),
+      to: next.date ?? todayKey(),
+    };
+  }
+  if ((next.at ?? null) !== (orig.at ?? null)) {
+    delta.at = { from: orig.at ?? null, to: next.at ?? null };
+  }
+  return delta;
 };
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1137,6 +1338,12 @@ function HomeInner() {
   const xp = useUserStore((s) => s.xp);
   const streak = useUserStore((s) => s.streak);
   const activeDaysThisMonth = useUserStore((s) => s.activeDaysThisMonth);
+  // Read-only: registerActivity() silently spends the weekly shield on
+  // a 2+ day gap (shieldUsedThisWeek → true). Home tells the user so
+  // the save doesn't go unnoticed (TASK 2). Dismiss is local-for-today
+  // — the flag itself clears on the next Sunday-start week in userStore.
+  const shieldUsedThisWeek = useUserStore((s) => s.shieldUsedThisWeek);
+  const [shieldNoteDismissed, setShieldNoteDismissed] = useState(false);
   // (XP/shard/activity economy moved into the shared completeQuestCore
   // helper — completion no longer needs these bindings here.)
   // Smart-capture context (learned rhythms → smart Layer-2 placement).
@@ -1161,6 +1368,15 @@ function HomeInner() {
   const hintsSeen = useUserStore((s) => s.hintsSeen);
   const tasksEverCompleted = useUserStore((s) => s.tasksEverCompleted);
   const markHintSeen = useUserStore((s) => s.markHintSeen);
+  // Gentle, capped, dismissible invitations (never locks): the
+  // milestone upsell (a free user who's already felt the value) and the
+  // weekly "give a tucked task a day" nudge. Stamps persist so each ask
+  // is spent when shown; localData resets them on account switch.
+  const upsellNudgeDate = useUserStore((s) => s.upsellNudgeDate);
+  const upsellNudgeCount = useUserStore((s) => s.upsellNudgeCount);
+  const stampUpsellNudge = useUserStore((s) => s.stampUpsellNudge);
+  const somedayNudgeDate = useUserStore((s) => s.somedayNudgeDate);
+  const stampSomedayNudge = useUserStore((s) => s.stampSomedayNudge);
 
   const quests = useQuestStore((s) => s.quests);
   const toggle = useQuestStore((s) => s.toggle);
@@ -1255,6 +1471,8 @@ function HomeInner() {
   // The waiting card ("N more waiting — Lumi's holding them") —
   // collapsed by default, same calm-first default as Done today.
   const [waitingOpen, setWaitingOpen] = useState(false);
+  // The tucked-into-someday card, same calm-first collapsed default.
+  const [somedayOpen, setSomedayOpen] = useState(false);
   // Someday → real-date sheet target. When set, the MoveBackToDateSheet
   // opens for this task.
   const [movingBack, setMovingBack] = useState<Quest | null>(null);
@@ -1362,6 +1580,12 @@ function HomeInner() {
   // the result — hiding the card alone let the preview appear seconds
   // after the user cancelled.
   const sortGenRef = useRef(0);
+  // Snapshot of what the LLM ORIGINALLY proposed for the current
+  // preview, so Accept-all can diff each committed task against it and
+  // learn from any tweak the user made in the preview (TASK 4). Set
+  // only on an LLM success; null for deterministic-only previews (no
+  // LLM guess to learn from). Matched back to committed tasks by `raw`.
+  const llmProposalRef = useRef<SmartTask[] | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [editingDate, setEditingDate] = useState<'today' | 'tomorrow'>('today');
@@ -1663,6 +1887,27 @@ function HomeInner() {
     : null;
   const rest = hero ? candidates.filter((q) => q.id !== hero.id) : [];
 
+  // Tucked-away pile — every open someday task, ANY date. Tucking
+  // (backlog nudge, DaySet "let go", the stale auto-tuck, capture)
+  // kept the task in the store but nothing rendered
+  // window==='someday' rows: candidates filters them out above and
+  // Time's week view skips them too — "tucked into someday" was
+  // invisible, with no way back. This pile is the where.
+  const somedayPile = useMemo(
+    () =>
+      quests
+        .filter((q) => !q.completed && q.window === 'someday')
+        .sort((a, b) => {
+          const rankDiff =
+            IMPORTANCE[b.importance].rank - IMPORTANCE[a.importance].rank;
+          if (rankDiff !== 0) return rankDiff;
+          // Same tier → oldest first, so long-parked things don't
+          // sink forever under fresh captures.
+          return (a.date ?? '').localeCompare(b.date ?? '');
+        }),
+    [quests],
+  );
+
   // Drop a pin once its task leaves the candidate list (edited to
   // another day/window, moved to someday, completed) — otherwise a
   // stale pin could silently re-promote the task to hero if it ever
@@ -1729,6 +1974,53 @@ function HomeInner() {
       })
       .reduce((sum, q) => sum + (q.xpReward ?? 0), 0);
   }, [todayQuests, now]);
+
+  // ── "Does today fit" (TASK 3) — one honest line: the minutes
+  // actually planned for today vs. the time left before the sleep
+  // anchor. Speaks ONLY when today has timed work on it (open,
+  // non-someday, with a real duration) so it never nags an empty or
+  // duration-less plan. Past bedtime → silent (no "day left" to fit).
+  const dayFit = useMemo(() => {
+    const timed = todayQuests.filter(
+      (q) =>
+        !q.completed &&
+        q.window !== 'someday' &&
+        q.durationMinutes != null &&
+        q.durationMinutes > 0,
+    );
+    if (timed.length === 0) return null;
+    const planned = timed.reduce((a, q) => a + (q.durationMinutes ?? 0), 0);
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    // Post-midnight clock wrap: anchors.sleep can exceed 1440 (a 1am
+    // bedtime is stored as 25:00), and after midnight nowMin resets
+    // to ~0 — comparing raw minutes would balloon "time left" to a
+    // full day. Treat an after-midnight now as yesterday+24h so the
+    // subtraction stays on one continuous clock.
+    const nowOnSleepClock =
+      nowMin < anchors.wake ? nowMin + 1440 : nowMin;
+    const leftBeforeSleep = anchors.sleep - nowOnSleepClock;
+    if (leftBeforeSleep <= 0) return null;
+    // Round the "~" figure to the nearest 5 so it reads as an estimate.
+    const rounded = Math.round(planned / 5) * 5;
+    const fmt = (m: number) => {
+      const h = Math.floor(m / 60);
+      const mn = m % 60;
+      if (h === 0) return `${mn}m`;
+      if (mn === 0) return `${h}h`;
+      return `${h}h ${mn}m`;
+    };
+    const over = planned > leftBeforeSleep;
+    // Within ~45 min of the ceiling → honest "that's a full day", not
+    // a dishonest "room to spare".
+    const tight = !over && planned > leftBeforeSleep - 45;
+    const tail = over
+      ? 'more than the day has left — want to lighten it?'
+      : tight
+        ? 'that about fills the day'
+        : 'fits with room to spare';
+    return { text: `~${fmt(rounded)} planned · ${tail}` };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayQuests, now, anchors.sleep, dayKeyNow]);
 
   const heroSuggestion: Suggestion | null = suggestions[0] ?? null;
 
@@ -1922,6 +2214,17 @@ function HomeInner() {
    *  ID (not index) so a later list reorder can't point at the wrong
    *  card. Ignored automatically once the task leaves candidates. */
   const surfaceNow = (q: Quest) => {
+    if (q.window === 'someday') {
+      // "now" on a tucked row — pull it onto today in the current
+      // window and make it the hero. The store writes land before
+      // the pin-drop effect re-checks candidates, so the pin holds.
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setQuestDate(q.id, todayKey());
+      moveQuestWindow(q.id, cw);
+      setHeroPickId(q.id);
+      showToast(`Back on today · ${q.title}`);
+      return;
+    }
     if (!candidates.some((c) => c.id === q.id)) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setHeroPickId(q.id);
@@ -1990,10 +2293,15 @@ function HomeInner() {
   // Dismissing rescue stamps rescueDismissedDate=today, which also
   // clears the forced state.
   const [forceRescue, setForceRescue] = useState(false);
+  // Calibration: daysAway>=3 catches "gone for a stretch"; the overdue
+  // arm is tuned for the EVERYDAY bad day, not just catastrophe. 8 was
+  // a full pile-up — by then the user's already underwater. 5 slipped
+  // tasks IS the common slump (a couple of rough days), so open the
+  // warm Rescue doors there instead of waiting for the collapse.
   const rescueActive =
     (forceRescue ||
       (awaySnap?.daysAway ?? 0) >= 3 ||
-      overdueOpen.length >= 8) &&
+      overdueOpen.length >= 5) &&
     rescueDismissedDate !== todayKey() &&
     !totallyEmpty;
 
@@ -2104,6 +2412,66 @@ function HomeInner() {
       : 'A few things have followed you for a couple of days. They might not all be urgent anymore.';
     return { line };
   }, [rescueActive, backlogNudgeDismissedDate, overdueOpen, quests]);
+
+  // ── Someday auto-resurfacing (weekly, invitation-only) ───────────
+  // The tucked pile is visible but passive — nothing ever invites the
+  // user back. Once a week, IF something's genuinely waited (oldest
+  // tucked item ≥7 days old by its day, falling back to when it was
+  // captured), offer ONE quiet line to reopen the pile so the move-
+  // back chips are right there. NEVER auto-moves or auto-surfaces a
+  // task — the invitation is the whole feature. One ask per week, tops.
+  const somedayResurface = useMemo(() => {
+    if (rescueActive) return false;
+    if (somedayPile.length === 0) return false;
+    if (somedayNudgeDate) {
+      const since = Date.now() - new Date(somedayNudgeDate).getTime();
+      if (since < 7 * 86_400_000) return false;
+    }
+    const oldestMs = somedayPile.reduce((min, q) => {
+      const t = new Date(q.date ?? q.createdAt).getTime();
+      return Number.isNaN(t) ? min : Math.min(min, t);
+    }, Infinity);
+    if (!Number.isFinite(oldestMs)) return false;
+    return Date.now() - oldestMs >= 7 * 86_400_000;
+  }, [rescueActive, somedayPile, somedayNudgeDate]);
+
+  // ── Second upsell surface (milestone-anchored, capped) ───────────
+  // A free user who tapped "just dive in free" only meets the upgrade
+  // conversation by hitting an AI cap. Once they've clearly FELT the
+  // value (≥10 things done, ≥3 days in, never started a trial) offer
+  // ONE pressure-free value moment: 7 days free, free is forever
+  // either way. Lifetime cap of two shows, ≥14 days apart; a shown
+  // moment is a spent ask, so both tap-through and dismiss stamp it.
+  // Never a lock, never a nag — the render also refuses to stack on
+  // any other banner in the slot.
+  const upsellMoment = useMemo(() => {
+    if (rescueActive) return false;
+    if (access.hasPremium) return false;
+    if (access.status !== 'free') return false;
+    // trialAlreadyUsed ⇔ trialStartedAt != null — so this is the
+    // never-started-a-trial gate.
+    if (access.trialAlreadyUsed) return false;
+    if (!onboardedAt) return false;
+    if (Date.now() - new Date(onboardedAt).getTime() < 3 * 86_400_000) {
+      return false;
+    }
+    if (tasksEverCompleted < 10) return false;
+    if (upsellNudgeCount >= 2) return false;
+    if (upsellNudgeDate) {
+      const since = Date.now() - new Date(upsellNudgeDate).getTime();
+      if (since < 14 * 86_400_000) return false;
+    }
+    return true;
+  }, [
+    rescueActive,
+    access.hasPremium,
+    access.status,
+    access.trialAlreadyUsed,
+    onboardedAt,
+    tasksEverCompleted,
+    upsellNudgeCount,
+    upsellNudgeDate,
+  ]);
 
   const backlogSnooze = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -2569,6 +2937,10 @@ function HomeInner() {
     const detTasks = parseSmartCapture(text, ctx);
     if (detTasks.length === 0) return false;
 
+    // Fresh capture — drop any prior LLM proposal so Accept-all can't
+    // diff this preview against a stale one.
+    llmProposalRef.current = null;
+
     // The user just said they're overwhelmed — Luna sits with them
     // (the ONE sanctioned sad pose, emotional-model spec §1).
     if (textReadsOverwhelmed(text)) {
@@ -2610,6 +2982,9 @@ function HomeInner() {
         if (llmTasks && llmTasks.length > 0) {
           updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
           const merged = smartTasksFromLlm(llmTasks, detTasks);
+          // Keep the model's first guess so Accept-all can diff the
+          // committed tasks against it and record the corrections.
+          llmProposalRef.current = merged.map((t) => ({ ...t }));
           setPreviewTasks(merged);
           logCaptureRaw(text, merged, 'llm', gate.reason);
         } else {
@@ -2821,7 +3196,25 @@ function HomeInner() {
     for (const t of previewTasks) {
       const r = commitTask(t, { silent: previewTasks.length > 1 });
       if (r.movedToISO) moved += 1;
+      // Learn from anything the user tweaked in the preview before
+      // accepting (TASK 4). Diff the committed task against the LLM's
+      // original guess (matched by raw fragment, then title). Empty
+      // deltas are skipped by the corrections store.
+      const proposed = llmProposalRef.current;
+      if (proposed) {
+        const orig =
+          proposed.find((p) => p.raw && t.raw && p.raw === t.raw) ??
+          proposed.find((p) => p.title === t.title);
+        if (orig) {
+          recordCorrection({
+            date: todayKey(),
+            raw: orig.raw ?? orig.title,
+            delta: diffSmartTaskCorrection(orig, t),
+          });
+        }
+      }
     }
+    llmProposalRef.current = null;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const n = previewTasks.length;
     showToast(
@@ -2838,6 +3231,7 @@ function HomeInner() {
   const cancelPreview = () => {
     setPreviewTasks(null);
     setEditingIdx(null);
+    llmProposalRef.current = null;
     Haptics.selectionAsync();
   };
 
@@ -2996,6 +3390,21 @@ function HomeInner() {
       raw: orig.raw ?? orig.title,
       delta,
     });
+    // The correction is recorded — advance the proposal snapshot to
+    // the edited version so the Accept-all pass diffs against what
+    // the user has ALREADY corrected. Without this, commitAll found
+    // the same delta again and double-counted every inline edit
+    // (burning 2 of the 20 correction slots per edit and double-
+    // weighting the signal the LLM mirrors).
+    if (llmProposalRef.current) {
+      const key = orig.raw ?? orig.title;
+      const pIdx = llmProposalRef.current.findIndex(
+        (p) => (p.raw ?? p.title) === key,
+      );
+      if (pIdx !== -1) {
+        llmProposalRef.current[pIdx] = { ...next };
+      }
+    }
     // Edit-rate is the quality dial for the routing gate (§2.5) —
     // only meaningful edits count (empty deltas are skipped above).
     if (Object.keys(delta).length > 0 && lastMetricIdRef.current) {
@@ -3482,6 +3891,13 @@ function HomeInner() {
           undefined,
           STICKY,
         );
+        break;
+      }
+      case 'trial-ending': {
+        // The day-6 heads-up promised "keep the extras?" — land on
+        // the purchase surface, not a bare Home (the paywall is a
+        // navigable screen per the free-first model, never a trap).
+        router.push('/paywall' as never);
         break;
       }
     }
@@ -4055,6 +4471,38 @@ function HomeInner() {
           </Text>
         </View>
 
+        {/* ── "Does today fit" (TASK 3) — quiet planned-vs-time-left
+            read. Subtle by design; only shows when today has timed
+            work and there's still day left before sleep. */}
+        {dayFit && !rescueActive && (
+          <Text style={styles.fitLine}>{dayFit.text}</Text>
+        )}
+
+        {/* ── Streak shield covered a gap (TASK 2) — registerActivity
+            spent the weekly shield on a 2+ day miss without a word;
+            say it warmly so the save is felt, never a guilt-trip.
+            Dismissible; the flag resets each new week in userStore. */}
+        {shieldUsedThisWeek && !shieldNoteDismissed && (
+          <View style={styles.shieldNote}>
+            <Text style={styles.shieldNoteGlyph}>🛡</Text>
+            <Text style={styles.shieldNoteText}>
+              your streak&apos;s safe — I covered the gap. off days happen to
+              every brain.
+            </Text>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setShieldNoteDismissed(true);
+              }}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss"
+            >
+              <Text style={styles.shieldNoteClose}>×</Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* ── "Lumi learned something about you" (retention §1a) —
             a positive pattern crossed its threshold. Persistent (not
             a vanishing toast) until tapped or dismissed; at most one
@@ -4107,6 +4555,50 @@ function HomeInner() {
             onDismiss={() => setWelcomeDismissed(true)}
           />
         )}
+
+        {/* ── Second upsell surface — a milestone-anchored, pressure-
+            free value moment for a free user who's felt the app work
+            but never met the upgrade conversation. Refuses to STACK:
+            renders only when no other banner owns this slot (notif
+            banner, shield note, learning reveal, welcome-back). Both
+            the CTA and the ✕ stamp the ask — a shown moment is spent.
+            Free is the floor; this never locks anything. */}
+        {upsellMoment &&
+          !notifBanner &&
+          !(shieldUsedThisWeek && !shieldNoteDismissed) &&
+          !learningReveal &&
+          !(awaySnap?.stage && !welcomeDismissed) && (
+            <View style={styles.upsellCard}>
+              <Text style={styles.upsellSpark}>✦</Text>
+              <Pressable
+                style={{ flex: 1, minWidth: 0 }}
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  stampUpsellNudge();
+                  router.push('/paywall' as never);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`${tasksEverCompleted} things done together. See what the extras add — 7 days free, and free stays free either way.`}
+              >
+                <Text style={styles.upsellText}>
+                  {tasksEverCompleted} things done together — the extras
+                  are here whenever you want them. 7 days free, and free
+                  is forever either way.
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  stampUpsellNudge();
+                }}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss"
+              >
+                <Text style={styles.upsellClose}>×</Text>
+              </Pressable>
+            </View>
+          )}
 
         {/* ═══ THE ONE THING ═══ */}
         {rescueActive ? (
@@ -4221,9 +4713,17 @@ function HomeInner() {
                 ) : null
               }
               descriptionSlot={
-                <HeroDescription
-                  text={
-                    hero.note ??
+                <>
+                  {/* First step rides right under the title so a stuck
+                      brain meets the small move before the description. */}
+                  <HeroFirstStep
+                    quest={hero}
+                    accentColor={accent.fg}
+                    onToast={showToast}
+                  />
+                  <HeroDescription
+                    text={
+                      hero.note ??
                     whyLine(
                       hero,
                       hero.window === cw,
@@ -4242,9 +4742,10 @@ function HomeInner() {
                         curveTrusted: digest.curve.source === 'learned',
                       },
                     )
-                  }
-                  accentColor={accent.fg}
-                />
+                    }
+                    accentColor={accent.fg}
+                  />
+                </>
               }
               metaSlot={
                 <View style={styles.heroMeta}>
@@ -4677,6 +5178,108 @@ function HomeInner() {
                 />
                 <Text style={styles.waitingFooter}>
                   tap a task to edit it — tap its tag to bring it up now
+                </Text>
+              </>
+            )}
+          </View>
+        )}
+
+        {/* ── "N tucked into someday" ────────────────────────────────
+            The visible home for tucked tasks. Every tuck flow (the
+            backlog nudge, DaySet's "let go", the 2-week stale
+            auto-tuck, capture-to-someday) parks tasks here; before
+            this card nothing rendered them — tucked meant gone.
+            Collapsed by default (calm-first, same as the pile above);
+            rows reuse WaitingRow: checkbox completes, tap edits, the
+            "someday" chip opens the move-back-to-a-day sheet, and the
+            kind tag pulls it onto today as the hero. */}
+        {somedayPile.length > 0 && !rescueActive && (
+          <View style={styles.waitingCard}>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setSomedayOpen((o) => !o);
+              }}
+              style={styles.waitingHead}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: somedayOpen }}
+            >
+              <Text style={styles.waitingSpark}>☾</Text>
+              <Text style={styles.waitingHeadTitle}>
+                {somedayPile.length} tucked into someday — waiting
+                quietly
+              </Text>
+              <View style={{ flex: 1 }} />
+              <Text style={styles.waitingChev}>
+                {somedayOpen ? '▴' : '▾'}
+              </Text>
+            </Pressable>
+            {/* Weekly resurfacing — a quiet invitation back to things
+                that have genuinely waited. Only when collapsed (open,
+                the move-back chips are already right there). Tap opens
+                the pile; ✕ just lets it rest — both spend the weekly
+                ask via stampSomedayNudge. Never auto-moves a task. */}
+            {somedayResurface && !somedayOpen && (
+              <View style={styles.somedayNudge}>
+                <Pressable
+                  style={{ flex: 1, minWidth: 0 }}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    stampSomedayNudge();
+                    setSomedayOpen(true);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Some of these have waited a while. Open the pile to give one a day."
+                >
+                  <Text style={styles.somedayNudgeText}>
+                    some of these have waited a while — want to give one
+                    a day?
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    stampSomedayNudge();
+                  }}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss"
+                >
+                  <Text style={styles.somedayNudgeClose}>×</Text>
+                </Pressable>
+              </View>
+            )}
+            {somedayOpen && (
+              <>
+                <FlatList
+                  data={somedayPile}
+                  keyExtractor={(item) => item.id}
+                  renderItem={({ item }) => (
+                    <WaitingRow
+                      q={item}
+                      timeLabel={null}
+                      hs={styles}
+                      onEdit={onRowEdit}
+                      onComplete={onRowComplete}
+                      onSurface={onRowSurface}
+                      onMoveBack={onRowMoveBack}
+                    />
+                  )}
+                  // Same virtualization contract as the waiting pile:
+                  // past ~7 rows the card caps and scrolls internally.
+                  style={somedayPile.length > 7 && { maxHeight: 430 }}
+                  scrollEnabled={somedayPile.length > 7}
+                  nestedScrollEnabled
+                  initialNumToRender={10}
+                  maxToRenderPerBatch={10}
+                  windowSize={7}
+                  removeClippedSubviews
+                  showsVerticalScrollIndicator={somedayPile.length > 7}
+                />
+                <Text style={styles.waitingFooter}>
+                  tap “someday” to give it a day — tap its tag to bring
+                  it onto today
                 </Text>
               </>
             )}
@@ -5286,6 +5889,19 @@ function HomeInner() {
           if (comment !== (editingQuest.comment ?? '')) {
             setQuestComment(editingQuest.id, comment);
           }
+          // Editing a COMMITTED quest is also a learning signal (TASK
+          // 4): a re-title on a real task teaches the model this user's
+          // wording. This sheet only edits the title (note/comment are
+          // context, not placement, and window/date aren't editable
+          // here), so title is the one field we diff. Empty deltas are
+          // skipped by the corrections store.
+          if (title.trim() && title.trim() !== editingQuest.title.trim()) {
+            recordCorrection({
+              date: todayKey(),
+              raw: editingQuest.title,
+              delta: { title: { from: editingQuest.title, to: title.trim() } },
+            });
+          }
         }}
       />
 
@@ -5622,6 +6238,102 @@ const makeStyles = (accent: Accent) =>
       paddingHorizontal: 2,
     },
 
+    // ── Streak-shield "I covered the gap" note (soft honey banner) ──
+    shieldNote: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: hexA(C.honey, 0.09),
+      borderWidth: 1,
+      borderColor: hexA(C.honey, 0.32),
+      borderRadius: 16,
+      paddingLeft: 14,
+      paddingRight: 12,
+      paddingVertical: 12,
+      marginBottom: 14,
+    },
+    shieldNoteGlyph: {
+      fontSize: 14,
+      color: C.honey,
+    },
+    shieldNoteText: {
+      flex: 1,
+      minWidth: 0,
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 14,
+      color: C.bone,
+      lineHeight: 20,
+      letterSpacing: -0.1,
+    },
+    shieldNoteClose: {
+      fontFamily: fonts.inter,
+      fontSize: 20,
+      color: C.mute,
+      paddingHorizontal: 2,
+    },
+
+    // ── Second upsell surface (soft dusk banner, pressure-free) ─────
+    upsellCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      backgroundColor: hexA(C.dusk, 0.09),
+      borderWidth: 1,
+      borderColor: hexA(C.dusk, 0.3),
+      borderRadius: 16,
+      paddingLeft: 14,
+      paddingRight: 12,
+      paddingVertical: 12,
+      marginBottom: 14,
+    },
+    upsellSpark: {
+      fontSize: 13,
+      color: C.dusk,
+    },
+    upsellText: {
+      flex: 1,
+      minWidth: 0,
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 14,
+      color: C.bone,
+      lineHeight: 20,
+      letterSpacing: -0.1,
+    },
+    upsellClose: {
+      fontFamily: fonts.inter,
+      fontSize: 20,
+      color: C.mute,
+      paddingHorizontal: 2,
+    },
+
+    // ── Someday weekly resurfacing line (inside the tucked pile) ────
+    somedayNudge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingLeft: 16,
+      paddingRight: 12,
+      paddingVertical: 12,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.hair, 0.7),
+    },
+    somedayNudgeText: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 13,
+      color: C.dusk,
+      lineHeight: 19,
+      letterSpacing: -0.1,
+    },
+    somedayNudgeClose: {
+      fontFamily: fonts.inter,
+      fontSize: 20,
+      color: C.mute,
+      paddingHorizontal: 2,
+    },
+
     // ── Header ──
     headerRow: {
       flexDirection: 'row',
@@ -5706,6 +6418,16 @@ const makeStyles = (accent: Accent) =>
       fontFamily: fonts.inter,
       fontSize: 12,
       color: C.mute,
+    },
+    // ── "Does today fit" line — deliberately quiet: mute, small, one
+    // line, sits just under the streak/done row.
+    fitLine: {
+      fontFamily: fonts.inter,
+      fontSize: 12,
+      color: C.mute,
+      letterSpacing: -0.1,
+      marginTop: -8,
+      marginBottom: 18,
     },
     xpInline: {
       fontFamily: fonts.fraunces,

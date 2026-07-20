@@ -78,6 +78,7 @@ import { useLearningDigest } from '../../lib/learning';
 import { completeQuestCore } from '../../lib/completeQuest';
 import { todayKey } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
+import { isReduceMotionEnabled } from '../../lib/useReducedMotion';
 import { useUncompleteConfirm } from '../../components/TaskDeleteWrap';
 import { FLOATING_NAV_CLEARANCE } from '../../components/LumiFloatingNav';
 import { TabErrorBoundary } from '../../components/TabErrorBoundary';
@@ -535,6 +536,10 @@ const DragChip = ({
 const NowPulse = () => {
   const t = useSharedValue(0);
   useEffect(() => {
+    // Breathing halo — decorative. Under Reduce Motion, hold the dot
+    // at a steady resting size (t=0 → the halo's static scale/opacity)
+    // instead of pulsing it forever.
+    if (isReduceMotionEnabled()) return;
     t.value = withRepeat(
       withTiming(1, { duration: 1700, easing: Easing.inOut(Easing.sin) }),
       -1,

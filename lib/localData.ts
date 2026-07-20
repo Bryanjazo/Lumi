@@ -91,6 +91,10 @@ export const resetLocalUserData = (): void => {
     activeDaysThisMonth: 0,
     focusMinutesLifetime: 0,
     deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0 },
+    // Post-wipe the slice counts from zero — the cloud copy is the
+    // only record of this device's history, so the next pull (or the
+    // sign-out force-flush) must fold it back in exactly once.
+    deviceLedgerSynced: false,
     vitalitySnapshot: null,
     tasksEverCompleted: 0,
     // Completion-history ledger — Patterns merges this into its
@@ -113,6 +117,13 @@ export const resetLocalUserData = (): void => {
     subscriptionCurrentPeriodEnd: null,
     trialStartedAt: null,
     trialChoiceSeen: false,
+    // Monetization memory is per-ACCOUNT — account B must not see A's
+    // win-back sheet or inherit A's upsell-ask budget.
+    wasEverPaid: false,
+    winBackSeen: false,
+    upsellNudgeDate: null,
+    upsellNudgeCount: 0,
+    somedayNudgeDate: null,
     activeMonthKey: null,
     isTester: false,
     shieldAvailable: true,

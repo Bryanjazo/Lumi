@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { useUserStore } from '../store/userStore';
 import { useQuestStore } from '../store/questStore';
 import { useAmbientLunaMood } from './luna-mood';
+import { todayKey } from './gamification';
 
 // ── Bridge to the iOS widget extension ──────────────────────────────
 //
@@ -77,8 +78,11 @@ export const useWidgetSync = (): void => {
   // the array and derive in render. The selector returns a new
   // array reference only when quests mutate, so this is cheap.
   const completedToday = useQuestStore((s) => {
-    const todayKey = new Date().toISOString().slice(0, 10);
-    return s.quests.filter((q) => q.date === todayKey && q.completed).length;
+    // LOCAL calendar date — quests are keyed by todayKey()/localYmd.
+    // toISOString() is the UTC date, which made the widget report 0
+    // every evening (negative offsets) / all morning (positive ones).
+    const d = todayKey();
+    return s.quests.filter((q) => q.date === d && q.completed).length;
   });
 
   // Track the last-pushed snapshot to avoid redundant reloads. iOS

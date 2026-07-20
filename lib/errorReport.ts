@@ -57,6 +57,41 @@ export const reportError = (
 };
 
 /**
+ * The day-one pager readout — the tester-only crash headline surfaced on
+ * the Me tab. Calls fatal_error_summary() (a SECURITY DEFINER RPC gated
+ * to users.is_tester; see the 20260722000002 migration) which reads the
+ * last 24h of fatal client_errors past their RLS wall. Returns null for
+ * anyone the RPC empties out (non-testers, signed-out) or on any error —
+ * like reportError, this must NEVER throw. A quiet day still returns a
+ * row (fatal_24h: 0), so null strictly means "no readout for you."
+ */
+export type FatalSummary = {
+  fatal_24h: number;
+  affected_users: number;
+  latest_message: string | null;
+  latest_at: string | null;
+};
+
+export const fetchFatalSummary = async (): Promise<FatalSummary | null> => {
+  try {
+    if (!isSupabaseConfigured) return null;
+    const { data, error } = await supabase.rpc('fatal_error_summary');
+    if (error) return null;
+    // setof → array; testers get one row, everyone else gets [].
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return null;
+    return {
+      fatal_24h: row.fatal_24h ?? 0,
+      affected_users: row.affected_users ?? 0,
+      latest_message: row.latest_message ?? null,
+      latest_at: row.latest_at ?? null,
+    };
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Install the global JS handlers once (called from _layout). Chains
  * the previous handler so RN's redbox/dev behavior is untouched.
  */

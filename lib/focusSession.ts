@@ -30,6 +30,13 @@ import {
 // simplified to a still).
 const TICK_MS = 5_000;
 
+// Hyperfocus grace window. At planned expiry we don't hard-end — we
+// open a short "+10 more?" offer in-app for someone still mid-flow.
+// If they don't answer within this window the session auto-ends on
+// its ORIGINAL planned duration (an abandoned phone still closes
+// cleanly; the grace seconds never inflate the banked minutes).
+const GRACE_MS = 60_000;
+
 export interface FocusSession {
   /** questStore id this session is tied to. */
   questId: string;
@@ -53,6 +60,11 @@ export interface FocusSession {
    *  When non-null, elapsed is computed against pausedAt instead of
    *  Date.now() so the readout stays fixed on the pause moment. */
   pausedAt: number | null;
+  /** Epoch ms when the block hit its planned end and entered the
+   *  hyperfocus grace window (the in-app "+10 more?" offer), or null
+   *  while the block is still running normally. Auto-ends ~60s after
+   *  this stamp if the user doesn't answer — see GRACE_MS / _tick. */
+  graceStartedAt: number | null;
 }
 
 /**
@@ -83,6 +95,9 @@ interface FocusSessionState {
   }) => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
+  /** Extend the block by 10 minutes from the grace offer — bumps
+   *  durationSec by 600 and drops back to running. */
+  extend: () => Promise<void>;
   end: (opts?: { reason?: 'completed' | 'cancelled' }) => Promise<void>;
   /** Clear the just-completed session — call after the user
    *  acknowledges the done screen (Mark it done or ×). */
@@ -237,6 +252,7 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
       mood,
       pauseTotalMs: 0,
       pausedAt: null,
+      graceStartedAt: null,
     };
     set({ current: session });
     persistSnapshot(session);
@@ -289,6 +305,34 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
     tickHandle = setInterval(() => {
       void get()._tick();
     }, TICK_MS);
+  },
+
+  extend: async () => {
+    const cur = get().current;
+    if (!cur) return;
+    // "+10 more" — push the finish line out by ten minutes and drop
+    // back to running. Elapsed is now < the new duration, so the tick
+    // loop (still alive from the grace window) resumes the countdown
+    // where it left off; clearing graceStartedAt closes the offer.
+    const next = {
+      ...cur,
+      durationSec: cur.durationSec + 600,
+      graceStartedAt: null,
+    };
+    set({ current: next });
+    persistSnapshot(next);
+    // Re-arm the goodbye notification for the extended tail so a
+    // locked phone learns about the NEW expiry. The Dynamic Island
+    // pill can't have its total re-pushed (updateTaskActivity only
+    // carries elapsed + mood, and Text(timerInterval:) is pinned to
+    // the original end), so for v1 the extra time lives in-app — the
+    // pill just sits at 100% until wrap-up.
+    void scheduleFocusEnd(next.durationSec - selectElapsedSeconds(next));
+    if (tickHandle == null) {
+      tickHandle = setInterval(() => {
+        void get()._tick();
+      }, TICK_MS);
+    }
   },
 
   end: async ({ reason } = {}) => {
@@ -369,11 +413,26 @@ export const useFocusSession = create<FocusSessionState>((set, get) => ({
     const cur = get().current;
     if (!cur || cur.pausedAt != null) return;
     const elapsedSec = selectElapsedSeconds(cur);
-    // Auto-end at natural completion — the Live Activity also caps
-    // its own progress visually at 100%, but we should actually
-    // .end() so the pill clears from the Island.
+    // Planned end reached. Rather than hard-ending, open the
+    // hyperfocus grace window so someone still mid-flow can grab
+    // "+10 more" instead of being yanked out of it.
     if (elapsedSec >= cur.durationSec) {
-      await get().end({ reason: 'completed' });
+      if (cur.graceStartedAt == null) {
+        // First tick past expiry — stamp the offer and wait. The
+        // Live Activity already caps its own progress at 100%, so no
+        // further elapsed push is needed while we hold for an answer.
+        const graced = { ...cur, graceStartedAt: Date.now() };
+        set({ current: graced });
+        persistSnapshot(graced);
+        return;
+      }
+      // Already offering — auto-end once the grace window lapses so an
+      // abandoned phone still closes cleanly. Banking caps at the
+      // ORIGINAL planned duration (end()'s Math.min), so the grace
+      // seconds never pad the ledger.
+      if (Date.now() - cur.graceStartedAt >= GRACE_MS) {
+        await get().end({ reason: 'completed' });
+      }
       return;
     }
     if (cur.activityId) {

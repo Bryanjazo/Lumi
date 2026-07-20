@@ -440,8 +440,8 @@ const EnergyHero = ({
       ) : (
         <Text style={styles.sketchLine}>
           {focused
-            ? 'not enough data yet — a few check-ins draw this line.'
-            : 'a first sketch — check in for a few days and this line becomes yours.'}
+            ? 'not enough data yet — finishing a few things draws this line.'
+            : 'a first sketch — finish a few things and this line becomes yours.'}
         </Text>
       )}
       {peakStart != null && !focused && (
@@ -845,11 +845,17 @@ function PatternsScreenInner() {
     digest.recurrence.length > 0 ||
     digest.avoidance != null;
 
-  // Pre-graduation: honest progress ("day X of 14"). Post-graduation:
-  // provenance — WHEN Lumi first had your rhythm (retention §1b).
+  // Pre-graduation: honest progress. The curve now graduates on
+  // completions across distinct days (≥15 over ≥5), a two-part gate —
+  // so we surface the DAYS-YOU-SHOWED-UP count as "N days in" rather
+  // than a single "day X of 14" bar that would over-promise on the
+  // count axis. Post-graduation: provenance — WHEN Lumi first had your
+  // rhythm (retention §1b).
   const learningTag = !learned
     ? curve.sampleDays > 0
-      ? `still learning · day ${Math.min(curve.sampleDays, 13)} of 14`
+      ? `still learning · ${curve.sampleDays} ${
+          curve.sampleDays === 1 ? 'day' : 'days'
+        } in`
       : 'still learning'
     : (learnedTag(learnedAt, 'curve:learned') ?? undefined);
 

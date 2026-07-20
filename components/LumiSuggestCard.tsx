@@ -299,6 +299,8 @@ export const LumiSuggestCard = ({
             onPress={() => onSkip(input)}
             hitSlop={10}
             style={styles.skipBtn}
+            accessibilityRole="button"
+            accessibilityLabel="skip to the next suggestion"
           >
             <Text style={styles.skipText}>skip</Text>
           </Pressable>
@@ -307,6 +309,8 @@ export const LumiSuggestCard = ({
           onPress={() => onDismiss(input)}
           hitSlop={10}
           style={styles.dismissBtn}
+          accessibilityRole="button"
+          accessibilityLabel="dismiss this suggestion"
         >
           <Text style={styles.dismissGlyph}>×</Text>
         </Pressable>
@@ -348,6 +352,9 @@ export const LumiSuggestCard = ({
                 Haptics.selectionAsync();
                 setDur(d.m);
               }}
+              accessibilityRole="button"
+              accessibilityLabel={`${d.label} long`}
+              accessibilityState={{ selected: on }}
               style={[
                 styles.durChip,
                 on
@@ -388,6 +395,9 @@ export const LumiSuggestCard = ({
               key={w.key}
               disabled={full}
               onPress={() => pickWindow(w.key)}
+              accessibilityRole="button"
+              accessibilityLabel={full ? `${w.label}, full` : w.label}
+              accessibilityState={{ selected: on, disabled: full }}
               style={[
                 styles.winCell,
                 on
@@ -467,6 +477,7 @@ export const LumiSuggestCard = ({
         <Switch
           value={exact}
           onValueChange={toggleExact}
+          accessibilityLabel="pin an exact time"
           trackColor={{ false: C.hair, true: C.ember }}
           thumbColor={exact ? C.void : C.mute}
         />
@@ -495,6 +506,9 @@ export const LumiSuggestCard = ({
                     Haptics.selectionAsync();
                     setTime(t);
                   }}
+                  accessibilityRole="button"
+                  accessibilityLabel={fmtTime(t)}
+                  accessibilityState={{ selected: on }}
                   style={[
                     styles.timeChip,
                     on
@@ -558,6 +572,7 @@ export const LumiSuggestCard = ({
             Haptics.selectionAsync();
             setRepeat(v);
           }}
+          accessibilityLabel="make it repeat"
           trackColor={{ false: C.hair, true: C.honey }}
           thumbColor={repeat ? C.void : C.mute}
         />
@@ -584,6 +599,9 @@ export const LumiSuggestCard = ({
                     Haptics.selectionAsync();
                     setCadence(key);
                   }}
+                  accessibilityRole="button"
+                  accessibilityLabel={label}
+                  accessibilityState={{ selected: on }}
                   style={[
                     styles.recurChip,
                     on
@@ -620,6 +638,9 @@ export const LumiSuggestCard = ({
                       Haptics.selectionAsync();
                       setRecurDay(d);
                     }}
+                    accessibilityRole="button"
+                    accessibilityLabel={d}
+                    accessibilityState={{ selected: on }}
                     style={[
                       styles.recurChip,
                       styles.recurDayChip,
@@ -652,12 +673,20 @@ export const LumiSuggestCard = ({
 
       {/* Actions */}
       <View style={styles.actions}>
-        <Pressable onPress={handleAccept} style={styles.acceptBtn}>
+        <Pressable
+          onPress={handleAccept}
+          style={styles.acceptBtn}
+          accessibilityRole="button"
+          accessibilityLabel="accept"
+          accessibilityHint={`schedules ${input.title} · ${summary}`}
+        >
           <Text style={styles.acceptText}>Accept</Text>
         </Pressable>
         <Pressable
           onPress={() => onDismiss(input)}
           style={styles.tweakBtn}
+          accessibilityRole="button"
+          accessibilityLabel="not it"
         >
           <Text style={styles.tweakText}>Not it</Text>
         </Pressable>

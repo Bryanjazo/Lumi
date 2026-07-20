@@ -55,7 +55,9 @@ import {
   selectRemainingSeconds,
   isLiveActivityAvailable,
 } from '../lib/focusSession';
+import { useQuestStore, selectTodayQuests } from '../store/questStore';
 import type { Quest } from '../store/questStore';
+import { IMPORTANCE } from '../constants/importance';
 import { isReduceMotionEnabled } from '../lib/useReducedMotion';
 
 // ── Palette ───────────────────────────────────────────────────────────
@@ -93,6 +95,22 @@ const QUICK_MINS = [15, 25, 45, 60, 90] as const;
 const MIN_MIN = 1;
 const MAX_MIN = 180;
 const clampMin = (v: number) => Math.max(MIN_MIN, Math.min(MAX_MIN, v));
+
+// Lumi's default focus length for a quest — the "how long should I
+// focus?" answer is really "how big is this?". Priority chain:
+//   1. LLM-extracted / user-set duration (respect what was said).
+//   2. Scheduled tasks with no duration → 45 (meetings/calls carry
+//      more weight).
+//   3. Otherwise by importance tier: high 60 / low 15 / medium 30.
+// Shared by the card-mode picker default AND the done-screen "next
+// up" CTA so both suggest a length that fits the task's shape.
+const defaultMinsForQuest = (q: Quest): number => {
+  if (q.durationMinutes) return q.durationMinutes;
+  if (q.scheduledHour != null) return 45;
+  if (q.importance === 'high') return 60;
+  if (q.importance === 'low') return 15;
+  return 30;
+};
 
 // ── Ring geometry ─────────────────────────────────────────────────────
 // Matches the mock: 248px canvas, 104px radius. Kept as module-level
@@ -168,8 +186,16 @@ export function LumiFocusCard({
   const start = useFocusSession((s) => s.start);
   const pause = useFocusSession((s) => s.pause);
   const resume = useFocusSession((s) => s.resume);
+  const extend = useFocusSession((s) => s.extend);
   const end = useFocusSession((s) => s.end);
   const clearLastCompleted = useFocusSession((s) => s.clearLastCompleted);
+
+  // Momentum bridge — read the quest store directly so the done
+  // screen can offer "one more block" on the next-biggest open task
+  // without Home having to plumb it through. Excludes the just-
+  // finished quest, anything completed, and the parked someday pile;
+  // ranks by importance so the biggest remaining thing surfaces.
+  const allQuests = useQuestStore((s) => s.quests);
 
   const focusAvailable = isLiveActivityAvailable();
   const isOurSession = currentFocus?.questId === quest.id;
@@ -180,6 +206,10 @@ export function LumiFocusCard({
     lastCompleted?.questId === quest.id &&
     Date.now() - lastCompleted.completedAt < 2 * 60 * 60 * 1000;
   const isPaused = currentFocus?.pausedAt != null;
+  // Grace window — the block hit its planned end and is holding the
+  // "+10 more?" offer instead of ending. Only meaningful for OUR
+  // running session.
+  const isGrace = isOurSession && currentFocus?.graceStartedAt != null;
 
   // ── Mode ──────────────────────────────────────────────────────────
   // Order matters: an active session on this quest beats a stale
@@ -204,13 +234,10 @@ export function LumiFocusCard({
   //         low    (Whim)   → 15  — quick win, low activation cost
   //      Reads as: Lumi's suggestion matches the shape of the task
   //      instead of always defaulting to a generic 25.
-  const defaultMins = useMemo(() => {
-    if (quest.durationMinutes) return quest.durationMinutes;
-    if (quest.scheduledHour != null) return 45;
-    if (quest.importance === 'high') return 60;
-    if (quest.importance === 'low') return 15;
-    return 30;
-  }, [quest.durationMinutes, quest.scheduledHour, quest.importance]);
+  const defaultMins = useMemo(
+    () => defaultMinsForQuest(quest),
+    [quest.durationMinutes, quest.scheduledHour, quest.importance],
+  );
   const [mins, setMins] = useState(defaultMins);
   const [pickerOpen, setPickerOpen] = useState(false);
   // Reset the chosen minutes when the underlying quest changes so the
@@ -331,6 +358,23 @@ export function LumiFocusCard({
     : mins;
   const doneTitle = lastCompleted?.taskTitle ?? quest.title;
 
+  // "next up" — the biggest still-open task to roll straight into
+  // from the done screen. Same filter Home's candidates use (open,
+  // non-someday, today), minus the one we just finished; ranked by
+  // importance so the heaviest thing surfaces. null → no CTA.
+  const nextUp = useMemo<Quest | null>(() => {
+    if (mode !== 'done') return null;
+    const justFinishedId = lastCompleted?.questId ?? quest.id;
+    const open = selectTodayQuests(allQuests).filter(
+      (q) =>
+        !q.completed && q.window !== 'someday' && q.id !== justFinishedId,
+    );
+    if (open.length === 0) return null;
+    return [...open].sort(
+      (a, b) => IMPORTANCE[b.importance].rank - IMPORTANCE[a.importance].rank,
+    )[0];
+  }, [mode, allQuests, lastCompleted?.questId, quest.id]);
+
   // ── Actions ──────────────────────────────────────────────────────
   const handleStart = async () => {
     Haptics.selectionAsync();
@@ -351,6 +395,29 @@ export function LumiFocusCard({
     } else {
       await pause();
     }
+  };
+
+  const handleExtend = async () => {
+    Haptics.selectionAsync();
+    await extend();
+  };
+
+  const handleNextUp = async () => {
+    if (!nextUp) return;
+    Haptics.selectionAsync();
+    // Clear the finished session's done record first so this card
+    // (still bound to the finished quest for a beat) doesn't linger on
+    // the done screen; Home re-derives its hero to the new running
+    // session's quest on the next render.
+    clearLastCompleted();
+    onFocusStart?.();
+    await start({
+      questId: nextUp.id,
+      taskTitle: nextUp.title,
+      petName,
+      durationSec: defaultMinsForQuest(nextUp) * 60,
+      mood: ambientMood,
+    });
   };
 
   const handleFinish = async () => {
@@ -549,11 +616,34 @@ export function LumiFocusCard({
           </Pressable>
           <Pressable
             onPress={handleDoneDismiss}
+            accessibilityRole="button"
+            accessibilityLabel="Not yet — dismiss"
             style={styles.doneDismiss}
             hitSlop={8}
           >
             <Text style={styles.doneDismissText}>Not yet — dismiss</Text>
           </Pressable>
+
+          {/* Momentum bridge — sits UNDER the primary actions so
+             "Mark it done" stays the focal point. Rolls the user
+             straight into a focus block on the next-biggest open
+             task; omitted entirely when nothing else qualifies. */}
+          {nextUp && (
+            <Pressable
+              onPress={handleNextUp}
+              accessibilityRole="button"
+              accessibilityLabel={`Start a focus block on ${nextUp.title}`}
+              style={({ pressed }) => [
+                styles.nextUpBtn,
+                pressed && { opacity: 0.86 },
+              ]}
+            >
+              <Text style={styles.nextUpLabel}>next up</Text>
+              <Text style={styles.nextUpText} numberOfLines={1}>
+                {nextUp.title} — one more block?
+              </Text>
+            </Pressable>
+          )}
         </View>
       </Shell>
     );
@@ -571,7 +661,11 @@ export function LumiFocusCard({
             style={[
               styles.focusDot,
               {
-                backgroundColor: isPaused ? C.mute : C.ember,
+                backgroundColor: isGrace
+                  ? C.glow
+                  : isPaused
+                    ? C.mute
+                    : C.ember,
                 shadowColor: isPaused ? 'transparent' : C.ember,
                 shadowOpacity: isPaused ? 0 : 0.7,
                 shadowRadius: isPaused ? 0 : 6,
@@ -581,14 +675,16 @@ export function LumiFocusCard({
           <Text
             style={[
               styles.focusHeaderLabel,
-              { color: isPaused ? C.mute : C.ember },
+              { color: isGrace ? C.glow : isPaused ? C.mute : C.ember },
             ]}
           >
-            {isPaused ? 'Paused' : 'In focus'}
+            {isGrace ? "Time's up" : isPaused ? 'Paused' : 'In focus'}
           </Text>
           <View style={{ flex: 1 }} />
           <Pressable
             onPress={handleCancel}
+            accessibilityRole="button"
+            accessibilityLabel="End focus session"
             style={styles.focusCloseBtn}
             hitSlop={4}
           >
@@ -607,7 +703,9 @@ export function LumiFocusCard({
               {pad(mm)}:{pad(ss)}
             </Text>
             <Text style={styles.ringSub}>
-              {elapsedMin} of {sessionMins} min
+              {/* Cap at planned — during the grace window elapsed can
+                  tick past the session length ("31 of 30 min"). */}
+              {Math.min(elapsedMin, sessionMins)} of {sessionMins} min
             </Text>
           </View>
         </View>
@@ -620,35 +718,73 @@ export function LumiFocusCard({
           </Text>
         </View>
 
-        {/* Controls */}
-        <View style={styles.focusControls}>
-          <Pressable
-            onPress={handleTogglePause}
-            style={({ pressed }) => [
-              styles.focusCtrlBtn,
-              isPaused ? styles.focusCtrlBtnFilled : styles.focusCtrlBtnOutline,
-              pressed && { opacity: 0.86 },
-            ]}
-          >
-            <Text
-              style={[
-                styles.focusCtrlBtnText,
-                { color: isPaused ? C.void : C.ember },
+        {/* Controls — the grace window (planned time's up, still in
+           it) swaps the pause/finish pair for the "+10 more" offer so
+           the choice is the only thing on screen. */}
+        {isGrace ? (
+          <View style={styles.focusControls}>
+            <Pressable
+              onPress={handleExtend}
+              accessibilityRole="button"
+              accessibilityLabel="Add 10 more minutes"
+              style={({ pressed }) => [
+                styles.focusCtrlBtn,
+                styles.focusCtrlBtnFilled,
+                pressed && { opacity: 0.86 },
               ]}
             >
-              {isPaused ? '▶ Resume' : '❚❚ Pause'}
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={handleFinish}
-            style={({ pressed }) => [
-              styles.focusFinishBtn,
-              pressed && { opacity: 0.86 },
-            ]}
-          >
-            <Text style={styles.focusFinishText}>Finish</Text>
-          </Pressable>
-        </View>
+              <Text style={[styles.focusCtrlBtnText, { color: C.void }]}>
+                +10 more — you&apos;re in it
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleFinish}
+              accessibilityRole="button"
+              accessibilityLabel="Wrap up the focus session"
+              style={({ pressed }) => [
+                styles.focusFinishBtn,
+                pressed && { opacity: 0.86 },
+              ]}
+            >
+              <Text style={styles.focusFinishText}>wrap up</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.focusControls}>
+            <Pressable
+              onPress={handleTogglePause}
+              accessibilityRole="button"
+              accessibilityLabel={isPaused ? 'Resume focus' : 'Pause focus'}
+              style={({ pressed }) => [
+                styles.focusCtrlBtn,
+                isPaused
+                  ? styles.focusCtrlBtnFilled
+                  : styles.focusCtrlBtnOutline,
+                pressed && { opacity: 0.86 },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.focusCtrlBtnText,
+                  { color: isPaused ? C.void : C.ember },
+                ]}
+              >
+                {isPaused ? '▶ Resume' : '❚❚ Pause'}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleFinish}
+              accessibilityRole="button"
+              accessibilityLabel="Finish focus session"
+              style={({ pressed }) => [
+                styles.focusFinishBtn,
+                pressed && { opacity: 0.86 },
+              ]}
+            >
+              <Text style={styles.focusFinishText}>Finish</Text>
+            </Pressable>
+          </View>
+        )}
       </Shell>
     );
   }
@@ -1285,5 +1421,33 @@ const styles = StyleSheet.create({
     fontFamily: fonts.inter,
     fontSize: 12,
     color: C.mute,
+  },
+
+  // ── Next-up momentum bridge (done mode) ──
+  nextUpBtn: {
+    width: '100%',
+    marginTop: 18,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: hexA(C.ember, 0.32),
+    backgroundColor: hexA(C.ember, 0.07),
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    gap: 3,
+  },
+  nextUpLabel: {
+    fontFamily: fonts.interSemi,
+    fontSize: 9.5,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: C.dusk,
+  },
+  nextUpText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 13.5,
+    color: C.ember,
+    letterSpacing: 0.1,
+    textAlign: 'center',
   },
 });

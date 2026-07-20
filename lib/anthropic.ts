@@ -87,6 +87,7 @@ type AiKind =
   | 'followup'
   | 'title_clean'
   | 'clarify'
+  | 'first_step'
   | 'weekly_report';
 
 interface AnthropicMessage {
@@ -170,12 +171,22 @@ const callMessages = async (params: {
       },
     ));
   } catch (e) {
+    // User-initiated cancel (Untangle "fresh start") aborts the fetch.
+    // That's not an outage — recording it tripped the 2-strike breaker
+    // and disabled ALL AI for 60s after two cancels.
+    if (params.signal?.aborted) throw e;
     // Network-level throw (fetch failed, DNS, airplane mode) — the
     // clearest outage signal there is.
     recordLlmFailure();
     throw e;
   }
   if (error) {
+    // supabase-js does NOT throw on abort — invoke resolves with a
+    // FunctionsFetchError wrapping the AbortError (no HTTP status), so
+    // without this check a cancel fell through to recordLlmFailure().
+    if (params.signal?.aborted) {
+      throw new Error('Request cancelled');
+    }
     // supabase-js wraps non-2xx HTTP responses as FunctionsHttpError.
     // 429 = quota. We do two things:
     //   1. Fire the upgrade-conversation surface (the global sheet)
@@ -282,6 +293,80 @@ export const llmClarify = async (raw: string): Promise<string | null> => {
     return out;
   } catch {
     return null; // deterministic tidy already parked a usable version
+  }
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// llmFirstStep — break the mountain into ONE small first move.
+//
+// The onboarding promise is "one small first step, never the whole
+// mountain". For a heavy hero task this asks the model for a single
+// concrete PHYSICAL action of 2-10 minutes so a paralyzed brain has a
+// doable entry point instead of the whole task staring back.
+//
+// Its own `first_step` AiKind — the proxy PINS system prompts per
+// kind server-side, so borrowing another kind's bucket (clarify is a
+// spelling-repair prompt that forbids inventing details) would make
+// the server prompt fight this request. first_step gets its own
+// server prompt + free weekly cap (migration 20260722000001 — the
+// onboarding promise is made to everyone, not just Pro). Until the
+// edge function redeploy lands, the proxy rejects the unknown kind
+// and this returns null — the chip degrades to its gentle toast.
+// The parser below stays robust to a bare line OR a JSON wrapper.
+// Returns null on any failure — callers degrade (un-split card).
+// ═════════════════════════════════════════════════════════════════════
+
+// Dig the step string back out of whatever the model returned — a bare
+// imperative line, or a JSON object (the clarify bucket's server prompt
+// may wrap it). Trims quotes/preamble, takes the first line, caps 60.
+const cleanFirstStep = (text: string): string | null => {
+  let s = text.trim();
+  const jsonMatch = s.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const obj = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const v =
+        obj.fixed ??
+        obj.step ??
+        obj.firstStep ??
+        Object.values(obj).find((x) => typeof x === 'string');
+      if (typeof v === 'string') s = v;
+    } catch {
+      // Not JSON after all — fall through and use the raw line.
+    }
+  }
+  s = s
+    .replace(/^["'\s]+|["'\s]+$/g, '')
+    .split('\n')[0]
+    .trim()
+    .slice(0, 60);
+  return s.length > 0 ? s : null;
+};
+
+export const llmFirstStep = async (
+  title: string,
+  note?: string,
+): Promise<string | null> => {
+  if (!isAnthropicConfigured) return null;
+  const t = title.trim();
+  if (!t) return null;
+  try {
+    const ctx =
+      note && note.trim() ? `\nContext: ${note.trim().slice(0, 160)}` : '';
+    const content = `Task: ${t}${ctx}`;
+    const text = await Promise.race([
+      callMessages({
+        kind: 'first_step',
+        maxTokens: 40,
+        messages: [{ role: 'user', content }],
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('first-step timeout')), 6000),
+      ),
+    ]);
+    return cleanFirstStep(text);
+  } catch {
+    return null; // callers leave the task un-split
   }
 };
 

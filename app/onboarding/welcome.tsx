@@ -36,6 +36,7 @@ import { lunaSource, useLunaSkin } from '../../lib/luna-source';
 import { useAmbientLunaMood } from '../../lib/luna-mood';
 import {
   useUserStore,
+  DEFAULT_ANCHORS,
   type StruggleKey,
   type EnergyWindowKey,
   type DailyAnchors,
@@ -50,6 +51,8 @@ import {
   type CaptureContext,
 } from '../../lib/capture';
 import { useEffectiveWindows } from '../../constants/windows';
+import { xpForQuest } from '../../lib/gamification';
+import { isReduceMotionEnabled } from '../../lib/useReducedMotion';
 import { SoftGlow } from '../../components/SoftGlow';
 import { MicIcon } from '../../components/MicIcon';
 import {
@@ -210,43 +213,17 @@ interface AnchorDef {
   key: keyof DailyAnchors;
   label: string;
   glyph: string;
-  def: number; // minutes since midnight
 }
 
+// Row label + glyph only — the prefill TIME lives in DEFAULT_ANCHORS
+// (the store's single source of truth), so the two can never drift.
 const ANCHOR_DEFS: AnchorDef[] = [
-  { key: 'wake', label: 'Wake', glyph: '☀', def: 7 * 60 },
-  { key: 'breakfast', label: 'Breakfast', glyph: '◔', def: 8 * 60 },
-  { key: 'lunch', label: 'Lunch', glyph: '◑', def: 12 * 60 + 30 },
-  { key: 'dinner', label: 'Dinner', glyph: '◕', def: 18 * 60 + 30 },
-  { key: 'sleep', label: 'Sleep', glyph: '☾', def: 22 * 60 + 30 },
+  { key: 'wake', label: 'Wake', glyph: '☀' },
+  { key: 'breakfast', label: 'Breakfast', glyph: '◔' },
+  { key: 'lunch', label: 'Lunch', glyph: '◑' },
+  { key: 'dinner', label: 'Dinner', glyph: '◕' },
+  { key: 'sleep', label: 'Sleep', glyph: '☾' },
 ];
-
-/** Per-anchor Lumi prompts surfaced when each sub-step appears. */
-const ANCHOR_PROMPTS: Record<
-  keyof DailyAnchors,
-  { title: string; sub: string }
-> = {
-  wake: {
-    title: 'When do you wake up?',
-    sub: "I'll plan around this so mornings feel like yours, not someone else's.",
-  },
-  breakfast: {
-    title: "When's breakfast?",
-    sub: 'A steady rhythm helps your brain land each day.',
-  },
-  lunch: {
-    title: "When's lunch?",
-    sub: "I'll keep your heaviest work away from this break.",
-  },
-  dinner: {
-    title: "When's dinner?",
-    sub: 'Knowing this lets me wind down your evening with you.',
-  },
-  sleep: {
-    title: 'When do you head to bed?',
-    sub: "I'll start steering you toward rest before then.",
-  },
-};
 
 /**
  * Cascading bounds — each anchor must come AFTER the one before it
@@ -434,18 +411,23 @@ const reflectionCards = (ans: Answers): ReflectionCard[] => {
 // ═════════════════════════════════════════════════════════════════════
 // Main screen
 // ═════════════════════════════════════════════════════════════════════
-// 6 steps: intro, struggles, rhythm, brain-dump, anchors, reflection.
-// The old step 6 ("OFFER" — forced single-CTA 7-day trial) was removed
-// per lumi-monetization-model-spec-2.md: the offer is now a separate
+// 7 steps: welcome, struggles, rhythm, brain-dump, anchors, reflection,
+// calendar-connect. Each answer seeds real data (see file header). The
+// anchors step is a SINGLE screen now — five tap-to-adjust rows
+// prefilled from DEFAULT_ANCHORS, NOT the old five sequential time-
+// picker sub-screens. ADHD users stall hardest on a long front-loaded
+// interview, so the heaviest stretch got flattened to one screen.
+// The old forced-trial "OFFER" step was removed per
+// lumi-monetization-model-spec-2.md: the offer is now a separate
 // optional two-button screen at /onboarding/trial-choice, shown after
 // onboarding finalizes. Free-first model means no forced trial gate.
-// 9 steps: intro, struggles, rhythm, brain-dump, anchors, reflection,
-// companion-mode, calendar-connect, widget-intro. The companion-mode
-// pick comes after the warm interview; the two "finishing touch"
-// screens at the end are skippable opt-ins for power features
-// (calendar sync, iOS home-screen widget) so the user isn't forced
-// past them but is also shown the door.
 const TOTAL_STEPS = 7;
+
+// First XP the app ever pays. Deliberately the smallest task award
+// (an easy quest) so it feels earned, never inflated — and pulled from
+// the same source completions use, so the number stays honest if the
+// economy ever re-tunes.
+const FIRST_XP = xpForQuest('easy');
 
 export default function Onboarding() {
   const router = useRouter();
@@ -460,18 +442,20 @@ export default function Onboarding() {
 
   // ── State ────────────────────────────────────────────────────────
   const [step, setStep] = useState(0);
-  // Step 4 (anchors) is split into one sub-screen per anchor so each
-  // gets its own Lumi prompt and the user only commits to one time at
-  // a time. Cascading constraints enforce the natural order (you can't
-  // eat breakfast before you wake, etc.).
+  // Step 4 (anchors) is ONE screen — five tap-to-adjust rows prefilled
+  // from DEFAULT_ANCHORS. Cascading constraints (nudgeAnchor) still
+  // enforce the natural order (you can't eat breakfast before you wake).
   const [struggles, setStruggles] = useState<StruggleKey[]>([]);
   const [rhythm, setRhythm] = useState<RhythmKey | null>(null);
   const [dump, setDump] = useState('');
-  const [anchors, setAnchors] = useState<DailyAnchors>(
-    () =>
-      Object.fromEntries(
-        ANCHOR_DEFS.map((a) => [a.key, a.def]),
-      ) as unknown as DailyAnchors,
+  const [anchors, setAnchors] = useState<DailyAnchors>(() => ({
+    ...DEFAULT_ANCHORS,
+  }));
+  // Which anchor row is expanded to its inline stepper. One at a time
+  // keeps the card quiet and the tap targets large; null = all rows
+  // collapsed, the common "looks about right, accept the defaults" path.
+  const [openAnchor, setOpenAnchor] = useState<keyof DailyAnchors | null>(
+    null,
   );
   // Companion mode is NOT chosen during onboarding — new users start in
   // Full (the cozy default) and dial it down later in Profile → "How
@@ -487,6 +471,27 @@ export default function Onboarding() {
   const [calendarErrorMsg, setCalendarErrorMsg] = useState<string | null>(
     null,
   );
+
+  // ── First-XP celebration beat ────────────────────────────────────
+  // finalize() seeds the brain-dump into real quests and pays the very
+  // first XP; this one glow-accented moment makes that visible before
+  // we route to the offer. Not a new screen — a brief overlay over the
+  // finished interview, then straight through.
+  const [celebrating, setCelebrating] = useState(false);
+  const celebrateOp = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!celebrating) return;
+    if (isReduceMotionEnabled()) {
+      celebrateOp.setValue(1); // Reduce Motion — present, no fade
+      return;
+    }
+    Animated.timing(celebrateOp, {
+      toValue: 1,
+      duration: 420,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [celebrating, celebrateOp]);
 
   // Slide transition between steps (and between anchor sub-steps).
   const slide = useRef(new Animated.Value(0)).current;
@@ -701,6 +706,18 @@ export default function Onboarding() {
   // tasks (Home's accept buttons got this latch this session; this CTA
   // was missed). One-shot guard covers both finalize entry points.
   const finalizingRef = useRef(false);
+  // The celebration-hold timer — tracked so unmount clears it. Without
+  // this, a preempted unmount left a stray router.replace firing ~1.7s
+  // later, yanking a user who'd already moved on back to trial-choice.
+  const finalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  useEffect(
+    () => () => {
+      if (finalizeTimerRef.current) clearTimeout(finalizeTimerRef.current);
+    },
+    [],
+  );
   const finalize = () => {
     if (finalizingRef.current) return;
     finalizingRef.current = true;
@@ -718,14 +735,6 @@ export default function Onboarding() {
     if (struggles.includes('meds')) {
       useUserStore.getState().setMedsNudge(true);
     }
-    completeOnboardingWith({
-      struggles,
-      sharpWindow: sharp,
-      foggyWindow: foggy,
-      wakeHour: Math.floor(anchors.wake / 60),
-      anchors,
-    });
-    if (session?.user.id) markOnboardedForUser(session.user.id);
 
     // Seed the brain-dump as real quests via the shared smart-capture
     // engine so the app isn't empty on day one. (Spec §3 + §8.4.)
@@ -771,6 +780,12 @@ export default function Onboarding() {
       console.warn('[onboarding] brain-dump seed failed', e);
     }
 
+    // Pay the first XP through the SAME store action every completion
+    // uses (addXp is what feeds levelFromXp), so the level math this
+    // seeds is identical to a normal easy-task win — no special-cased
+    // number that could drift from the economy.
+    useUserStore.getState().addXp(FIRST_XP);
+
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     // Ask for notification permission ONCE, now — the gentle nudges
     // default ON and the meds nudge was just promised, but nothing
@@ -779,11 +794,30 @@ export default function Onboarding() {
     // interactive sync turns the promise real; if the user declines,
     // the toggles honestly reflect that on next open.
     void syncNotifications({ interactive: true }).catch(() => {});
-    // Route straight to the trial-choice screen so the user doesn't
-    // flicker through /(tabs) first. The layout would catch this
-    // anyway via the !trialChoiceSeen gate; this just keeps the
-    // transition clean.
-    router.replace('/onboarding/trial-choice' as never);
+    // One celebration beat, then commit the onboarded flags and route.
+    // ORDER IS THE WHOLE FIX: the root layout's gate subscribes to
+    // onboarded/onboardedUserIds and redirects to trial-choice the
+    // instant they flip — flipping them BEFORE the hold unmounted this
+    // screen in ~one frame and the "+first XP" moment never landed.
+    // While the flags are still false the gate leaves /onboarding/
+    // welcome alone, so the celebration owns the full hold; the flags
+    // (and the navigation) land together at its end. A force-quit
+    // inside the ~1.7s re-runs this last step on next launch — rare
+    // and safe (the finalize latch resets with the process).
+    setCelebrating(true);
+    const uid = session?.user.id;
+    const hold = isReduceMotionEnabled() ? 1200 : 1700;
+    finalizeTimerRef.current = setTimeout(() => {
+      completeOnboardingWith({
+        struggles,
+        sharpWindow: sharp,
+        foggyWindow: foggy,
+        wakeHour: Math.floor(anchors.wake / 60),
+        anchors,
+      });
+      if (uid) markOnboardedForUser(uid);
+      router.replace('/onboarding/trial-choice' as never);
+    }, hold);
   };
 
   // ═════════════════════════════════════════════════════════════════
@@ -813,10 +847,10 @@ export default function Onboarding() {
             </Pressable>
             <View style={styles.progressRow}>
               {Array.from({ length: TOTAL_STEPS - 1 }).map((_, i) => {
-                // Segment i represents "user has reached step i+1".
-                // For the anchors segment (i === 3), partially fill as
-                // the user moves through the 5 sub-steps so the bar
-                // doesn't look stuck on a single segment for ages.
+                // One segment per step after welcome — segment i fills
+                // once the user has passed step i+1. Binary now the
+                // anchors step is a single screen (no sub-steps left to
+                // partially fill).
                 const fill = i < step ? 1 : 0;
                 return (
                   <View key={i} style={styles.progressSeg}>
@@ -1081,20 +1115,24 @@ export default function Onboarding() {
             </View>
           )}
 
-          {/* ── 4 · ANCHORS ── one at a time, cascading. */}
+          {/* ── 4 · ANCHORS ── one screen: five tap-to-adjust rows,
+              prefilled from DEFAULT_ANCHORS. Tapping a row opens its
+              inline stepper; the cascade-clamp in nudgeAnchor keeps
+              wake < breakfast < … < sleep no matter which row moves. */}
           {step === 4 && (
             <ScrollView
               style={{ flex: 1 }}
               contentContainerStyle={styles.stepWrap}
               showsVerticalScrollIndicator={false}
             >
-              <Says sub="Rough is fine — these anchor your mornings, meals, and wind-down. Nudge any of them.">
-                When does your day usually breathe?
+              <Says sub="your day's fixed points — Lumi plans around them. rough is fine, you can tune them in Profile.">
+                When does your day breathe?
               </Says>
               <View style={styles.anchorsOneCard}>
                 {ANCHOR_DEFS.map((def, di) => {
                   const v = anchors[def.key];
-                  const changed = v !== def.def;
+                  const changed = v !== DEFAULT_ANCHORS[def.key];
+                  const open = openAnchor === def.key;
                   const { min, max } = anchorBounds(def.key, anchors);
                   const atMin = v <= min;
                   const atMax = v >= max;
@@ -1106,54 +1144,82 @@ export default function Onboarding() {
                         di > 0 && styles.anchorOneRowBorder,
                       ]}
                     >
-                      <Text style={[styles.anchorGlyph, { color: C.honey }]}>
-                        {def.glyph}
-                      </Text>
-                      <Text style={styles.anchorOneLabel}>{def.label}</Text>
+                      {/* Header taps toggle the inline stepper. It's a
+                          separate Pressable from the − / + buttons so a
+                          nudge tap can never bubble up and close the
+                          row mid-adjust. */}
                       <Pressable
-                        onPressIn={() => !atMin && startNudge(def.key, -15)}
-                        onPressOut={stopNudge}
-                        disabled={atMin}
-                        hitSlop={6}
-                        accessibilityLabel={`${def.label} earlier`}
-                        style={[
-                          styles.anchorOneBtn,
-                          atMin && { opacity: 0.35 },
-                        ]}
+                        onPress={() => {
+                          Haptics.selectionAsync();
+                          setOpenAnchor(open ? null : def.key);
+                        }}
+                        style={styles.anchorOneHeader}
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded: open }}
+                        accessibilityLabel={`${def.label}, ${fmtTime(v)}. tap to adjust`}
                       >
-                        <Text style={styles.anchorOneBtnGlyph}>−</Text>
+                        <Text style={[styles.anchorGlyph, { color: C.honey }]}>
+                          {def.glyph}
+                        </Text>
+                        <Text style={styles.anchorOneLabel}>{def.label}</Text>
+                        {!open && (
+                          <>
+                            <Text
+                              style={[
+                                styles.anchorOneTime,
+                                { color: changed ? C.ember : C.bone },
+                              ]}
+                            >
+                              {fmtTime(v)}
+                            </Text>
+                            <Text style={styles.anchorOneCaret}>⌄</Text>
+                          </>
+                        )}
                       </Pressable>
-                      <Text
-                        style={[
-                          styles.anchorOneTime,
-                          { color: changed ? C.ember : C.bone },
-                        ]}
-                      >
-                        {fmtTime(v)}
-                      </Text>
-                      <Pressable
-                        onPressIn={() => !atMax && startNudge(def.key, 15)}
-                        onPressOut={stopNudge}
-                        disabled={atMax}
-                        hitSlop={6}
-                        accessibilityLabel={`${def.label} later`}
-                        style={[
-                          styles.anchorOneBtn,
-                          atMax && { opacity: 0.35 },
-                        ]}
-                      >
-                        <Text style={styles.anchorOneBtnGlyph}>+</Text>
-                      </Pressable>
+                      {open && (
+                        <>
+                          <Pressable
+                            onPressIn={() => !atMin && startNudge(def.key, -15)}
+                            onPressOut={stopNudge}
+                            disabled={atMin}
+                            hitSlop={6}
+                            accessibilityLabel={`${def.label} earlier`}
+                            style={[
+                              styles.anchorOneBtn,
+                              atMin && { opacity: 0.35 },
+                            ]}
+                          >
+                            <Text style={styles.anchorOneBtnGlyph}>−</Text>
+                          </Pressable>
+                          <Text
+                            style={[
+                              styles.anchorOneTime,
+                              { color: changed ? C.ember : C.bone },
+                            ]}
+                          >
+                            {fmtTime(v)}
+                          </Text>
+                          <Pressable
+                            onPressIn={() => !atMax && startNudge(def.key, 15)}
+                            onPressOut={stopNudge}
+                            disabled={atMax}
+                            hitSlop={6}
+                            accessibilityLabel={`${def.label} later`}
+                            style={[
+                              styles.anchorOneBtn,
+                              atMax && { opacity: 0.35 },
+                            ]}
+                          >
+                            <Text style={styles.anchorOneBtnGlyph}>+</Text>
+                          </Pressable>
+                        </>
+                      )}
                     </View>
                   );
                 })}
               </View>
-              <Text style={styles.anchorOneHint}>
-                each one keeps a sensible gap from its neighbors — you can
-                fine-tune any time in settings
-              </Text>
               <View style={{ marginTop: 16 }}>
-                <ContinueBtn onPress={next} label="That looks right →" />
+                <ContinueBtn onPress={next} label="Looks about right →" />
               </View>
             </ScrollView>
           )}
@@ -1326,6 +1392,33 @@ export default function Onboarding() {
           )}
 
         </Animated.View>
+
+        {/* First-XP celebration beat — glow-accented "you're seen"
+            moment (color law) laid over the finished interview while
+            we route on. pointerEvents 'auto' freezes the interview
+            underneath so nothing else is tappable mid-transition. */}
+        {celebrating && (
+          <Animated.View
+            style={[styles.celebrateOverlay, { opacity: celebrateOp }]}
+            pointerEvents="auto"
+          >
+            <View style={styles.celebrateLuna}>
+              <SoftGlow
+                color={C.glow}
+                opacity={0.24}
+                fade={0.65}
+                style={styles.celebrateGlow}
+              />
+              <Luna size={116} mood="happy" />
+            </View>
+            <Text style={styles.celebrateTitle}>
+              your chaos just became a plan.
+            </Text>
+            <Text style={styles.celebrateXp}>
+              +{FIRST_XP} xp — the first of many.
+            </Text>
+          </Animated.View>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1906,6 +1999,21 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 13,
   },
+  // Tap target for a collapsed/expanded row — takes the leftover width
+  // so the time (collapsed) or the − / + stepper (expanded) sits flush
+  // right.
+  anchorOneHeader: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  anchorOneCaret: {
+    fontFamily: fonts.inter,
+    fontSize: 15,
+    lineHeight: 18,
+    color: C.mute,
+  },
   anchorOneRowBorder: {
     borderTopWidth: 1,
     borderTopColor: '#2A2420',
@@ -2014,6 +2122,48 @@ const styles = StyleSheet.create({
     color: C.bone,
     lineHeight: 22,
     letterSpacing: -0.1,
+  },
+
+  // ── First-XP celebration beat ──
+  celebrateOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: C.void,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 34,
+  },
+  celebrateLuna: {
+    width: 150,
+    height: 150,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  // Container only — SoftGlow paints the actual fade inside.
+  celebrateGlow: {
+    position: 'absolute',
+    width: 230,
+    height: 230,
+  },
+  celebrateTitle: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 25,
+    color: C.bone,
+    letterSpacing: -0.5,
+    lineHeight: 31,
+    textAlign: 'center',
+  },
+  celebrateXp: {
+    fontFamily: fonts.interSemi,
+    fontSize: 14,
+    color: C.glow,
+    letterSpacing: 0.3,
+    marginTop: 12,
   },
 
 });

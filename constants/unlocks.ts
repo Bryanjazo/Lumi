@@ -70,3 +70,36 @@ export const UNLOCK_ORDER: UnlockCategory[] = [
 /** Count unlocks the user has earned given their lifetime XP. */
 export const countEarned = (totalXp: number): number =>
   UNLOCKS.filter((u) => totalXp >= u.xp).length;
+
+/**
+ * Honest owned-state payoff. The XP ladder is a permanent progress
+ * display, but only some earned unlocks map to something the app can
+ * actually equip or open TODAY — the rest are catalog art for pieces
+ * still in the oven. Splitting the two keeps the owned "Use it" button
+ * from promising a payoff that isn't wired up.
+ *
+ *   'active'  — the starter world / companion / coat (xp 0). It's
+ *               already live; there's nothing to switch to.
+ *   'profile' — a shipped cosmetic you set on the profile screen
+ *               (color themes live there). The button opens it.
+ *   'home'    — a shipped tool that lives on the Home tab (the focus
+ *               timer). The button takes you there.
+ *   'soon'    — earned, but the thing it names hasn't shipped: the
+ *               extra worlds + companions have no switcher yet, the
+ *               Shadow/Ember coats have no art yet, home widgets
+ *               aren't built. Labeled plainly, no button — so the
+ *               ladder never dangles a "Use it →" over nothing.
+ *
+ * NOTE (skins): the profile coat picker only carries the coats that
+ * have shipped art (cream/plum/moss/…); the catalog's Shadow + Ember
+ * calico coats aren't among them, so they read 'soon' rather than
+ * bouncing the user to a picker that can't honor the name on the card.
+ */
+export type UnlockPayoff = 'active' | 'profile' | 'home' | 'soon';
+
+export const unlockPayoff = (u: Unlock): UnlockPayoff => {
+  if (u.xp === 0) return 'active';
+  if (u.id === 'themes') return 'profile';
+  if (u.id === 'focus') return 'home';
+  return 'soon';
+};

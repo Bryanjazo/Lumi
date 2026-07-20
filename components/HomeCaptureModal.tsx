@@ -124,6 +124,8 @@ export function HomeCaptureModal({
                 onPress={handleClose}
                 style={styles.closeBtn}
                 hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel="close brain-dump"
               >
                 <Text style={styles.closeGlyph}>×</Text>
               </Pressable>
@@ -142,6 +144,8 @@ export function HomeCaptureModal({
             <View style={styles.textareaWrap}>
               <TextInput
                 autoFocus
+                accessibilityLabel="what's in your head"
+                accessibilityHint="type or dictate everything on your mind"
                 value={
                   livePartial
                     ? capText
@@ -183,6 +187,11 @@ export function HomeCaptureModal({
               <Pressable
                 onPress={handleSubmit}
                 disabled={!canSubmit}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  submitting ? 'lumi is reading' : 'make sense of it'
+                }
+                accessibilityState={{ disabled: !canSubmit, busy: !!submitting }}
                 style={[
                   styles.submitBtn,
                   canSubmit

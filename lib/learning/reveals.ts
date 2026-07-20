@@ -8,7 +8,9 @@
 // (soul rule: never guilt; §6 no slot-machine drip).
 //
 // Keys are stable so revealsStore can persist seen/learnedAt:
-//   'curve:learned'      — the energy curve graduated (≥14 real days)
+//   'curve:learned'      — the energy curve graduated (≥15 completions
+//                          across ≥5 distinct days — the new activity
+//                          signal now that check-ins are gone)
 //   'window:<key>'       — a clearly-stronger follow-through window
 //   'dow:<n>'            — a best day-of-week emerged
 //   'arc:graduated'      — the relationship arc reached "I know you"
@@ -57,9 +59,10 @@ export interface LearningReveal {
  *  per morning without drift locking them out. */
 const REVEAL_GAP_MS = 20 * 3_600_000;
 
-/** The arc tier (§1c) — driven by REAL check-in days (curve.sampleDays),
- *  never time-since-install, so a lapsed user is never falsely told
- *  Lumi knows their rhythm. */
+/** The arc tier (§1c) — driven by REAL active days (curve.sampleDays,
+ *  the distinct days you actually finished something), never
+ *  time-since-install, so a lapsed user is never falsely told Lumi
+ *  knows their rhythm. */
 export const arcTier = (digest: LearningDigest): 0 | 1 | 2 => {
   if (digest.curve.source === 'learned') return 2;
   if (digest.curve.source === 'learning') return 1;
@@ -91,7 +94,7 @@ export const crossedKeys = (
       origin: 'Lumi learned something',
       copy: "i think i've got your rhythm now — i can tell when you run strongest. want to see it?",
       copyFocused:
-        'Your energy pattern is mapped — 2 weeks of real data. See it on Patterns.',
+        'Your energy pattern is mapped — drawn from when you actually finish things. See it on Patterns.',
     });
   }
 

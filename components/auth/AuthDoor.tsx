@@ -15,7 +15,7 @@
 // router.replace('/auth/done') after sign-up, Forgot password
 // route, pretty error mapping, haptics.
 
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import Constants from 'expo-constants';
 import Svg, {
   Circle,
   Defs,
@@ -81,6 +82,41 @@ const prettySignUpError = (raw: string): string => {
   if (/email rate/i.test(raw))
     return 'Email rate limit hit. Try again in an hour, or use a + alias.';
   return raw;
+};
+
+// Supabase base URL, read the same way lib/supabase.ts does (both are
+// EXPO_PUBLIC_ so they're inlined into the client bundle). Kept local
+// rather than exported from supabase.ts so the reachability probe
+// doesn't widen that module's surface.
+const SUPABASE_URL =
+  process.env.EXPO_PUBLIC_SUPABASE_URL ??
+  ((Constants.expoConfig?.extra ?? {}) as Record<string, string | undefined>)
+    .SUPABASE_URL ??
+  '';
+
+/**
+ * One cheap round-trip to decide "is there a connection to set up an
+ * account with?" — NOT a full offline mode, just enough to make the
+ * door honest instead of silently dead. We hit Supabase's unauthed
+ * /auth/v1/health with a short timeout; ANY HTTP response (even a 4xx)
+ * proves the network completed, so only a real network failure or the
+ * abort counts as offline.
+ */
+const probeReachable = async (): Promise<boolean> => {
+  if (!SUPABASE_URL) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    await fetch(`${SUPABASE_URL}/auth/v1/health`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 const prettySignInError = (raw: string): string => {
@@ -376,6 +412,25 @@ export const AuthDoor = ({ initialMode }: Props) => {
   const [errors, setErrors] = useState<Errors>({});
   const [loading, setLoading] = useState(false);
 
+  // Offline wall — every path here (Apple, Google, email) needs one
+  // network round-trip to create/verify the account, and with no signal
+  // they all dead-end silently. Probe once on mount and let the user
+  // re-probe from the inline note so the door recovers itself the
+  // moment signal returns. Only meaningful when Supabase is configured
+  // (the dev-mode skip below already covers the unconfigured build).
+  const [offline, setOffline] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const checkReachability = useCallback(async () => {
+    setChecking(true);
+    const ok = await probeReachable();
+    setOffline(!ok);
+    setChecking(false);
+  }, []);
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    void checkReachability();
+  }, [checkReachability]);
+
   const isUp = mode === 'signup';
   const ready =
     email.trim().includes('@') &&
@@ -564,6 +619,28 @@ export const AuthDoor = ({ initialMode }: Props) => {
             <Text style={styles.title}>{title}</Text>
             <Text style={styles.subtitle}>{subtitle}</Text>
           </View>
+
+          {/* Offline note — calm, honest, self-recovering. Only shows
+              once the probe has actually failed, so online users never
+              see a flash. */}
+          {offline && (
+            <View style={styles.offlineNote}>
+              <Text style={styles.offlineText}>
+                you&apos;re offline — Lumi needs one connection to set up,
+                then works offline. try again when you&apos;ve got signal.
+              </Text>
+              <Pressable
+                onPress={checkReachability}
+                disabled={checking}
+                hitSlop={6}
+                style={styles.offlineRetry}
+              >
+                <Text style={styles.offlineRetryText}>
+                  {checking ? 'checking…' : 'Try again'}
+                </Text>
+              </Pressable>
+            </View>
+          )}
 
           {/* Social row */}
           <View style={styles.socialRow}>
@@ -833,6 +910,32 @@ const styles = StyleSheet.create({
     marginTop: 12,
     maxWidth: 290,
     textAlign: 'center',
+  },
+
+  // ── Offline note ──
+  offlineNote: {
+    marginTop: 22,
+    borderWidth: 1,
+    borderColor: TC.hair,
+    borderRadius: 14,
+    backgroundColor: TC.void2,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 8,
+  },
+  offlineText: {
+    fontFamily: fonts.inter,
+    fontSize: 13,
+    color: TC.boneDim,
+    lineHeight: 20,
+  },
+  offlineRetry: {
+    alignSelf: 'flex-start',
+  },
+  offlineRetryText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 12.5,
+    color: TC.ember,
   },
 
   // ── Social row ──

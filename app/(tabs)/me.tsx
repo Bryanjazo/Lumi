@@ -37,8 +37,10 @@ import {
   UNLOCK_CATS,
   UNLOCK_ORDER,
   countEarned,
+  unlockPayoff,
   type UnlockCategory,
 } from '../../constants/unlocks';
+import { items as roomItems } from '../../constants/items';
 import { computeVitality } from '../../lib/vitality';
 import { completedForWeek } from '../../lib/week';
 import { last7DaysEnergy, useLearningDigest } from '../../lib/learning';
@@ -51,6 +53,7 @@ import {
 } from '../../store/questStore';
 import { useCheckinStore, localYmdFromIso } from '../../store/checkinStore';
 import { useUserStore } from '../../store/userStore';
+import { usePetStore } from '../../store/petStore';
 import {
   useRoomStore,
   meterLevel,
@@ -60,6 +63,7 @@ import {
 import { todayKey, xpProgress, TITLES } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
 import { TabErrorBoundary } from '../../components/TabErrorBoundary';
+import { fetchFatalSummary, type FatalSummary } from '../../lib/errorReport';
 
 // ═════════════════════════════════════════════════════════════════════
 // Palette
@@ -1255,6 +1259,7 @@ const UnlockThumb = ({
 // UnlocksShop — category tabs + XP-gated grid
 // ═════════════════════════════════════════════════════════════════════
 const UnlocksShop = ({ totalXp }: { totalXp: number }) => {
+  const router = useRouter();
   const [cat, setCat] = useState<UnlockCategory>('world');
   const items = UNLOCKS.filter((u) => u.cat === cat);
   const earned = countEarned(totalXp);
@@ -1284,6 +1289,9 @@ const UnlocksShop = ({ totalXp }: { totalXp: number }) => {
                 Haptics.selectionAsync();
                 setCat(k);
               }}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={`${cc.label} unlocks`}
               style={[
                 styles.shopTab,
                 {
@@ -1368,24 +1376,66 @@ const UnlocksShop = ({ totalXp }: { totalXp: number }) => {
               </Text>
               <Text style={styles.unlockSub}>{u.sub}</Text>
               {owned ? (
-                <Pressable
-                  style={[
-                    styles.unlockBtn,
-                    {
-                      backgroundColor: u.xp === 0 ? 'transparent' : `${cc.color}1a`,
-                      borderColor: u.xp === 0 ? C.hair : cc.color,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.unlockBtnText,
-                      { color: u.xp === 0 ? C.mute : cc.color },
-                    ]}
-                  >
-                    {u.xp === 0 ? 'Equipped' : 'Use it →'}
-                  </Text>
-                </Pressable>
+                // Honest owned-state action. The old branch dangled a
+                // dead "Use it →" on everything owned — a button that
+                // equipped nothing. Now: starter defaults read
+                // "Equipped"; the two earned pieces that map to a real,
+                // shipped surface (color themes → profile, focus timer
+                // → Home) get a live button that takes you there; and
+                // everything else earned-but-unshipped (extra worlds /
+                // companions / coats / widgets) says so plainly instead
+                // of promising a payoff that isn't built yet.
+                (() => {
+                  const payoff = unlockPayoff(u);
+                  if (payoff === 'active') {
+                    return (
+                      <View
+                        style={[
+                          styles.unlockBtn,
+                          { backgroundColor: 'transparent', borderColor: C.hair },
+                        ]}
+                      >
+                        <Text style={[styles.unlockBtnText, { color: C.mute }]}>
+                          Equipped
+                        </Text>
+                      </View>
+                    );
+                  }
+                  if (payoff === 'profile' || payoff === 'home') {
+                    const dest = payoff === 'profile' ? '/profile' : '/(tabs)';
+                    const cta = payoff === 'profile' ? 'Open in profile →' : 'Open on Home →';
+                    const a11y =
+                      payoff === 'profile'
+                        ? `${u.name} — open profile to set it`
+                        : `${u.name} — open your Home screen to use it`;
+                    return (
+                      <Pressable
+                        onPress={() => {
+                          Haptics.selectionAsync();
+                          router.push(dest);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={a11y}
+                        style={[
+                          styles.unlockBtn,
+                          { backgroundColor: `${cc.color}1a`, borderColor: cc.color },
+                        ]}
+                      >
+                        <Text style={[styles.unlockBtnText, { color: cc.color }]}>
+                          {cta}
+                        </Text>
+                      </Pressable>
+                    );
+                  }
+                  // 'soon' — earned, but not equippable anywhere yet.
+                  return (
+                    <View style={styles.unlockSoon}>
+                      <Text style={styles.unlockSoonText}>
+                        yours — arriving in an update
+                      </Text>
+                    </View>
+                  );
+                })()
               ) : (
                 <View>
                   <View style={styles.lockProgressTrack}>
@@ -1589,6 +1639,26 @@ function MeTabInner() {
       return () => setMeFocused(false);
     }, []),
   );
+
+  // Crash pager — tester-only. Bryan opens his TestFlight build daily;
+  // this surfaces the last 24h of fatal crashes where a human actually
+  // looks (see lib/errorReport.fetchFatalSummary + the fatal_error_summary
+  // RPC). One fetch per focus, no polling loop — the RPC returns null for
+  // non-testers, so the row simply never renders for real users.
+  const isTester = useUserStore((s) => s.isTester);
+  const [fatalSummary, setFatalSummary] = useState<FatalSummary | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTester) return;
+      let alive = true;
+      void fetchFatalSummary().then((s) => {
+        if (alive) setFatalSummary(s);
+      });
+      return () => {
+        alive = false;
+      };
+    }, [isTester]),
+  );
   const focusMinutesLifetime = useUserStore((s) => s.focusMinutesLifetime);
   const tasksEverCompleted = useUserStore((s) => s.tasksEverCompleted);
 
@@ -1769,6 +1839,68 @@ function MeTabInner() {
     Haptics.selectionAsync();
     toggleLamp();
     showCareToast(lampOn ? 'Lamp off.' : 'Lamp on — a warm glow. 💡');
+  };
+
+  // ── Explore loop — send Lumi out; she comes back with something ──
+  // The petStore ships startAdventure/collectAdventure (a 2h timer +
+  // an item reward, already synced) but nothing ever called them. This
+  // card is the caller. Three states, driven off the persisted
+  // adventure record: idle → out (timer running) → back (timer done,
+  // waiting to collect). Because endsAt is persisted and we compare it
+  // to Date.now() on every render, closing the app mid-trip and
+  // reopening it hours later lands straight in the right state — no
+  // wall-clock bookkeeping needed here.
+  const adventure = usePetStore((s) => s.adventure);
+  const startAdventure = usePetStore((s) => s.startAdventure);
+  const collectAdventure = usePetStore((s) => s.collectAdventure);
+  // Just-collected reward name — a soft "she found …" line that lingers
+  // over the idle card until the next send.
+  const [adventureFind, setAdventureFind] = useState<string | null>(null);
+  // A slow tick so the "out → back" flip + the countdown update while
+  // the tab is open. 30s is plenty for a minute-granularity label and
+  // stays cheap next to the room's animation loop. Only runs while a
+  // trip is actually in flight and the tab is focused.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!meFocused || !adventure) return;
+    setNowTick(Date.now());
+    const id = setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [meFocused, adventure]);
+  const adventureEndsAt = adventure
+    ? new Date(adventure.endsAt).getTime()
+    : 0;
+  const adventureOut = adventure != null && adventureEndsAt > nowTick;
+  const adventureBack = adventure != null && adventureEndsAt <= nowTick;
+  // "1h 47m" / "12m" left. Coarse on purpose — the point is patience,
+  // not a stopwatch.
+  const adventureLeft = useMemo(() => {
+    const ms = Math.max(0, adventureEndsAt - nowTick);
+    const mins = Math.ceil(ms / 60_000);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }, [adventureEndsAt, nowTick]);
+
+  const sendExploring = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setAdventureFind(null);
+    startAdventure();
+    showCareToast(`${petName} slips out to explore… back in a bit. 🐾`);
+  };
+  const collectExploring = () => {
+    const done = collectAdventure();
+    if (!done) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const name = done.foundItemId
+      ? roomItems.find((i) => i.id === done.foundItemId)?.name ??
+        'a little something'
+      : 'a little something';
+    setAdventureFind(name);
+    showCareToast(`${petName} brought home ${name}. ✦`);
+    AccessibilityInfo.announceForAccessibility(
+      `${petName} is back and found ${name}.`,
+    );
   };
 
   // ── Welcome-back re-bloom (retention §5) — returning to the room
@@ -2048,6 +2180,77 @@ function MeTabInner() {
           )}
         </View>
 
+        {/* ═══ Send Lumi exploring — the 2h bring-something-back loop ═══
+            Playful reward chrome, so it rides the same gate as cheer
+            (Full mode only). Three states: idle / out / back. */}
+        {companion.showCheer && (
+          <View style={styles.exploreBlock}>
+            <View style={styles.exploreCard}>
+              {adventureOut ? (
+                <>
+                  <Text style={styles.exploreEyebrow}>OUT EXPLORING</Text>
+                  <Text
+                    style={styles.exploreTitle}
+                    accessibilityLabel={`${petName} is out exploring — back in about ${adventureLeft}`}
+                  >
+                    {petName} is out exploring…
+                  </Text>
+                  <Text style={styles.exploreSub}>
+                    back in about {adventureLeft} — she&apos;ll bring
+                    something home.
+                  </Text>
+                </>
+              ) : adventureBack ? (
+                <>
+                  <Text style={[styles.exploreEyebrow, { color: C.glow }]}>
+                    SHE&apos;S BACK
+                  </Text>
+                  <Text style={styles.exploreTitle}>
+                    she&apos;s back — and she found something ✦
+                  </Text>
+                  <Pressable
+                    onPress={collectExploring}
+                    accessibilityRole="button"
+                    accessibilityLabel={`See what ${petName} brought home`}
+                    style={styles.exploreBtn}
+                  >
+                    <Text style={styles.exploreBtnText}>
+                      see what she found →
+                    </Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.exploreEyebrow}>EXPLORE</Text>
+                  {adventureFind ? (
+                    <Text style={styles.exploreFound}>
+                      she brought home {adventureFind} — tucked into your
+                      room. ✦
+                    </Text>
+                  ) : null}
+                  <Text style={styles.exploreTitle}>
+                    send {petName} exploring
+                  </Text>
+                  <Text style={styles.exploreSub}>
+                    she&apos;ll wander off and bring something back (about
+                    2h).
+                  </Text>
+                  <Pressable
+                    onPress={sendExploring}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Send ${petName} exploring — she brings something back in about two hours`}
+                    style={styles.exploreBtn}
+                  >
+                    <Text style={styles.exploreBtnText}>
+                      send her exploring →
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          </View>
+        )}
+
         {/* ═══ Your road — rank as a walked path ═══ */}
         {companion.showXp && (
           <View style={styles.roadBlock}>
@@ -2183,6 +2386,67 @@ function MeTabInner() {
                 router.push('/profile');
               }}
             />
+
+            {/* Crash pager — tester-only, tucked at the bottom of the
+                admin card. A quiet "is anything on fire?" readout so
+                Bryan's daily TestFlight open surfaces real-world fatals
+                without opening the SQL editor. Muted when quiet, warm
+                warning when not. (fetchFatalSummary → fatal_error_summary
+                RPC; only ever populated for is_tester accounts.) */}
+            {isTester && fatalSummary && (
+              <View style={hubRowStyles.row}>
+                <View
+                  style={hubRowStyles.head}
+                  accessibilityRole="text"
+                  accessibilityLabel={
+                    fatalSummary.fatal_24h > 0
+                      ? `crash pager: ${fatalSummary.fatal_24h} fatal crashes in the last 24 hours across ${fatalSummary.affected_users} users${
+                          fatalSummary.latest_message
+                            ? `. latest: ${fatalSummary.latest_message}`
+                            : ''
+                        }`
+                      : 'crash pager: no fatal crashes in the last 24 hours — quiet'
+                  }
+                >
+                  <Text
+                    style={[
+                      hubRowStyles.glyph,
+                      { color: fatalSummary.fatal_24h > 0 ? C.ember : C.mute },
+                    ]}
+                  >
+                    {fatalSummary.fatal_24h > 0 ? '△' : '◦'}
+                  </Text>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text
+                      style={[
+                        hubRowStyles.label,
+                        fatalSummary.fatal_24h === 0 && { color: C.mute },
+                      ]}
+                    >
+                      crashes · last 24h:{' '}
+                      {fatalSummary.fatal_24h > 0 ? (
+                        <Text
+                          style={{
+                            color: C.ember,
+                            fontFamily: fonts.interSemi,
+                          }}
+                        >
+                          {fatalSummary.fatal_24h}
+                        </Text>
+                      ) : (
+                        '0 — quiet'
+                      )}
+                    </Text>
+                    {fatalSummary.fatal_24h > 0 &&
+                      fatalSummary.latest_message && (
+                        <Text style={hubRowStyles.sub} numberOfLines={1}>
+                          {fatalSummary.latest_message}
+                        </Text>
+                      )}
+                  </View>
+                </View>
+              </View>
+            )}
           </View>
 
           <Text style={styles.cornerFooter}>
@@ -2372,6 +2636,64 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
     backgroundColor: hexA(C.bone, 0.03),
     borderWidth: 1,
     borderColor: hexA(C.hair, 0.9),
+  },
+  // ── Explore card — matches roadCard's footprint, warm honey tint. ──
+  exploreBlock: {
+    paddingHorizontal: 24,
+    marginTop: 18,
+  },
+  exploreCard: {
+    paddingHorizontal: 17,
+    paddingVertical: 16,
+    borderRadius: 18,
+    backgroundColor: hexA(C.honey, 0.06),
+    borderWidth: 1,
+    borderColor: hexA(C.honey, 0.24),
+  },
+  exploreEyebrow: {
+    fontFamily: fonts.interSemi,
+    fontSize: 10,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: C.honey,
+    marginBottom: 8,
+  },
+  exploreTitle: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 17,
+    color: C.bone,
+    letterSpacing: -0.3,
+    lineHeight: 23,
+  },
+  exploreSub: {
+    fontFamily: fonts.inter,
+    fontSize: 12,
+    color: C.mute,
+    lineHeight: 18,
+    marginTop: 5,
+  },
+  exploreFound: {
+    fontFamily: fonts.fraunces,
+    fontStyle: 'italic',
+    fontSize: 12.5,
+    color: C.glow,
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  exploreBtn: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderRadius: 10,
+    borderColor: C.honey,
+    backgroundColor: hexA(C.honey, 0.1),
+    paddingVertical: 9,
+    alignItems: 'center',
+  },
+  exploreBtnText: {
+    fontFamily: fonts.interSemi,
+    fontSize: 12.5,
+    color: C.honey,
   },
   storyBlock: {
     paddingHorizontal: 24,
@@ -2748,6 +3070,18 @@ const makeStyles = (accent: Accent) => StyleSheet.create({
   unlockBtnText: {
     fontFamily: fonts.interSemi,
     fontSize: 11.5,
+  },
+  // Earned-but-unshipped: a plain honest label, not a button. Matches
+  // the unlockBtn footprint so the grid rows stay aligned.
+  unlockSoon: {
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  unlockSoonText: {
+    fontFamily: fonts.inter,
+    fontSize: 11,
+    color: C.mute,
+    fontStyle: 'italic',
   },
   lockProgressTrack: {
     height: 5,

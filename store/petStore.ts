@@ -95,8 +95,15 @@ export const usePetStore = create<PetState>()(
       startAdventure: () => {
         const now = new Date();
         const ends = new Date(now.getTime() + 1000 * 60 * 60 * 2);
-        const found =
-          ADVENTURE_FINDS[Math.floor(Math.random() * ADVENTURE_FINDS.length)];
+        // Prefer finds the user does NOT own yet — 4 of the 6 pool
+        // items ship default-owned, so a blind pick delivered nothing
+        // ~two-thirds of the time while the UI celebrated a "find".
+        // Once the pool is exhausted, any item is fine: the collect
+        // moment is the payoff and re-finding a favorite is on-theme.
+        const owned = get().ownedItems;
+        const fresh = ADVENTURE_FINDS.filter((f) => !owned.includes(f));
+        const pool = fresh.length > 0 ? fresh : ADVENTURE_FINDS;
+        const found = pool[Math.floor(Math.random() * pool.length)];
         const a: Adventure = {
           id: newId(),
           startedAt: now.toISOString(),

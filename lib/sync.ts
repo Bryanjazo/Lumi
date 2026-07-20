@@ -162,23 +162,30 @@ const pushUser = async (userId: string, forceLedgers = false) => {
       // delta since the last wipe. A plain push would overwrite the
       // cumulative cloud slice with a near-empty one.
       if (!forceLedgers || sliceEmpty) return;
-      // Forced sign-out flush after a failed pull: fold the cloud
-      // copy of MY slice in (local counted from zero, so sum = the
-      // true cumulative). Read fails → skip rather than risk loss.
-      const deviceIdF = await getDeviceId();
-      const { data: cur, error: readErr } = await supabase
-        .from('users')
-        .select('ledgers')
-        .eq('id', userId)
-        .maybeSingle();
-      if (readErr) {
-        console.warn('[sync] ledger read (skip force)', readErr.message);
-        return;
+      // Forced sign-out flush after a failed pull. Fold the cloud
+      // copy of MY slice in ONLY when local counted from zero since
+      // a wipe (deviceLedgerSynced=false) — then sum = the true
+      // cumulative. When a PRIOR session already adopted the cloud
+      // slice (synced=true, e.g. force-quit then a failed-pull
+      // session), local IS the cumulative superset and folding the
+      // cloud copy in again double-counted lifetime totals for good.
+      // Read fails → skip rather than risk loss.
+      if (!s.deviceLedgerSynced) {
+        const deviceIdF = await getDeviceId();
+        const { data: cur, error: readErr } = await supabase
+          .from('users')
+          .select('ledgers')
+          .eq('id', userId)
+          .maybeSingle();
+        if (readErr) {
+          console.warn('[sync] ledger read (skip force)', readErr.message);
+          return;
+        }
+        const mine = (cur?.ledgers as Record<string, LedgerSlice> | null)?.[
+          deviceIdF
+        ];
+        if (mine) slice = addSlices(normalizeSlice(mine), slice);
       }
-      const mine = (cur?.ledgers as Record<string, LedgerSlice> | null)?.[
-        deviceIdF
-      ];
-      if (mine) slice = addSlices(normalizeSlice(mine), slice);
     }
     if (
       slice.tasksEver === 0 &&
@@ -442,7 +449,15 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       mySlice.focusMin === 0 &&
       Object.keys(mySlice.doneLog).length === 0;
     const myCloud = cloudLedgers[deviceId];
-    if (myLocalEmpty && myCloud) mySlice = normalizeSlice(myCloud);
+    // Adopt/fold the cloud copy when local doesn't contain it yet:
+    // empty local (re-sign-in) OR a post-wipe delta that started
+    // counting before this first successful pull (synced=false —
+    // summing the two = the true cumulative; plain local-wins here
+    // dropped the pre-wipe history). Once synced, local is the
+    // superset and wins untouched.
+    if ((myLocalEmpty || !localState.deviceLedgerSynced) && myCloud) {
+      mySlice = addSlices(normalizeSlice(myCloud), mySlice);
+    }
     const allSlices: ReturnType<typeof normalizeSlice>[] = [mySlice];
     for (const [dev, sl] of Object.entries(cloudLedgers)) {
       if (dev === deviceId) continue;
@@ -611,9 +626,23 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       focusMinutesLifetime: Math.max(0, ledgerFocusMin),
       doneLog: ledgerDone,
       deviceLedger: mySlice,
+      // The cloud slice is folded in (or local already superseded
+      // it) — from here on local is the cumulative record and no
+      // later flush may fold the cloud copy in again.
+      deviceLedgerSynced: true,
       subscriptionStatus: nextSubStatus,
       subscriptionTier: nextSubTier,
       subscriptionCurrentPeriodEnd: nextSubEnd,
+      // Trial clock — adopt the server's start stamp when local has
+      // none (reinstall / second device). Without this, the status
+      // above became 'trial' but trialStartedAt stayed null, so
+      // useAccessStatus computed inTrial=false and the account's live
+      // trial "evaporated" on that device with no way to re-arm
+      // (startTrial refuses on a non-'free' status). Local wins when
+      // present: it's also the consumed-trial fingerprint.
+      trialStartedAt:
+        localState.trialStartedAt ??
+        ((userRow.trial_started_at as string | null) ?? null),
     });
 
     // Mint the PER-USER onboarding receipt from the server signal.

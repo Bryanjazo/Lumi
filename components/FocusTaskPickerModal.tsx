@@ -142,7 +142,12 @@ export function FocusTaskPickerModal({
       statusBarTranslucent
     >
       <View style={styles.scrim}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close focus picker"
+        />
         <SafeAreaView edges={['bottom']} style={styles.sheetWrap}>
           <View style={styles.handle} />
 
@@ -153,7 +158,13 @@ export function FocusTaskPickerModal({
               {activeQuest ? 'In focus' : 'Focus on'}
             </Text>
             <View style={{ flex: 1 }} />
-            <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={6}>
+            <Pressable
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              style={styles.closeBtn}
+              hitSlop={6}
+            >
               <Text style={styles.closeGlyph}>×</Text>
             </Pressable>
           </View>
@@ -238,6 +249,8 @@ function PickerRow({
   return (
     <Pressable
       onPress={onPick}
+      accessibilityRole="button"
+      accessibilityLabel={`Focus on ${quest.title}, ${defaultMins} minutes`}
       style={({ pressed }) => [
         styles.row,
         pressed && { backgroundColor: hexA(C.bone, 0.04) },

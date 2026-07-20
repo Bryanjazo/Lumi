@@ -24,6 +24,7 @@ import {
 
 import { timeColors as C } from '../constants/colors';
 import { fonts } from '../constants/fonts';
+import { isReduceMotionEnabled } from '../lib/useReducedMotion';
 import { lunaSource, useLunaSkin } from '../lib/luna-source';
 import { classifyKind } from '../constants/taskKinds';
 import { WINDOWS } from '../constants/windows';
@@ -66,6 +67,12 @@ const Waveform = ({ active }: { active: boolean }) => {
   ).current;
   useEffect(() => {
     if (!active) return;
+    if (isReduceMotionEnabled()) {
+      // Reduce Motion — freeze a steady, present waveform (no dancing
+      // bars), rather than leaving them collapsed or animating.
+      bars.forEach((v) => v.setValue(0.6));
+      return;
+    }
     const loops = bars.map((v, i) =>
       Animated.loop(
         Animated.sequence([
@@ -106,6 +113,7 @@ const Waveform = ({ active }: { active: boolean }) => {
 const Caret = () => {
   const op = useRef(new Animated.Value(1)).current;
   useEffect(() => {
+    if (isReduceMotionEnabled()) return; // blink loop — Reduce Motion leaves the caret solid
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(op, { toValue: 0, duration: 60, delay: 480, useNativeDriver: true }),
@@ -138,6 +146,12 @@ export const HeyLumiSheet = ({
 
   useEffect(() => {
     if (!glowOn) return;
+    if (isReduceMotionEnabled()) {
+      // Reduce Motion — hold a steady ember edge glow instead of
+      // breathing it in and out.
+      glow.setValue(0.6);
+      return;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(glow, {

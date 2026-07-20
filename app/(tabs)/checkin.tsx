@@ -31,6 +31,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Platform,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -437,6 +438,149 @@ const talkToLumi = (text: string, active: Quest[]): TalkResult => {
 };
 
 // ═════════════════════════════════════════════════════════════════════
+// Crisis safety net — deterministic keyword check
+//
+// Untangle invites venting; a distressed user may disclose self-harm
+// or suicidal ideation into a box built for tasks. There's no server
+// round-trip we can trust to catch this (offline, quota-capped, or a
+// model that mis-reads the moment), so this is a first-line, purely
+// local check that surfaces real crisis resources no matter what.
+//
+// The bar for a match is INTENT-SHAPED and FIRST-PERSON — "kill
+// myself", not "this deadline is killing me"; "want to die", not "I'd
+// die for a coffee". Task-language hyperbole ("this is killing me",
+// "I'm dead tired", "dying to finish") must NOT trip it: a false
+// positive that implies "we think you're suicidal" is its own harm.
+// So every pattern binds the lethality to the SELF (myself / my life /
+// I want to…) — hyperbole aimed at a task or object never matches.
+// ═════════════════════════════════════════════════════════════════════
+const CRISIS_PATTERNS: RegExp[] = [
+  // Self-directed lethality — the verb is bound to "myself" / "my
+  // life", so "this is killing me" (object = me, but not first-person
+  // intent) and "killing it at work" never match.
+  /\bkill(?:ing)?\s+my\s?self\b/,
+  /\b(?:off|offing)\s+my\s?self\b/,
+  /\b(?:hurt|hurting|harm|harming|cut|cutting)\s+my\s?self\b/,
+  /\bself[\s-]?harm/,
+  /\bsuicid/, // suicidal / suicide / "feeling suicide-y"
+  // Ending one's life — require the life/it-all framing or an intent
+  // verb in front of a bare "end it", so "end it with my landlord"
+  // and "let's end it here" don't trip.
+  /\bend(?:ing)?\s+(?:my|my\s+own)\s+life\b/,
+  /\bend\s+it\s+all\b/,
+  /\b(?:want|wanna|wanting|gonna|going|need|have)\s+to\s+end\s+it\b/,
+  /\b(?:take|taking|end|ending)\s+my\s+own\s+life\b/,
+  // Wanting to die / be gone — first-person desire, not "dying to
+  // see it" or "I'm dead tired".
+  /\b(?:want|wanna|wanting)\s+to\s+die\b/,
+  /\bwant\s+to\s+be\s+dead\b/,
+  /\b(?:don'?t|do\s+not|dont)\s+want\s+to\s+(?:be\s+(?:here|alive)|live|wake\s+up)\b/,
+  /\b(?:wish|wishing)\s+i\s+(?:was|were|wasn'?t|weren'?t)\s+(?:dead|here|alive)\b/,
+  /\b(?:want|wanna|wanting)\s+to\s+disappear\b/,
+  // "Better off without me" / "better off dead" — the classic
+  // burden-belief phrasing.
+  /\bbetter\s+off\s+(?:without\s+me\b|dead\b|if\s+i\s+(?:was|were|wasn'?t|weren'?t))/,
+  // Nothing/no reason left — bound to living, so "no point in this
+  // meeting" doesn't match.
+  /\bno\s+(?:reason|point)\s+(?:to|in)\s+(?:live|living|be\s+here|going\s+on)\b/,
+  /\bnothing\s+(?:left\s+)?to\s+live\s+for\b/,
+  /\bcan'?t\s+(?:go\s+on|keep\s+going|do\s+this)\s+(?:anymore|any\s+longer)\b/,
+];
+
+/** True when the user's text carries a first-person self-harm or
+ *  suicidal-intent signal. Deliberately conservative: it would rather
+ *  miss an oblique phrasing (the model's warmth + prompt guardrail is
+ *  the second layer) than falsely flag a stressed-about-tasks vent. */
+const detectCrisis = (text: string): boolean => {
+  const lc = text.toLowerCase();
+  return CRISIS_PATTERNS.some((re) => re.test(lc));
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// CrisisResourceCard — the calm, non-judgmental safety surface.
+//
+// Renders ABOVE Lumi's reply the moment a vent trips the keyword net,
+// regardless of what the model says back. It never blocks the user's
+// words, never shames, and is dismissible; a fresh match re-inserts a
+// new one. Dusk-toned (Lumi's color) so it reads as Lumi caring, not a
+// cold system interrupt. Each row deep-links to a real line.
+// ═════════════════════════════════════════════════════════════════════
+const CrisisResourceCard = ({ onDismiss }: { onDismiss: () => void }) => {
+  const openLink = (url: string) => {
+    Haptics.selectionAsync();
+    // Swallow failures silently — a device with no dialer/SMS must not
+    // throw a red screen at someone in this exact moment.
+    Linking.openURL(url).catch(() => {});
+  };
+  return (
+    <View style={styles.crisisCard}>
+      <Text style={styles.crisisLead}>
+        that sounds heavier than tasks. you deserve real support — people
+        are there right now:
+      </Text>
+      <Pressable
+        onPress={onDismiss}
+        hitSlop={10}
+        accessibilityRole="button"
+        accessibilityLabel="Hide these resources"
+        style={styles.crisisDismiss}
+      >
+        <Text style={styles.crisisDismissGlyph}>×</Text>
+      </Pressable>
+      <View style={styles.crisisRows}>
+        <Pressable
+          onPress={() => openLink('tel:988')}
+          accessibilityRole="button"
+          accessibilityLabel="Call 988, the Suicide and Crisis Lifeline"
+          style={styles.crisisRow}
+        >
+          <View style={styles.crisisRowBody}>
+            <Text style={styles.crisisRowLabel}>988 Suicide &amp; Crisis Lifeline</Text>
+            {/* This row DIALS — the texting option is the Crisis
+                Text Line row below. Saying "call or text" on a tap
+                that only calls dropped a texter into the dialer
+                mid-crisis. */}
+            <Text style={styles.crisisRowSub}>tap to call 988 · US</Text>
+          </View>
+          <Text style={styles.crisisRowGlyph}>›</Text>
+        </Pressable>
+        <Pressable
+          // iOS wants sms:NUMBER&body=…; Android uses ?body=…
+          onPress={() =>
+            openLink(
+              Platform.OS === 'ios'
+                ? 'sms:741741&body=HOME'
+                : 'sms:741741?body=HOME',
+            )
+          }
+          accessibilityRole="button"
+          accessibilityLabel="Text HOME to 741741, the Crisis Text Line"
+          style={styles.crisisRow}
+        >
+          <View style={styles.crisisRowBody}>
+            <Text style={styles.crisisRowLabel}>Crisis Text Line</Text>
+            <Text style={styles.crisisRowSub}>text HOME to 741741</Text>
+          </View>
+          <Text style={styles.crisisRowGlyph}>›</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => openLink('https://findahelpline.com')}
+          accessibilityRole="button"
+          accessibilityLabel="Find a helpline outside the US at findahelpline.com"
+          style={styles.crisisRow}
+        >
+          <View style={styles.crisisRowBody}>
+            <Text style={styles.crisisRowLabel}>outside the US</Text>
+            <Text style={styles.crisisRowSub}>findahelpline.com</Text>
+          </View>
+          <Text style={styles.crisisRowGlyph}>›</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════
 // TaskChip — one row in the pile
 // ═════════════════════════════════════════════════════════════════════
 const TaskChip = ({
@@ -561,6 +705,13 @@ interface ChatMsg {
   /** Quiet trailing line ("I'd also …") — proactive suggestion
    *  from the model. Rendered in dusk italic under the bubble. */
   proactive?: string;
+  /** Crisis safety card marker. When set, this "message" renders as
+   *  the CrisisResourceCard (988 / Crisis Text Line / findahelpline)
+   *  instead of a chat bubble — inserted synchronously the instant a
+   *  vent trips the keyword net, so it sits ABOVE the model's reply
+   *  (which appends after it) and survives regardless of that reply.
+   *  Dismissing removes the message; a new match inserts a fresh one. */
+  crisis?: boolean;
 }
 
 // Render a single LLM-proposed action in plain language.
@@ -1715,6 +1866,12 @@ function UntangleInner() {
     }, 650);
   };
 
+  // Dismiss a crisis resource card. Removes just that message — the
+  // conversation (and Lumi's reply below it) stays intact. A later
+  // matching vent inserts a fresh card.
+  const dismissCrisis = (id: string) =>
+    setMsgs((m) => m.filter((x) => x.id !== id));
+
   // ── One-tap move ──
   const doMove = (key: MoveDef['key']) => {
     if (activeForMove.length === 0) {
@@ -1879,6 +2036,21 @@ function UntangleInner() {
       [...m, { id: userMsgId, from: 'user' as const, text: t }].slice(-100),
     );
     setText('');
+    // ── Deterministic safety net ──────────────────────────────────
+    // Run BEFORE any pile/LLM logic and on EVERY path (offline, empty
+    // pile, quota-capped): if the vent trips the first-person crisis
+    // check, surface the resource card immediately. Inserted right
+    // after the user's message so any model reply appends BELOW it —
+    // the card is always above the reply and never blocks their words.
+    if (detectCrisis(t)) {
+      const crisisId = `crisis-${Date.now()}-${++msgSeqRef.current}`;
+      setMsgs((m) =>
+        [
+          ...m,
+          { id: crisisId, from: 'lumi' as const, text: '', crisis: true },
+        ].slice(-100),
+      );
+    }
     if (active.length === 0) {
       // Day-1 first-conversation state. A vent must be MET, not
       // answered with capture instructions; and when the LLM is
@@ -2299,15 +2471,22 @@ function UntangleInner() {
            * thread change, not on every keystroke.
            */}
           <View style={{ gap: 14, marginBottom: 8 }}>
-            {msgs.map((m) => (
-              <Bubble
-                key={m.id}
-                msg={m}
-                pileById={pileById}
-                accent={accent}
-                lunaMood={chatMood}
-              />
-            ))}
+            {msgs.map((m) =>
+              m.crisis ? (
+                <CrisisResourceCard
+                  key={m.id}
+                  onDismiss={() => dismissCrisis(m.id)}
+                />
+              ) : (
+                <Bubble
+                  key={m.id}
+                  msg={m}
+                  pileById={pileById}
+                  accent={accent}
+                  lunaMood={chatMood}
+                />
+              ),
+            )}
             {busy && <TypingDots mood={chatMood} />}
           </View>
           <View style={{ height: 6 }} />
@@ -2899,6 +3078,78 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: C.dusk,
     paddingHorizontal: 4,
+  },
+
+  // ── CrisisResourceCard — the self-harm / suicide safety surface.
+  //    Dusk-toned like Lumi's own bubbles (this is Lumi caring, not a
+  //    cold system alert), full-width, with three tappable crisis-line
+  //    rows and a quiet dismiss ×. ──
+  crisisCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: hexA(C.dusk, 0.38),
+    backgroundColor: hexA(C.dusk, 0.1),
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+  },
+  crisisLead: {
+    fontFamily: fonts.inter,
+    fontSize: 13.5,
+    color: C.bone,
+    lineHeight: 20,
+    letterSpacing: -0.1,
+    paddingRight: 24, // clear the dismiss ×
+  },
+  crisisDismiss: {
+    position: 'absolute',
+    top: 9,
+    right: 9,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  crisisDismissGlyph: {
+    color: C.mute,
+    fontSize: 16,
+    lineHeight: 18,
+  },
+  crisisRows: {
+    gap: 8,
+    marginTop: 13,
+  },
+  crisisRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: hexA(C.dusk, 0.32),
+    backgroundColor: hexA(C.dusk, 0.08),
+  },
+  crisisRowBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  crisisRowLabel: {
+    fontFamily: fonts.interSemi,
+    fontSize: 13,
+    color: C.bone,
+    letterSpacing: -0.1,
+  },
+  crisisRowSub: {
+    fontFamily: fonts.inter,
+    fontSize: 11.5,
+    color: C.boneDim,
+    marginTop: 2,
+  },
+  crisisRowGlyph: {
+    fontFamily: fonts.inter,
+    fontSize: 16,
+    color: C.dusk,
   },
 
   typingBubble: {

@@ -12,6 +12,7 @@ import * as Haptics from 'expo-haptics';
 import { colors } from '../constants/colors';
 import { fonts } from '../constants/fonts';
 import { useVoice } from '../lib/voice';
+import { isReduceMotionEnabled } from '../lib/useReducedMotion';
 import { MicIcon } from './MicIcon';
 
 interface Props {
@@ -51,6 +52,7 @@ export const MicButton = ({
       pulse.setValue(1);
       return;
     }
+    if (isReduceMotionEnabled()) return; // decorative loop — respect Reduce Motion (dot stays static)
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
@@ -100,6 +102,21 @@ export const MicButton = ({
         onPress={handlePress}
         onLongPress={handleLongPress}
         disabled={state === 'transcribing'}
+        accessibilityRole="button"
+        accessibilityLabel={
+          state === 'recording'
+            ? 'stop recording and add'
+            : state === 'transcribing'
+              ? 'transcribing'
+              : 'add a task by voice'
+        }
+        accessibilityState={{
+          disabled: state === 'transcribing',
+          busy: state === 'transcribing',
+        }}
+        accessibilityHint={
+          state === 'recording' ? 'long press to cancel' : undefined
+        }
         style={[
           styles.btn,
           { width: btnSize, height: btnSize, borderRadius: btnSize / 2 },

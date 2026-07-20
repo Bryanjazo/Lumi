@@ -47,6 +47,9 @@ const RescueButton = ({
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       onPress();
     }}
+    accessibilityRole="button"
+    accessibilityLabel={title}
+    accessibilityHint={sub}
     style={({ pressed }) => [styles.btn, pressed && { opacity: 0.75 }]}
   >
     <Text style={styles.btnEmoji}>{emoji}</Text>
@@ -101,7 +104,13 @@ export const RescueCard = ({
       onPress={onExplain}
     />
 
-    <Pressable onPress={onDismiss} hitSlop={8} style={styles.notNow}>
+    <Pressable
+      onPress={onDismiss}
+      hitSlop={8}
+      style={styles.notNow}
+      accessibilityRole="button"
+      accessibilityLabel="show me everything as usual"
+    >
       <Text style={styles.notNowText}>show me everything as usual</Text>
     </Pressable>
   </View>

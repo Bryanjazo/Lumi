@@ -41,6 +41,7 @@ import { DayRibbon } from '../components/DayRibbon';
 
 import { fonts } from '../constants/fonts';
 import { skins } from '../constants/skins';
+import { UNLOCKS } from '../constants/unlocks';
 import { syncNotifications, cancelAllReminders } from '../lib/notifications';
 import { resetLocalUserData } from '../lib/localData';
 import { lunaSource, useLunaSkin, type LunaMood } from '../lib/luna-source';
@@ -58,7 +59,7 @@ import { useQuestStore } from '../store/questStore';
 import { useCheckinStore } from '../store/checkinStore';
 import { useSuggestionsStore } from '../store/suggestionsStore';
 import { signOut, useSession, changeEmail, deleteAccount } from '../lib/auth';
-import { useAccessStatus, STORE_URLS } from '../lib/subscription';
+import { useAccessStatus, STORE_URLS, LEGAL_URLS } from '../lib/subscription';
 import { requestHeyLumiPermission } from '../lib/heyLumi';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
 import { languageLabel } from '../lib/languages';
@@ -1211,13 +1212,40 @@ export default function AccountScreen() {
     });
   };
 
+  // Support — try the mail client first (support@lumitasks.app is the
+  // same address the delete-account flow points at); if there's no
+  // mail app configured, fall back to the web support page.
+  const openSupport = () => {
+    Haptics.selectionAsync();
+    Linking.openURL('mailto:support@lumitasks.app').catch(() => {
+      Linking.openURL('https://lumitasks.app/support').catch(() => {
+        Alert.alert(
+          'Reach us',
+          'Email support@lumitasks.app and we’ll get back to you.',
+        );
+      });
+    });
+  };
+
+  const openLink = (url: string) => () => {
+    Haptics.selectionAsync();
+    Linking.openURL(url).catch(() => {});
+  };
+
+  // Themes open two ways: Premium, OR the 1,000-XP 'themes' unlock —
+  // the Me tab's Unlocks shop promises "recolor the whole app" as an
+  // XP reward ("everything you reach is yours for good"), so gating
+  // it behind Premium alone made an EARNED reward dead on arrival.
+  const themesXp =
+    UNLOCKS.find((u) => u.id === 'themes')?.xp ?? 1000;
+  const themesEarned = useUserStore((s) => s.xp) >= themesXp;
   const pickTheme = (next: ThemeKey) => {
-    if (!isPremium && next !== 'ember') {
+    if (!isPremium && !themesEarned && next !== 'ember') {
       Alert.alert(
         'Premium theme',
         access.trialAlreadyUsed
-            ? 'Accent themes are part of Lumi Premium.'
-            : 'Accent themes are part of Lumi Premium. Unlock with a 7-day free trial.',
+            ? `Accent themes are part of Lumi Premium — or yours free at ${themesXp.toLocaleString()} XP.`
+            : `Accent themes are part of Lumi Premium — or yours free at ${themesXp.toLocaleString()} XP. Unlock now with a 7-day free trial.`,
       );
       return;
     }
@@ -2302,14 +2330,15 @@ export default function AccountScreen() {
             <View style={styles.personalCell}>
               <View style={styles.personalLabelRow}>
                 <Text style={styles.personalLabel}>App accent</Text>
-                {!isPremium && (
+                {!isPremium && !themesEarned && (
                   <Text style={styles.premiumChipText}>Premium</Text>
                 )}
               </View>
               <View style={styles.themeRow}>
                 {THEMES.map((t) => {
                   const on = theme === t.k;
-                  const locked = !isPremium && t.k !== 'ember';
+                  const locked =
+                    !isPremium && !themesEarned && t.k !== 'ember';
                   return (
                     <Pressable
                       key={t.k}
@@ -2674,10 +2703,16 @@ export default function AccountScreen() {
             sub={
               // One derived truth with the Membership card (planLabel)
               // — this row used to say "Free · upgrade any time" to a
-              // cancelled-but-paid-through Premium user.
-              access.hasPremium || access.inTrial
-                ? planLabel
-                : 'Free · upgrade any time'
+              // cancelled-but-paid-through Premium user. On trial we
+              // surface the countdown so the days left are visible
+              // without opening the subscription screen.
+              access.inTrial
+                ? `trial · ${access.trialDaysLeft} day${
+                    access.trialDaysLeft === 1 ? '' : 's'
+                  } left`
+                : access.hasPremium
+                  ? planLabel
+                  : 'Free · upgrade any time'
             }
             onPress={() => router.push('/manage-subscription')}
           />
@@ -2689,6 +2724,29 @@ export default function AccountScreen() {
             last
           />
         </Group>
+
+        {/* ── 7d · SUPPORT ────────────────────────────────────────── */}
+        <Group title="Support">
+          <Row
+            icon="♡"
+            label="Contact support"
+            sub="questions, bugs, anything — we read every one"
+            onPress={openSupport}
+            last
+          />
+        </Group>
+
+        {/* Terms · Privacy — compact centered links, same pattern as
+            the paywall's legalRow, so the legal pages are always one
+            tap from the profile. */}
+        <View style={styles.legalRow}>
+          <Pressable onPress={openLink(LEGAL_URLS.terms)} hitSlop={8}>
+            <Text style={styles.legalLink}>Terms</Text>
+          </Pressable>
+          <Pressable onPress={openLink(LEGAL_URLS.privacy)} hitSlop={8}>
+            <Text style={styles.legalLink}>Privacy</Text>
+          </Pressable>
+        </View>
 
         {/* ── DEV — only in __DEV__ builds ────────────────────────── */}
         {__DEV__ && (
@@ -4082,6 +4140,19 @@ const makeStyles = (accent: Accent) =>
       color: C.ash,
       marginTop: 18,
       textAlign: 'center',
+    },
+    // Compact Terms · Privacy links — mirrors the paywall's legalRow.
+    legalRow: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 18,
+      marginTop: 6,
+      marginBottom: 6,
+    },
+    legalLink: {
+      fontFamily: fonts.inter,
+      fontSize: 11,
+      color: C.mute,
     },
   });
 

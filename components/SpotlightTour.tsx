@@ -44,6 +44,7 @@ import Svg, {
   Rect,
 } from 'react-native-svg';
 import { fonts } from '../constants/fonts';
+import { isReduceMotionEnabled } from '../lib/useReducedMotion';
 import { TOUR_STEPS } from '../constants/tour';
 import { useUserStore } from '../store/userStore';
 import { useAccent, accentFor, type Accent } from '../lib/theme';
@@ -230,6 +231,7 @@ const SpotlightOverlay = ({
   useEffect(() => {
     if (!visible) return;
     pulse.setValue(0);
+    if (isReduceMotionEnabled()) return; // pulse loop — Reduce Motion leaves a static ring
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {

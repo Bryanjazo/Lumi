@@ -16,7 +16,7 @@
  * AI usage is still gated by has_access / has_ai_quota — keep those
  * authoritative for the actual cost ceiling.
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { useUserStore, SubscriptionStatus } from '../store/userStore';
 
@@ -120,6 +120,14 @@ export interface AccessStatus {
    * direct "Subscribe" CTA.
    */
   trialAlreadyUsed: boolean;
+  /**
+   * True the moment a former PAID subscriber (wasEverPaid) has fallen
+   * back to a lapsed shape and hasn't yet seen the one-time win-back
+   * sheet. Drives WinBackSheet. A cancelled-but-still-paid-through
+   * user is excluded (they still have premium); a lapsed TRIAL alone
+   * never triggers it (wasEverPaid is only ever set on 'active').
+   */
+  winBackDue: boolean;
 
   /**
    * @deprecated Legacy alias for `hasPremium` — kept so older
@@ -154,6 +162,41 @@ export const useAccessStatus = (
   const status = useUserStore((s) => s.subscriptionStatus);
   const trialStartedAt = useUserStore((s) => s.trialStartedAt);
   const periodEnd = useUserStore((s) => s.subscriptionCurrentPeriodEnd);
+  const wasEverPaid = useUserStore((s) => s.wasEverPaid);
+  const winBackSeen = useUserStore((s) => s.winBackSeen);
+
+  // Honest lapse: nothing else ever flips the persisted status when a
+  // 7-day trial runs out — every surface used to re-derive expiry
+  // ad hoc from trialStartedAt, so the STORE still said 'trial' long
+  // after access ended. Persist the flip to 'free' once, in an effect
+  // (never during render). trialStartedAt is left set, so
+  // trialAlreadyUsed stays true and the taste can't be taken twice.
+  // The derived values below already read a lapsed trial as no-premium
+  // (trialDaysLeft hits 0 → inTrial false) whether or not this has
+  // fired yet, so access stays consistent across the flip.
+  const trialLapsed =
+    status === 'trial' &&
+    trialStartedAt != null &&
+    Date.now() - new Date(trialStartedAt).getTime() >= TRIAL_DAYS * DAY_MS;
+  useEffect(() => {
+    if (trialLapsed) {
+      useUserStore.setState({ subscriptionStatus: 'free' });
+    }
+  }, [trialLapsed]);
+
+  // Remember the paid milestone — the ONE place wasEverPaid ever flips
+  // true. Same one-shot-flip-in-an-effect shape as the trial lapse
+  // above (never during render, idempotent). Gating it strictly on
+  // status === 'active' is what keeps a lapsed *trial* from ever
+  // masquerading as a former payer: a trial never touches this flag,
+  // so the win-back sheet below can't fire for someone who only ever
+  // tasted the trial.
+  const shouldMarkPaid = status === 'active' && !wasEverPaid;
+  useEffect(() => {
+    if (shouldMarkPaid) {
+      useUserStore.getState().markWasEverPaid();
+    }
+  }, [shouldMarkPaid]);
 
   return useMemo(() => {
     const hasActive = isPaidThrough(status, periodEnd);
@@ -173,6 +216,19 @@ export const useAccessStatus = (
     const hasPremium = hasActive || inTrial;
     const isFree = !hasPremium;
 
+    // Win-back: a former payer who's now on a lapsed shape and hasn't
+    // been shown the sheet yet. `!hasPremium` already excludes the
+    // cancelled-but-still-paid-through case (isPaidThrough keeps their
+    // access, so hasPremium stays true and we hold off until it really
+    // ends). The explicit lapsed-shape check keeps this off any state
+    // that isn't a genuine lapse (belt-and-suspenders with !hasPremium).
+    const lapsed =
+      status === 'free' ||
+      status === 'expired' ||
+      status === 'cancelled' ||
+      status === 'past_due';
+    const winBackDue = wasEverPaid && !hasPremium && !winBackSeen && lapsed;
+
     return {
       hasPremium,
       inTrial,
@@ -181,8 +237,9 @@ export const useAccessStatus = (
       hasActiveSubscription: status === 'active',
       isFree,
       trialAlreadyUsed,
+      winBackDue,
       // Legacy alias — keep until every caller is renamed.
       hasAccess: hasPremium,
     };
-  }, [status, trialStartedAt, periodEnd]);
+  }, [status, trialStartedAt, periodEnd, wasEverPaid, winBackSeen]);
 };

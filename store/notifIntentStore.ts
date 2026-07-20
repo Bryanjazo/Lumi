@@ -18,7 +18,8 @@ export type NotifAction =
   | 'quest' // recurring reminder — surface THAT quest
   | 'recap' // Sunday — open the weekly recap
   | 'focusdone' // focus block ended — settle the session, show done
-  | 'dump'; // morning ritual — open the brain-dump, ready to listen
+  | 'dump' // morning ritual — open the brain-dump, ready to listen
+  | 'trial-ending'; // day-6 heads-up — open the subscription surface
 
 export interface NotifIntent {
   action: NotifAction;

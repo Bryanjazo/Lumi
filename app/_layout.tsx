@@ -6,6 +6,7 @@ import {
   useNotifIntentStore,
   type NotifIntent,
 } from '../store/notifIntentStore';
+import { useQuotaPromptStore } from '../store/quotaPromptStore';
 import { AppState } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
@@ -52,6 +53,8 @@ import {
 import { TourProvider } from '../components/SpotlightTour';
 import { DeleteConfirmProvider } from '../components/TaskDeleteWrap';
 import { UpgradePromptSheet } from '../components/UpgradePromptSheet';
+import { WinBackSheet } from '../components/WinBackSheet';
+import { useAccessStatus } from '../lib/subscription';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 
 export default function RootLayout() {
@@ -249,6 +252,22 @@ export default function RootLayout() {
   const markOnboardedForUser = useUserStore((s) => s.markOnboardedForUser);
   const { session, loading: sessionLoading } = useSession();
   useCloudSync(session);
+
+  // Lapsed-subscriber win-back. useAccessStatus derives winBackDue
+  // locally (former payer, now on a lapsed shape, sheet not yet seen)
+  // and also runs the one-shot wasEverPaid flip. Gated below so the
+  // sheet never lands on the cold-start frame or over onboarding/auth.
+  const { winBackDue } = useAccessStatus(session);
+  // A beat after launch — like the notif debounce and metrics push
+  // below, we let the first frames settle before any global surface
+  // pops. Without this the sheet could flash on frame 1 of a cold
+  // start (or mid-route while the layout is still deciding where to
+  // land).
+  const [launchSettled, setLaunchSettled] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setLaunchSettled(true), 1500);
+    return () => clearTimeout(t);
+  }, []);
   // First-pull-per-user flags — the cross-account wipe waits on these.
   const pulledFor = useSyncStatus((s) => s.pulledFor);
   // Push the cat's mood + completion count to the iOS home-screen
@@ -500,7 +519,17 @@ export default function RootLayout() {
     //     later step would yank them off the form (onboarding hold,
     //     trial-choice, the tabs bounce) — leave them alone until the
     //     screen itself routes onward.
-    if (inAuth && (segments as string[])[1] === 'reset-password') return;
+    //     /auth/callback gets the same pass: it decides between
+    //     reset-password and the tabs AFTER a 400ms flag-settle delay.
+    //     For an already-onboarded user nothing stalls this gate, so
+    //     the tabs bounce below used to win that race and unmount the
+    //     timer — the recovery user landed in the app with the
+    //     forgotten password never changed.
+    if (
+      inAuth &&
+      ['reset-password', 'callback'].includes((segments as string[])[1])
+    )
+      return;
 
     // 2. Then the per-user onboarding gate.
     if (!isOnboardedForCurrentUser) {
@@ -580,6 +609,22 @@ export default function RootLayout() {
     );
   }
 
+  // Only surface the win-back sheet once everything has settled AND
+  // the user is actually in the app — never over onboarding/auth (a
+  // fresh account can't be a lapsed payer, and a returning one
+  // shouldn't meet a paywall pitch before they're even home).
+  const topSegment = (segments as string[])[0];
+  const inOnboardingOrAuth =
+    topSegment === 'onboarding' || topSegment === 'auth';
+  // One global sheet at a time: if the quota/upgrade sheet is up (a
+  // 429 in the first 1.5s beats the launchSettled timer), stacking a
+  // second transparent Modal on top tangles iOS presentation. Win-back
+  // simply waits — winBackDue stays true, so it presents on the next
+  // render after the quota sheet closes.
+  const quotaSheetOpen = useQuotaPromptStore((s) => s.open);
+  const showWinBack =
+    winBackDue && launchSettled && !inOnboardingOrAuth && !quotaSheetOpen;
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <SafeAreaProvider>
@@ -613,6 +658,7 @@ export default function RootLayout() {
               />
             </Stack>
             <UpgradePromptSheet />
+            <WinBackSheet visible={showWinBack} />
           </DeleteConfirmProvider>
         </TourProvider>
         </ErrorBoundary>

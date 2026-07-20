@@ -45,6 +45,19 @@ interface SpeechModule {
     }): void;
     stop(): void;
     abort(): void;
+    /** Cheap synchronous capability probe — true when the on-device
+     *  recognition SERVICE exists (iOS 13+, Android 13+). NOTE: says
+     *  nothing about whether a given locale's offline model is
+     *  installed — gate per-locale via getSupportedLocales. May be
+     *  absent on older module builds. */
+    supportsOnDeviceRecognition?(): boolean;
+    /** Which locales the recognizer supports; `installedLocales` are
+     *  the ones with an on-device model actually downloaded. May be
+     *  absent on older module builds. */
+    getSupportedLocales?(opts?: object): Promise<{
+      locales: string[];
+      installedLocales: string[];
+    }>;
   };
   useSpeechRecognitionEvent: (
     event: string,
@@ -69,6 +82,21 @@ const useSpeechRecognitionEvent =
 // false in Expo Go, true on a dev/standalone build. Callsites that
 // gate UI on it (Capture's mic disable) check this flag.
 export const isVoiceConfigured = _speech != null;
+
+// Which locales have an ON-DEVICE model actually installed — the
+// per-locale gate for requiresOnDeviceRecognition (the generic
+// service probe alone can't answer this). Probed once at module load;
+// null until it resolves (or forever, on module builds without the
+// method / probe errors), which nativeStart treats as "not confirmed
+// → use the network recognizer" — i.e. the safe pre-existing path.
+let installedLocalesCache: string[] | null = null;
+void ExpoSpeechRecognitionModule?.getSupportedLocales?.()
+  .then((r) => {
+    installedLocalesCache = r.installedLocales ?? [];
+  })
+  .catch(() => {
+    // Probe failed — leave null so on-device is never forced.
+  });
 
 // ── Foreign-session ownership (Hey Lumi) ──────────────────────────
 // expo-speech-recognition has ONE global recognizer and GLOBAL
@@ -203,18 +231,33 @@ export const useVoice = (): VoiceController => {
   );
 
   const nativeStart = () => {
+    // Prefer on-device recognition — audio never leaves the phone and
+    // Android can transcribe offline — but ONLY when the SELECTED
+    // capture language's offline model is confirmed installed.
+    // supportsOnDeviceRecognition() alone is the wrong gate: it says
+    // the on-device SERVICE exists, not that e.g. the es-ES model is
+    // downloaded. Forcing on-device for an uninstalled locale makes
+    // start() error out even when ONLINE (language-not-supported) —
+    // strictly worse than the cloud path it replaced. So: require
+    // service + this locale in installedLocales (async probe cached
+    // below); anything unknown falls back to the network recognizer,
+    // whose offline failure maps to the "type instead" copy above.
+    const lang = useUserStore.getState().captureLang || 'en-US';
+    const onDevice =
+      (ExpoSpeechRecognitionModule!.supportsOnDeviceRecognition?.() ??
+        false) &&
+      installedLocalesCache != null &&
+      installedLocalesCache.includes(lang);
     ExpoSpeechRecognitionModule!.start({
       // The Settings → "Capture language" pick — was hardcoded to
       // en-US, which made the setting decorative. iOS/Android both
       // transcribe all listed locales on device.
-      lang: useUserStore.getState().captureLang || 'en-US',
+      lang,
       // Stream partials so Capture can show what the user is
       // saying as they speak (live transcription in the field).
       interimResults: true,
       continuous: false,
-      // Prefer on-device when the platform supports it (iOS 13+).
-      // Android typically routes through Google's free recognizer.
-      requiresOnDeviceRecognition: false,
+      requiresOnDeviceRecognition: onDevice,
     });
   };
 

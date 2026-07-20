@@ -42,6 +42,7 @@ const FREE_WEEKLY_CAP: Record<string, number> = {
   brain_dump: 3,
   followup: 5,
   weekly_report: 2,
+  first_step: 5,
   // clarify is Pro-shaped (free cap 0) — no number to show; the
   // headline drops the count when the cap is missing/zero.
 };
@@ -60,6 +61,8 @@ const labelForKind = (kind: QuotaKind | null): string => {
       return 'recap narratives';
     case 'clarify':
       return 'AI touch-ups';
+    case 'first_step':
+      return 'first-step splits';
     default:
       return 'AI helpers';
   }

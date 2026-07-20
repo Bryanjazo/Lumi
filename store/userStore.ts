@@ -4,7 +4,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 // key in Keychain/Keystore, ciphertext in AsyncStorage. Legacy
 // plaintext values migrate in place on first read.
 import { secureStorage } from '../lib/secureStorage';
-import { xpProgress } from '../lib/gamification';
+import { xpProgress, localYmd } from '../lib/gamification';
 
 export type AdhdType = 'inattentive' | 'hyperactive' | 'combined' | null;
 export type SubscriptionStatus =
@@ -251,6 +251,15 @@ interface UserState {
     tasksEver: number;
     focusMin: number;
   };
+  /** True once a pull has folded the cloud copy of this device's
+   *  slice into deviceLedger (local is then the cumulative superset
+   *  and MUST be written as-is). False only after a wipe, when local
+   *  counts from zero and the sign-out force-flush may safely fold
+   *  the cloud copy back in. Without this flag the flush folded the
+   *  cloud slice into an ALREADY-cumulative local one after any
+   *  force-quit + failed-pull session, permanently double-counting
+   *  lifetime totals across devices. */
+  deviceLedgerSynced: boolean;
   heyLumiEnabled: boolean;
   /** Server-granted flag (users.is_tester) — internal/TestFlight
    *  testers whose raw captures upload for parser tuning. Never
@@ -377,6 +386,32 @@ interface UserState {
    * trial-choice screen. Prevents re-showing on every launch.
    */
   trialChoiceSeen: boolean;
+  /**
+   * True once this account has EVER held a paid subscription on this
+   * device (status hit 'active'). Drives the one-time win-back sheet
+   * when a lapsed subscriber lands back on free. Device-local: a
+   * reinstall forgets it — acceptable v1 (the sheet just never shows).
+   */
+  wasEverPaid: boolean;
+  /** One-shot: the lapsed-subscriber win-back sheet was shown. */
+  winBackSeen: boolean;
+  /**
+   * Second-ask upsell moment on Home (the gentle, dismissible value
+   * card for free users who skipped the trial). Date = last shown;
+   * count caps lifetime asks so it can never become a nag.
+   */
+  upsellNudgeDate: string | null;
+  upsellNudgeCount: number;
+  /** Last local Y-M-D the "some of these have waited a while" someday
+   *  resurfacing line was shown — at most one gentle offer a week. */
+  somedayNudgeDate: string | null;
+
+  markWasEverPaid: () => void;
+  markWinBackSeen: () => void;
+  /** Stamp the upsell moment as shown today (date + lifetime count). */
+  stampUpsellNudge: () => void;
+  /** Stamp the someday resurfacing line as shown today. */
+  stampSomedayNudge: () => void;
 
   setName: (name: string) => void;
   setPetName: (petName: string) => void;
@@ -502,6 +537,11 @@ export const useUserStore = create<UserState>()(
       roomTint: 'none',
       doneLog: {},
       deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0 },
+      // Default TRUE (also what pre-flag persisted states migrate to):
+      // an existing install's ledger is already cumulative, and a
+      // fresh install's is empty (the pull's empty-local adoption
+      // covers it either way). Only a wipe flips this false.
+      deviceLedgerSynced: true,
       activeDaysThisMonth: 0,
       focusMinutesLifetime: 0,
       vitalitySnapshot: null,
@@ -545,6 +585,21 @@ export const useUserStore = create<UserState>()(
       subscriptionCurrentPeriodEnd: null,
       trialStartedAt: null,
       trialChoiceSeen: false,
+      wasEverPaid: false,
+      winBackSeen: false,
+      upsellNudgeDate: null,
+      upsellNudgeCount: 0,
+      somedayNudgeDate: null,
+
+      markWasEverPaid: () => set({ wasEverPaid: true }),
+      markWinBackSeen: () => set({ winBackSeen: true }),
+      stampUpsellNudge: () =>
+        set((s) => ({
+          upsellNudgeDate: localYmd(new Date()),
+          upsellNudgeCount: s.upsellNudgeCount + 1,
+        })),
+      stampSomedayNudge: () =>
+        set({ somedayNudgeDate: localYmd(new Date()) }),
 
       setName: (name) => set({ name }),
       setPetName: (petName) => set({ petName }),
@@ -774,7 +829,7 @@ export const useUserStore = create<UserState>()(
       setNotificationsEnabled: (on) => set({ notificationsEnabled: on }),
       setOfflineMode: (on) => set({ offlineMode: on }),
       addShard: () => set((s) => ({ shards: s.shards + 1 })),
-      setSubscription: ({ status, tier, currentPeriodEnd }) =>
+      setSubscription: ({ status, tier, currentPeriodEnd }) => {
         set((s) => {
           // Downgrade hygiene: losing premium un-equips a Pro skin in
           // the STORE (read-time enforcement already hid it in the
@@ -798,9 +853,28 @@ export const useUserStore = create<UserState>()(
             subscriptionCurrentPeriodEnd: currentPeriodEnd ?? null,
             ...(losesPremium && !starter ? { avatar: 'default' } : {}),
           };
-        }),
+        });
+        // A trial that converts to a paid sub no longer needs its
+        // day-before "trial wraps tomorrow" warning — drop it the
+        // moment status goes active (this is the RC sync's flip path).
+        // Lazy require dodges the notifications↔store import cycle.
+        if (status === 'active') {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { cancelTrialEnding } = require('../lib/notifications') as typeof import('../lib/notifications');
+            void cancelTrialEnding();
+          } catch {
+            // notifications module unavailable — nothing to cancel
+          }
+        }
+      },
 
-      startTrial: () =>
+      startTrial: () => {
+        // Snapshot before: we only fire the scheduler if THIS call is
+        // the one that actually armed a fresh trial (the updater is a
+        // no-op for already-trialed / active accounts).
+        const armable =
+          get().subscriptionStatus === 'free' && !get().trialStartedAt;
         set((s) => {
           // Only arm the trial from a clean 'free' state. If the
           // user is already on trial or active, don't overwrite.
@@ -813,7 +887,20 @@ export const useUserStore = create<UserState>()(
             subscriptionStatus: 'trial',
             trialStartedAt: new Date().toISOString(),
           };
-        }),
+        });
+        // Trial armed → schedule the day-before "trial wraps tomorrow"
+        // nudge (identifier-based, cancel+reschedule safe). Lazy
+        // require dodges the notifications↔store import cycle.
+        if (armable && get().subscriptionStatus === 'trial') {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { scheduleTrialEnding } = require('../lib/notifications') as typeof import('../lib/notifications');
+            void scheduleTrialEnding();
+          } catch {
+            // notifications module unavailable — trial still armed
+          }
+        }
+      },
 
       markTrialChoiceSeen: () => set({ trialChoiceSeen: true }),
 
@@ -835,6 +922,7 @@ export const useUserStore = create<UserState>()(
           roomTint: 'none',
           doneLog: {},
           deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0 },
+          deviceLedgerSynced: false,
           activeDaysThisMonth: 0,
           focusMinutesLifetime: 0,
           vitalitySnapshot: null,
@@ -876,6 +964,11 @@ export const useUserStore = create<UserState>()(
           subscriptionCurrentPeriodEnd: null,
           trialStartedAt: null,
           trialChoiceSeen: false,
+          wasEverPaid: false,
+          winBackSeen: false,
+          upsellNudgeDate: null,
+          upsellNudgeCount: 0,
+          somedayNudgeDate: null,
         }),
     }),
     {

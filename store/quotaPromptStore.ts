@@ -23,6 +23,7 @@ export type QuotaKind =
   | 'followup'
   | 'title_clean'
   | 'clarify'
+  | 'first_step'
   | 'weekly_report';
 
 interface QuotaPromptState {

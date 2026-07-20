@@ -1,16 +1,38 @@
 // Lumi · learning · energy curve
 //
-// Per-user 48-slot (30-min) energy curve learned from check-ins.
-// Pure math; no LLM. Per the architecture's confidence ramp:
+// Per-user 48-slot (30-min) energy curve learned from COMPLETIONS —
+// WHEN you actually finish things is our proxy for when you run
+// strongest. (Check-ins used to feed this, but that capture flow was
+// retired — checkinStore.add() has no callers — so the curve read an
+// array that never fills and could never graduate. Completions carry
+// the same hour-of-day + weekday signal and are what we still collect
+// every day.) Pure math; no LLM.
 //
-//   sample_days  < 7   → use baseline silently; UI says "learning"
-//   7 ≤ days < 14      → faint "early read"
-//   days ≥ 14           → trusted curve, peak/slump fire off it
+// Confidence ramp — completions are SPARSER than the old check-ins
+// (you don't finish something every half hour), so graduation counts
+// EVENTS as well as distinct days:
+//
+//   < 6 events / < 3 days   → baseline silently; UI says "learning"
+//   ≥ 6 over ≥ 3 days       → faint "early read"
+//   ≥ 15 over ≥ 5 days      → trusted curve, peak/slump fire off it
 //
 // Spec: lumi-data-architecture.md §4.
 
+// Checkin is still the input for the self-reported daily-energy series
+// helpers at the bottom of this file (Me tab / Recap sparkline) — those
+// read a mood coordinate, not activity timing, so they stay on it.
 import { Checkin } from '../../store/checkinStore';
 import type { EnergyWindowKey } from '../../store/userStore';
+
+/**
+ * The activity signal the curve + peak/low-day math run on: one event
+ * per finished quest. We only need the timestamp — the hour-of-day
+ * places it in a 30-min slot, the weekday feeds peakAndLowDays().
+ */
+export interface CompletionEvent {
+  /** ISO timestamp the activity happened — Quest.completedAt. */
+  completedAt: string;
+}
 
 export type Chronotype = 'early' | 'neutral' | 'night';
 
@@ -56,6 +78,9 @@ export interface EnergyCurve {
   slumpEnd: number | null;
   /** Distinct days that contributed data in the lookback window. */
   sampleDays: number;
+  /** Total completion events that fed the curve in the window — the
+   *  other half of the graduation gate (days alone can't crown it). */
+  sampleCount: number;
   /** Overall confidence in the curve as a whole. */
   confidence: number;
   /** Was this curve learned or is it still the baseline? */
@@ -64,8 +89,23 @@ export interface EnergyCurve {
 
 const SLOTS = 48;
 const LOOKBACK_DAYS = 28;
-const MIN_CONFIDENT_DAYS = 14;
-const MIN_VISIBLE_DAYS = 7;
+// Graduation thresholds. Completions are a sparse signal — a daily
+// user finishes maybe 1–5 things a day, not the dozen-plus check-ins
+// the retired flow could rack up — so we gate on EVENT COUNT and
+// DISTINCT DAYS together. 15 completions spread over 5 separate days
+// is enough shape to stop calling the curve a guess without letting a
+// single busy afternoon (lots of events, one day) crown it. The
+// 'learning' tier is deliberately low so the page shows an "early
+// read" within a few days of real use rather than staying blank.
+const MIN_LEARNED_COMPLETIONS = 15;
+const MIN_LEARNED_DAYS = 5;
+const MIN_LEARNING_COMPLETIONS = 6;
+const MIN_LEARNING_DAYS = 3;
+// Per-slot trust ramps with the number of DISTINCT DAYS that slot saw
+// activity — one evening of batch-finishing six tasks shouldn't crown
+// 9pm. Small divisor because the whole signal is sparse; a slot seen
+// on 3 different days is about as trusted as we can honestly get.
+const SLOT_CONFIDENT_DAYS = 3;
 
 // ── Chronotype baseline curves (kept in code, not DB) ──────────────
 // Smooth sinusoidal shapes seeded by chronotype. These power the curve
@@ -148,7 +188,7 @@ const findLongestRun = (
 
 // ── Main builder ───────────────────────────────────────────────────
 export const computeEnergyCurve = (
-  checkins: Checkin[],
+  completions: CompletionEvent[],
   chronotype: Chronotype = 'neutral',
   // The user's wake / sleep anchor hours (0-23). Default to a sane
   // baseline if the caller doesn't pass them, but the digest hook
@@ -160,38 +200,52 @@ export const computeEnergyCurve = (
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - LOOKBACK_DAYS);
 
-  // Per-slot accumulator: sum of energy + count + per-day set for
-  // confidence ramp.
-  const sums: number[] = Array(SLOTS).fill(0);
+  // Per-slot activity accumulator: completion count + the distinct
+  // days that slot saw activity (for the per-slot confidence ramp).
   const counts: number[] = Array(SLOTS).fill(0);
   const dayKeys: Set<string>[] = Array.from({ length: SLOTS }, () => new Set());
   const allDays = new Set<string>();
+  let nCompletions = 0;
 
-  for (const c of checkins) {
-    const at = new Date(c.createdAt);
-    if (at < cutoff) continue;
+  for (const c of completions) {
+    const at = new Date(c.completedAt);
+    // Guard bad/absent timestamps — a completion with an unparseable
+    // completedAt must not slot at NaN or count toward graduation.
+    if (Number.isNaN(at.getTime()) || at < cutoff) continue;
     const slot = Math.floor((at.getHours() * 60 + at.getMinutes()) / 30);
     // Local day key — the UTC slice split one local evening into two
     // "days", inflating sampleDays and firing the learned label early.
     const day = ymdLocal(at);
-    sums[slot] += c.energy;
     counts[slot]++;
     dayKeys[slot].add(day);
     allDays.add(day);
+    nCompletions++;
   }
 
   const sampleDays = allDays.size;
+  // Busiest slot sets the intensity scale — every other slot reads as
+  // a fraction of "your most active half-hour".
+  const maxCount = counts.reduce((m, c) => Math.max(m, c), 0);
   const baseline = baselineCurve(chronotype, wakeHour, sleepHour);
 
   const slots: EnergySlot[] = baseline.map((b) => {
     if (counts[b.slot] === 0) {
       return { ...b, confidence: 0 };
     }
-    const learnedRaw = sums[b.slot] / counts[b.slot];
-    const slotConfidence = Math.min(1, dayKeys[b.slot].size / MIN_CONFIDENT_DAYS);
-    // Blend learned with baseline by slot confidence so sparse slots
-    // don't yank the curve around with one outlier check-in.
-    const energy = slotConfidence * learnedRaw + (1 - slotConfidence) * b.energy;
+    // Activity → energy: the more you finish in a slot relative to
+    // your busiest one, the more "up" that slot reads. Floored at 30
+    // (not 0) so an active-but-quiet slot never plots as dead as true
+    // sleep — a completion is positive evidence you were *up*.
+    const intensity = maxCount > 0 ? counts[b.slot] / maxCount : 0;
+    const activityEnergy = 30 + 70 * intensity;
+    const slotConfidence = Math.min(
+      1,
+      dayKeys[b.slot].size / SLOT_CONFIDENT_DAYS,
+    );
+    // Blend learned with baseline by slot confidence so a slot seen on
+    // a single day doesn't yank the curve around with one outlier.
+    const energy =
+      slotConfidence * activityEnergy + (1 - slotConfidence) * b.energy;
     return {
       slot: b.slot,
       energy: Math.round(Math.max(0, Math.min(100, energy))),
@@ -199,12 +253,21 @@ export const computeEnergyCurve = (
     };
   });
 
-  // Source / confidence labels per the architecture's ramp.
+  // Source / confidence labels — count AND days must both clear the
+  // bar (a busy single day, or many quiet days, isn't a curve yet).
   let source: EnergyCurve['source'];
-  if (sampleDays >= MIN_CONFIDENT_DAYS) source = 'learned';
-  else if (sampleDays >= MIN_VISIBLE_DAYS) source = 'learning';
+  if (
+    nCompletions >= MIN_LEARNED_COMPLETIONS &&
+    sampleDays >= MIN_LEARNED_DAYS
+  )
+    source = 'learned';
+  else if (
+    nCompletions >= MIN_LEARNING_COMPLETIONS &&
+    sampleDays >= MIN_LEARNING_DAYS
+  )
+    source = 'learning';
   else source = 'baseline';
-  const confidence = Math.min(1, sampleDays / MIN_CONFIDENT_DAYS);
+  const confidence = Math.min(1, nCompletions / MIN_LEARNED_COMPLETIONS);
 
   // Peak: longest run where energy ≥ 70.
   const peak = findLongestRun(slots, (s) => s.energy >= 70);
@@ -232,6 +295,7 @@ export const computeEnergyCurve = (
     slumpStart: slump?.start ?? null,
     slumpEnd: slump?.end ?? null,
     sampleDays,
+    sampleCount: nCompletions,
     confidence,
     source,
   };
@@ -319,31 +383,35 @@ export const avgRecentEnergy = (checkins: Checkin[], days = 7): number => {
 };
 
 /**
- * Returns the peak day-of-week (Sun=0..Sat=6) by average energy in the
- * last 28 days. Used by the recap "peaks Wednesday" narrative.
+ * Returns the peak day-of-week (Sun=0..Sat=6) by how much you tend to
+ * finish on it, over the last 28 days. Used by the "Wednesdays tend to
+ * be your day" narrative on Patterns + the dow:N Home reveal.
+ *
+ * The metric is completions-per-observed-date (not raw volume) so a
+ * weekday that simply recurs more often in the 28-day window doesn't
+ * win on count alone.
  */
 export const peakAndLowDays = (
-  checkins: Checkin[],
+  completions: CompletionEvent[],
 ): { peakDow: number | null; lowDow: number | null } => {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - LOOKBACK_DAYS);
-  const sums: number[] = Array(7).fill(0);
   const counts: number[] = Array(7).fill(0);
-  for (const c of checkins) {
-    const at = new Date(c.createdAt);
-    if (at < cutoff) continue;
+  const dates: Set<string>[] = Array.from({ length: 7 }, () => new Set());
+  for (const c of completions) {
+    const at = new Date(c.completedAt);
+    if (Number.isNaN(at.getTime()) || at < cutoff) continue;
     const dow = at.getDay();
-    sums[dow] += c.energy;
     counts[dow]++;
+    dates[dow].add(ymdLocal(at));
   }
-  // HONEST-DATA GUARD: "Tuesdays tend to be your day" must rest on
-  // more than one Tuesday. A weekday only competes once it has ≥2
-  // observations in the window — with 5 check-ins spread over 5
-  // different weekdays, every day had n=1 and the "trend" was a
-  // single sample.
-  const MIN_DOW_SAMPLES = 2;
-  const avgs = sums.map((s, i) =>
-    counts[i] >= MIN_DOW_SAMPLES ? s / counts[i] : null,
+  // HONEST-DATA GUARD: "Wednesdays tend to be your day" must rest on
+  // more than one Wednesday. A weekday only competes once it's been
+  // observed on ≥2 DISTINCT dates — otherwise a single busy Wednesday
+  // (batch-finishing a pile) reads as a standing trend off n=1.
+  const MIN_DOW_DATES = 2;
+  const avgs = counts.map((n, i) =>
+    dates[i].size >= MIN_DOW_DATES ? n / dates[i].size : null,
   );
   let peakDow: number | null = null;
   let lowDow: number | null = null;

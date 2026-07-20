@@ -66,6 +66,28 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// Android requires an explicit channel — without one, scheduled
+// notifications land on the system's implicit default at LOW
+// importance (no heads-up banner, no accent LED). Register ours once,
+// HIGH importance, tinted with the app accent, and pass its id on
+// every scheduled trigger below. iOS has no channels and ignores the
+// id, so the same call sites stay correct on both platforms.
+const ANDROID_CHANNEL_ID = 'lumi-default';
+const APP_ACCENT = '#C4A0E0';
+let channelReady: Promise<void> | null = null;
+const ensureAndroidChannel = (): Promise<void> => {
+  if (Platform.OS !== 'android') return Promise.resolve();
+  // Memoized — the channel only needs registering once per launch.
+  if (!channelReady) {
+    channelReady = Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
+      name: 'Lumi',
+      importance: Notifications.AndroidImportance.HIGH,
+      lightColor: APP_ACCENT,
+    }).then(() => {});
+  }
+  return channelReady;
+};
+
 export const requestNotificationPermissions = async (): Promise<boolean> => {
   const existing = await Notifications.getPermissionsAsync();
   if (existing.status === 'granted') return true;
@@ -81,6 +103,7 @@ const schedule = async (
   action: string,
 ) => {
   const body = await nextLine(bucket);
+  await ensureAndroidChannel();
   // Night-owl anchors legally run past midnight (sleep at 25:30) —
   // iOS calendar triggers with hour >= 24 silently never fire, so
   // wrap into the real clock (audit: wind-down + recap vanished for
@@ -101,6 +124,7 @@ const schedule = async (
       hour,
       minute,
       repeats: true,
+      channelId: ANDROID_CHANNEL_ID,
     } as Notifications.CalendarTriggerInput,
   });
 };
@@ -159,6 +183,7 @@ const syncNotificationsInner = async (opts?: {
   interactive?: boolean;
 }): Promise<NotifSyncResult> => {
   if (Platform.OS === 'web') return { granted: true };
+  await ensureAndroidChannel();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { useUserStore } = require('../store/userStore') as typeof import('../store/userStore');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -186,6 +211,10 @@ const syncNotificationsInner = async (opts?: {
     } catch {
       // focus session module unavailable — nothing to re-arm
     }
+    // Same for the one-shot trial-ending heads-up — transactional
+    // subscription info, not a preference nudge. Self-no-ops when
+    // there's no live trial.
+    await scheduleTrialEnding();
     return { granted: true };
   }
 
@@ -212,6 +241,8 @@ const syncNotificationsInner = async (opts?: {
   } catch {
     // focus session module unavailable — nothing to re-arm
   }
+  // …and the one-shot trial-ending heads-up (self-no-ops off-trial).
+  await scheduleTrialEnding();
   const a = u.anchors;
   const speakable = (min: number) =>
     withinWakingHours(min, a.wake, a.sleep, prefs.quiet);
@@ -269,6 +300,7 @@ const syncNotificationsInner = async (opts?: {
         type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
         seconds: recoverySeconds,
         repeats: false,
+        channelId: ANDROID_CHANNEL_ID,
       } as Notifications.TimeIntervalTriggerInput,
     });
   }
@@ -288,6 +320,7 @@ const syncNotificationsInner = async (opts?: {
           hour: Math.floor(recapMin / 60),
           minute: recapMin % 60,
           repeats: true,
+          channelId: ANDROID_CHANNEL_ID,
         } as Notifications.CalendarTriggerInput,
       });
     }
@@ -342,6 +375,7 @@ const syncNotificationsInner = async (opts?: {
           trigger: {
             type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
             ...base,
+            channelId: ANDROID_CHANNEL_ID,
           } as Notifications.CalendarTriggerInput,
         });
       } else if (simpleRepeat && r.every === 'week') {
@@ -352,6 +386,7 @@ const syncNotificationsInner = async (opts?: {
             type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
             weekday: WEEKDAY_INDEX[r.day!],
             ...base,
+            channelId: ANDROID_CHANNEL_ID,
           } as Notifications.CalendarTriggerInput,
         });
       } else if (simpleRepeat && r.every === 'weekday') {
@@ -363,6 +398,7 @@ const syncNotificationsInner = async (opts?: {
               type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
               weekday: wd,
               ...base,
+              channelId: ANDROID_CHANNEL_ID,
             } as Notifications.CalendarTriggerInput,
           });
         }
@@ -395,6 +431,7 @@ const syncNotificationsInner = async (opts?: {
             trigger: {
               type: Notifications.SchedulableTriggerInputTypes.DATE,
               date: fireDate,
+              channelId: ANDROID_CHANNEL_ID,
             } as Notifications.DateTriggerInput,
           });
         }
@@ -403,6 +440,76 @@ const syncNotificationsInner = async (opts?: {
   }
 
   return { granted: true };
+};
+
+/**
+ * Trial-ending nudge — one warm heads-up the day BEFORE the opt-in
+ * 7-day trial lapses (trialStartedAt + 6 days). Identifier-based and
+ * cancel+reschedule safe, exactly like the recap schedule: calling
+ * this again just moves the single pending fire, so it's cheap to
+ * re-run on every trial arm / sync.
+ *
+ * It self-cancels (schedules nothing) whenever there's nothing honest
+ * to say — status isn't 'trial', no trialStartedAt, or the day-6 mark
+ * is already in the past (a lapsed or near-lapsed trial shouldn't get
+ * a "wraps tomorrow" ping). The blanket sync cancel DOES wipe it
+ * (cancelAllScheduledNotificationsAsync), so syncNotificationsInner
+ * re-arms it after every wipe — startTrial()'s direct call just makes
+ * the first arm immediate instead of waiting for the next sync.
+ */
+export const scheduleTrialEnding = async () => {
+  if (Platform.OS === 'web') return;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { useUserStore } = require('../store/userStore') as typeof import('../store/userStore');
+  const u = useUserStore.getState();
+  // Always clear the previous pending fire first — reschedule-safe.
+  await Notifications.cancelScheduledNotificationAsync('lumi-trial-ending');
+  if (u.subscriptionStatus !== 'trial' || !u.trialStartedAt) return;
+
+  const start = new Date(u.trialStartedAt).getTime();
+  if (Number.isNaN(start)) return;
+  // Day 6 of a 7-day trial — the "wraps tomorrow" moment.
+  let fireMs = start + 6 * 24 * 60 * 60 * 1000;
+  if (fireMs <= Date.now()) return; // already past — nothing to warn about
+
+  // Quiet hours: if the natural fire lands inside the sleep window,
+  // nudge it forward to just after wake — same shift the come-back
+  // nudge uses, so nothing lands after the wind-down promise.
+  const prefs = u.notifPrefs;
+  const a = u.anchors;
+  if (prefs.quiet) {
+    const landing = new Date(fireMs);
+    const landingMin = landing.getHours() * 60 + landing.getMinutes();
+    if (!withinWakingHours(landingMin, a.wake, a.sleep, true)) {
+      const target = (a.wake + 45) % 1440;
+      let delta = target - landingMin;
+      if (delta <= 0) delta += 1440;
+      fireMs += delta * 60 * 1000;
+    }
+  }
+
+  await ensureAndroidChannel();
+  await Notifications.scheduleNotificationAsync({
+    identifier: 'lumi-trial-ending',
+    content: {
+      title: 'Lumi',
+      body: 'your trial wraps tomorrow — Lumi keeps working free, always. keep the extras?',
+      // Tap → the app opens the subscription surface.
+      data: { action: 'trial-ending' },
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: new Date(fireMs),
+      channelId: ANDROID_CHANNEL_ID,
+    } as Notifications.DateTriggerInput,
+  });
+};
+
+/** Drop the pending trial-ending nudge — called the moment the trial
+ *  converts to a paid subscription (status → 'active'). */
+export const cancelTrialEnding = async () => {
+  if (Platform.OS === 'web') return;
+  await Notifications.cancelScheduledNotificationAsync('lumi-trial-ending');
 };
 
 export const cancelAllReminders = async () => {

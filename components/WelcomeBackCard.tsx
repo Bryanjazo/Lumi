@@ -47,6 +47,9 @@ export const WelcomeBackCard = ({
       Haptics.selectionAsync();
       onDismiss();
     }}
+    accessibilityRole="button"
+    accessibilityLabel={`${scene}. ${line}`}
+    accessibilityHint="tap to dismiss"
     style={({ pressed }) => [styles.card, pressed && { opacity: 0.85 }]}
   >
     <View style={styles.edgeLight} />

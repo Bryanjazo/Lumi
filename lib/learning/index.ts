@@ -103,10 +103,24 @@ export const useLearningDigest = (
       existingRecurringTitles,
     });
 
-    const curve = computeEnergyCurve(checkins, chronotype, wakeHour, sleepHour);
+    // The energy curve + peak/low-day math now run on COMPLETIONS —
+    // WHEN you finish things is the activity signal (check-ins were
+    // retired and never populated). completedAt carries the hour +
+    // weekday we need. The self-reported daily-energy series below
+    // (Me tab / Recap) still reads check-in mood coordinates.
+    const completions = quests
+      .filter((q) => q.completed && q.completedAt)
+      .map((q) => ({ completedAt: q.completedAt as string }));
+
+    const curve = computeEnergyCurve(
+      completions,
+      chronotype,
+      wakeHour,
+      sleepHour,
+    );
     const energyTrend = last7DaysEnergy(checkins);
     const avgEnergy7 = avgRecentEnergy(checkins, 7);
-    const { peakDow, lowDow } = peakAndLowDays(checkins);
+    const { peakDow, lowDow } = peakAndLowDays(completions);
 
     const followThrough = computeFollowThrough(quests);
     const pattern = strongWindowInsight(followThrough);
@@ -153,6 +167,7 @@ export type {
   EnergyCurve,
   EnergySlot,
   Chronotype,
+  CompletionEvent,
 } from './energy';
 export type {
   FollowThrough,
