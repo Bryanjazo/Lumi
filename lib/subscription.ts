@@ -83,7 +83,11 @@ export const ANNUAL_SAVE_PCT = Math.round(
 );
 
 export const COMPARE_ROWS = [
-  { label: 'AI-sorted captures', free: '10 / week', pro: 'Unlimited' },
+  // Pro is a generous DAILY ceiling, not literally unlimited — the
+  // server enforces a premium daily cap (capture ~50/day). Show the
+  // real number so the claim survives an App Store audit and parallels
+  // the free "per week" cell honestly.
+  { label: 'AI-sorted captures', free: '10 / week', pro: '50 / day' },
   { label: 'AI sorting & re-plan', free: 'Basic', pro: 'Smart' },
   { label: '“Did you mean?” fixes', free: 'Rules', pro: 'AI-powered' },
   { label: '“Hey Lumi” hands-free', free: '—', pro: 'Wake word' },

@@ -28,9 +28,17 @@ import type { EnergyWindowKey } from '../../store/userStore';
  * The activity signal the curve + peak/low-day math run on: one event
  * per finished quest. We only need the timestamp — the hour-of-day
  * places it in a 30-min slot, the weekday feeds peakAndLowDays().
+ *
+ * SOURCE (see lib/learning/index.ts): these come from the durable
+ * userStore.completionLog ring buffer, NOT live Quest.completedAt rows.
+ * A recurring quest resets completedAt to null when it respawns each
+ * day, so live rows can't hold a habit's history — the densest signal
+ * we have would erase itself every morning and the curve could never
+ * graduate. The log stamps each award once and survives the respawn.
  */
 export interface CompletionEvent {
-  /** ISO timestamp the activity happened — Quest.completedAt. */
+  /** ISO timestamp the activity happened. From completionLog[i].at
+   *  (originally the award-time Quest.completedAt). */
   completedAt: string;
 }
 

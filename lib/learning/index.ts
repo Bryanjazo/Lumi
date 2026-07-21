@@ -74,6 +74,11 @@ export const useLearningDigest = (
   override?: Chronotype,
 ): LearningDigest => {
   const quests = useQuestStore((s) => s.quests);
+  // Durable completion timeline — survives recurring respawn (which
+  // nulls Quest.completedAt), so it's the real history the energy curve
+  // and peak/low-day math run on. See the read in the memo below.
+  // Appended once per award in completeQuestCore (userStore.logCompletion).
+  const completionLog = useUserStore((s) => s.completionLog);
   const suppressed = useSuggestionsStore((s) => s.suppressed);
   const sharpWindow = useUserStore((s) => s.sharpWindow);
   const foggyWindow = useUserStore((s) => s.foggyWindow);
@@ -101,13 +106,32 @@ export const useLearningDigest = (
       existingRecurringTitles,
     });
 
-    // The energy curve + peak/low-day math now run on COMPLETIONS —
-    // WHEN you finish things is the activity signal (check-ins were
-    // retired and never populated). completedAt carries the hour +
-    // weekday we need.
-    const completions = quests
-      .filter((q) => q.completed && q.completedAt)
-      .map((q) => ({ completedAt: q.completedAt as string }));
+    // The energy curve + peak/low-day math run on COMPLETIONS — WHEN
+    // you finish things is the activity signal (check-ins were retired
+    // and never populated).
+    //
+    // The durable source is userStore.completionLog, a capped ring
+    // buffer stamped on every award in completeQuestCore. We CANNOT read
+    // live quest rows for history: a recurring quest resets completedAt
+    // to null the moment it respawns (questStore respawn), so every
+    // daily habit — the densest, most-honest completion signal we have —
+    // erases its own timeline each morning. Reading the log means the
+    // curve finally accumulates across days and can graduate for a
+    // habit-driven user instead of being stuck at "learning" forever.
+    //
+    // Fallback: if the log is empty (a device that hasn't awarded
+    // anything since the log shipped), fall back to today's live
+    // completedAt rows so the curve keeps drawing something instead of
+    // going blank during the changeover.
+    const loggedCompletions = completionLog.map((e) => ({
+      completedAt: e.at,
+    }));
+    const completions =
+      loggedCompletions.length > 0
+        ? loggedCompletions
+        : quests
+            .filter((q) => q.completed && q.completedAt)
+            .map((q) => ({ completedAt: q.completedAt as string }));
 
     const curve = computeEnergyCurve(
       completions,
@@ -136,7 +160,7 @@ export const useLearningDigest = (
       avoidance,
       win,
     };
-  }, [quests, suppressed, chronotype, wakeHour, sleepHour]);
+  }, [quests, completionLog, suppressed, chronotype, wakeHour, sleepHour]);
 };
 
 // Re-export the detectors so callers don't have to know the layout.

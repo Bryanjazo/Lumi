@@ -345,6 +345,23 @@ const syncNotificationsInner = async (opts?: {
       .slice(0, 20); // sane ceiling on scheduled ids
     const now = new Date();
     const nowMin = now.getHours() * 60 + now.getMinutes();
+    // iOS silently DROPS pending notifications past a hard 64-per-app
+    // ceiling — and a single weekday quest arms 5 calendar ids (wd 2..6),
+    // so a full 20-quest slice could try to arm ~100 and shove the
+    // important FIXED pings (meds, recap, recovery, trial-ending,
+    // focus-end) off the edge with no warning. Those fixed/system
+    // notifications are already armed ABOVE this block, so we read the
+    // live pending count and spend only what's left under the ceiling on
+    // lower-value per-quest reminders. Anything that won't fit is logged,
+    // never silently lost. (Android has no such cap, but bounding there
+    // too keeps the two platforms' scheduled sets coherent.)
+    const IOS_PENDING_CAP = 64;
+    const SCHEDULED_HEADROOM = 4; // stay clear of the very top of the cap
+    let budget =
+      IOS_PENDING_CAP -
+      SCHEDULED_HEADROOM -
+      (await Notifications.getAllScheduledNotificationsAsync()).length;
+    const dropped: string[] = [];
     for (const q of quests) {
       const r = q.recur!;
       const winStart = effective[q.window]?.start;
@@ -368,6 +385,17 @@ const syncNotificationsInner = async (opts?: {
         ((r.every === 'day' && interval <= 1) ||
           (r.every === 'week' && interval <= 1 && !!r.day) ||
           r.every === 'weekday');
+      // A weekday rule fans out to 5 calendar ids; every other shape arms
+      // exactly one. Skip (and record) any quest whose reminder(s) won't
+      // fit the remaining budget rather than overrun the OS cap. We
+      // `continue` instead of `break` so a cheap 1-id quest later in the
+      // slice can still squeeze in behind an expensive weekday one.
+      const needed = simpleRepeat && r.every === 'weekday' ? 5 : 1;
+      if (budget < needed) {
+        dropped.push(q.title);
+        continue;
+      }
+      budget -= needed;
       if (simpleRepeat && r.every === 'day') {
         await Notifications.scheduleNotificationAsync({
           identifier: `lumi-recur-${q.id}`,
@@ -436,6 +464,13 @@ const syncNotificationsInner = async (opts?: {
           });
         }
       }
+    }
+    if (dropped.length > 0) {
+      // Not silent: surface exactly which quest reminders didn't arm so
+      // this lands in logs instead of as mysteriously missing pings.
+      console.warn(
+        `[notifications] ${dropped.length} recurring-quest reminder(s) skipped to stay under iOS's ${IOS_PENDING_CAP} pending-notification cap: ${dropped.join(', ')}`,
+      );
     }
   }
 

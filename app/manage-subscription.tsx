@@ -12,7 +12,7 @@
 // Subscription, outcome dispatch + error UX) is preserved from
 // the prior implementation.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -38,6 +38,7 @@ import {
   purchaseTier,
   restorePurchases,
   openManageSubscription,
+  getCurrentOffering,
 } from '../lib/revenuecat';
 
 const C = {
@@ -102,6 +103,42 @@ export default function ManageSubscriptionScreen() {
   const [purchasing, setPurchasing] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
+  // Localized store prices — mirrors paywall.tsx. The hardcoded USD
+  // PRICING constants stay as the instant fallback (offline /
+  // offerings-failed keeps a working page), but an international user
+  // must see what Apple will actually charge, not "$14.99" beside a
+  // €/¥ purchase sheet. Fetch the offering and read product.priceString.
+  const [storePrice, setStorePrice] = useState<{
+    annual?: string;
+    annualIntro?: string;
+    monthly?: string;
+  }>({});
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentOffering().then((offering) => {
+      if (cancelled || !offering) return;
+      const next: { annual?: string; annualIntro?: string; monthly?: string } =
+        {};
+      for (const p of offering.availablePackages) {
+        const price = p.product?.priceString;
+        if (!price) continue;
+        if (p.identifier === '$rc_annual') {
+          next.annual = price;
+          next.annualIntro = p.product?.introPrice?.priceString ?? undefined;
+        }
+        if (p.identifier === '$rc_monthly') next.monthly = price;
+      }
+      setStorePrice(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const monthlyLabel = storePrice.monthly ?? PRICING.monthly.label;
+  const annualRenewLabel = storePrice.annual ?? PRICING.annual.renewalLabel;
+  const annualFirstYearLabel =
+    storePrice.annualIntro ?? PRICING.annual.firstYearLabel;
+
   const annualSavePct = ANNUAL_SAVE_PCT;
 
   const handleBack = () => {
@@ -127,8 +164,8 @@ export default function ManageSubscriptionScreen() {
       Alert.alert(
         'You’re on Pro 💛',
         outcome.tier === 'annual'
-          ? `Welcome to Lumi Annual — your first year is $${PRICING.annual.firstYearAmountUSD}. Cancel anytime in Settings.`
-          : `Welcome to Lumi Monthly — $${PRICING.monthly.amountUSD}/month. Cancel anytime in Settings.`,
+          ? `Welcome to Lumi Annual — your first year is ${annualFirstYearLabel}. Cancel anytime in Settings.`
+          : `Welcome to Lumi Monthly — ${monthlyLabel}/month. Cancel anytime in Settings.`,
         [{ text: 'Open Lumi', onPress: () => router.replace('/(tabs)') }],
         { cancelable: false },
       );
@@ -207,8 +244,8 @@ export default function ManageSubscriptionScreen() {
 
   const ctaLabel =
     selected === 'annual'
-      ? `Upgrade to Pro · ${PRICING.annual.firstYearLabel} / year`
-      : `Upgrade to Pro · ${PRICING.monthly.label} / month`;
+      ? `Upgrade to Pro · ${annualFirstYearLabel} / year`
+      : `Upgrade to Pro · ${monthlyLabel} / month`;
 
   const statusContent = (() => {
     if (access.hasActiveSubscription) {
@@ -335,13 +372,11 @@ export default function ManageSubscriptionScreen() {
                   const on = selected === k;
                   const label = k === 'annual' ? 'Yearly' : 'Monthly';
                   const price =
-                    k === 'annual'
-                      ? PRICING.annual.firstYearLabel
-                      : PRICING.monthly.label;
+                    k === 'annual' ? annualFirstYearLabel : monthlyLabel;
                   const per = k === 'annual' ? '/yr' : '/mo';
                   const note =
                     k === 'annual'
-                      ? `then ${PRICING.annual.renewalLabel}/yr · billed yearly`
+                      ? `then ${annualRenewLabel}/yr · billed yearly`
                       : 'billed monthly';
                   const save =
                     k === 'annual' && annualSavePct > 0
@@ -424,12 +459,12 @@ export default function ManageSubscriptionScreen() {
               </Pressable>
               <Text style={styles.ctaDisclaimer}>
                 {selected === 'annual'
-                  ? `${PRICING.annual.firstYearLabel} first year, renews at ${PRICING.annual.renewalLabel}/yr. Cancel anytime — your free plan never expires.`
+                  ? `${annualFirstYearLabel} first year, renews at ${annualRenewLabel}/yr. Cancel anytime — your free plan never expires.`
                   : access.trialAlreadyUsed
                     ? // Don't promise a trial the user already spent —
                       // mirror the paywall, which adapts the same way.
-                      `${PRICING.monthly.label}/mo. Cancel anytime — your free plan never expires.`
-                    : `7-day free trial, then ${PRICING.monthly.label}/mo. Cancel anytime — your free plan never expires.`}
+                      `${monthlyLabel}/mo. Cancel anytime — your free plan never expires.`
+                    : `7-day free trial, then ${monthlyLabel}/mo. Cancel anytime — your free plan never expires.`}
               </Text>
             </>
           )}

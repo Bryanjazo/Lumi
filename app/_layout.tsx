@@ -42,7 +42,7 @@ import { useQuestStore } from '../store/questStore';
 import { useSession, handleAuthDeepLink } from '../lib/auth';
 import { syncNotifications } from '../lib/notifications';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { useCloudSync, useSyncStatus } from '../lib/sync';
+import { useCloudSync, useSyncStatus, pushDirtyNow } from '../lib/sync';
 import { useWidgetSync } from '../lib/widget';
 import {
   configureRevenueCat,
@@ -252,6 +252,21 @@ export default function RootLayout() {
   const markOnboardedForUser = useUserStore((s) => s.markOnboardedForUser);
   const { session, loading: sessionLoading } = useSession();
   useCloudSync(session);
+
+  // Flush unpushed local writes on return-to-foreground. pushQuests
+  // swallows a failed network write with no retry, so a completion made
+  // offline (or on flaky LTE) would silently revert on the next pull —
+  // the classic "I marked it done and it came back" data loss. This is
+  // the reconnect retry path; pushDirtyNow self-gates on offlineMode +
+  // pulledFor and never throws, so it's safe to fire on every active.
+  useEffect(() => {
+    const uid = session?.user.id;
+    if (!uid) return;
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') void pushDirtyNow(uid);
+    });
+    return () => sub.remove();
+  }, [session?.user.id]);
 
   // Lapsed-subscriber win-back. useAccessStatus derives winBackDue
   // locally (former payer, now on a lapsed shape, sheet not yet seen)

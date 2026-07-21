@@ -250,7 +250,19 @@ interface UserState {
     doneLog: Record<string, number>;
     tasksEver: number;
     focusMin: number;
+    /** This device's share of lifetime XP. Displayed `xp` is the
+     *  derived total (frozen users.xp base + Σ every device's slice);
+     *  earning XP bumps BOTH so concurrent devices SUM instead of
+     *  max-merging (max(110,110)=110 lost a session's 10). */
+    xp: number;
   };
+  /** Durable timestamped completion history — a capped ring buffer the
+   *  learning engine reads to build the energy curve / peak+slump days.
+   *  Recurring habits reset their row's completedAt to null on daily
+   *  respawn, erasing the densest activity signal from live quest rows;
+   *  this log survives that. Append-once-per-award in completeQuestCore. */
+  completionLog: { at: string }[];
+  logCompletion: (atIso: string) => void;
   /** True once a pull has folded the cloud copy of this device's
    *  slice into deviceLedger (local is then the cumulative superset
    *  and MUST be written as-is). False only after a wipe, when local
@@ -536,7 +548,8 @@ export const useUserStore = create<UserState>()(
       medsNudge: false,
       roomTint: 'none',
       doneLog: {},
-      deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0 },
+      completionLog: [],
+      deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0, xp: 0 },
       // Default TRUE (also what pre-flag persisted states migrate to):
       // an existing install's ledger is already cumulative, and a
       // fresh install's is empty (the pull's empty-local adoption
@@ -605,7 +618,19 @@ export const useUserStore = create<UserState>()(
       setPetName: (petName) => set({ petName }),
       setAdhdType: (adhdType) => set({ adhdType }),
 
-      addXp: (amount) => set((s) => ({ xp: s.xp + amount })),
+      addXp: (amount) =>
+        set((s) => ({
+          xp: s.xp + amount,
+          // Mirror into THIS device's delta slice (same pattern as
+          // bumpTasksEver / addFocusMinutes) so the pull sums slices
+          // instead of max-merging cloud vs local XP. The `xp` above is
+          // the derived display total; the slice is what other devices
+          // add to their own on pull.
+          deviceLedger: {
+            ...s.deviceLedger,
+            xp: s.deviceLedger.xp + amount,
+          },
+        })),
 
       registerActivity: () => {
         const last = get().lastActiveDate;
@@ -829,6 +854,13 @@ export const useUserStore = create<UserState>()(
       setNotificationsEnabled: (on) => set({ notificationsEnabled: on }),
       setOfflineMode: (on) => set({ offlineMode: on }),
       addShard: () => set((s) => ({ shards: s.shards + 1 })),
+      logCompletion: (atIso) =>
+        set((s) => ({
+          // Cap at 400 — comfortably covers the learning engine's
+          // 28-day lookback even for a heavy multi-habit day, bounded
+          // so the persisted (encrypted) blob can't grow forever.
+          completionLog: [...s.completionLog, { at: atIso }].slice(-400),
+        })),
       setSubscription: ({ status, tier, currentPeriodEnd }) => {
         set((s) => {
           // Downgrade hygiene: losing premium un-equips a Pro skin in
@@ -921,7 +953,8 @@ export const useUserStore = create<UserState>()(
           medsNudge: false,
           roomTint: 'none',
           doneLog: {},
-          deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0 },
+          completionLog: [],
+          deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0, xp: 0 },
           deviceLedgerSynced: false,
           activeDaysThisMonth: 0,
           focusMinutesLifetime: 0,
@@ -974,7 +1007,7 @@ export const useUserStore = create<UserState>()(
     {
       name: 'lumi.user',
       storage: createJSONStorage(() => secureStorage),
-      version: 16,
+      version: 18,
       /**
        * v1 → v2: re-trigger the canonical onboarding for anyone who
        * went through the OLD terracotta-era flow. We can tell them
@@ -990,6 +1023,27 @@ export const useUserStore = create<UserState>()(
         if (!persisted || typeof persisted !== 'object')
           return persisted as never;
         const state = persisted as Partial<UserState>;
+        if (version < 18) {
+          // completionLog (durable learning signal) added — backfill so
+          // the learning selector never reads undefined.
+          if (!state.completionLog) state.completionLog = [];
+        }
+        if (version < 17) {
+          // XP joined the per-device ledger slice (was a lossy max-merge
+          // on users.xp). Existing XP stays in the frozen users.xp base
+          // column; this device's slice starts at 0 so the pull's
+          // base + Σ slices equals the current total exactly — no double
+          // count, no loss. Backfill the new slice key so addXp's raw
+          // `slice.xp + amount` never hits undefined → NaN. (A persisted
+          // state that predates deviceLedger entirely gets the whole
+          // slice from the default-merge with initial state.)
+          if (
+            state.deviceLedger &&
+            (state.deviceLedger as { xp?: number }).xp === undefined
+          ) {
+            (state.deviceLedger as { xp?: number }).xp = 0;
+          }
+        }
         if (version < 16) {
           // The cat's default name was 'Luna' in early builds; the
           // brand (and current default) is 'Lumi'. Migrate only the

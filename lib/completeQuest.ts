@@ -50,6 +50,12 @@ export const completeQuestCore = (questId: string): CompletionResult | null => {
     const u = useUserStore.getState();
     u.addXp(gain);
     u.addShard();
+    // Durable completion timestamp for the learning engine — logged
+    // here, the one award choke point, so it's gated by the same
+    // xpPaid guard (no double-log on undo→re-complete or same-day
+    // recurring re-award). A recurring habit's row loses its
+    // completedAt on respawn; this log is the history that survives.
+    u.logCompletion(new Date().toISOString());
     useQuestStore.getState().markXpPaid(questId);
   }
   useUserStore.getState().registerActivity();

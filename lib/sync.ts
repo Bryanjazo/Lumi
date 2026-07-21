@@ -62,7 +62,6 @@ const pushUser = async (userId: string, forceLedgers = false) => {
   let onboarded = s.onboarded;
   let adhdType = s.adhdType;
   let name = s.name;
-  let xp = s.xp;
   let streak = s.streak;
   let lastActiveDate = s.lastActiveDate;
   let petName = s.petName;
@@ -88,7 +87,6 @@ const pushUser = async (userId: string, forceLedgers = false) => {
       onboarded = onboarded || cur.onboarded === true;
       adhdType = adhdType ?? (cur.adhd_type as typeof adhdType) ?? null;
       name = name || ((cur.name as string | null) ?? '');
-      xp = Math.max(xp, (cur.xp as number | null) ?? 0);
       const cloudDate = (cur.last_active_date as string | null) ?? '';
       if (cloudDate > (lastActiveDate ?? '')) {
         // Cloud reflects more recent activity — keep its streak pair.
@@ -125,7 +123,11 @@ const pushUser = async (userId: string, forceLedgers = false) => {
       pet_name: petName,
       adhd_type: adhdType,
       level: 1,
-      xp,
+      // xp is NO LONGER written here — it moved into the per-device
+      // ledger slice (below). users.xp freezes as the pre-cutover base
+      // and the pull sums base + Σ slices for an exact cross-device
+      // total. Writing the derived display xp back would double-count
+      // it against this device's own slice on the next pull.
       streak,
       last_active_date: lastActiveDate,
       shield_available: shieldAvailable,
@@ -156,6 +158,7 @@ const pushUser = async (userId: string, forceLedgers = false) => {
     const sliceEmpty =
       slice.tasksEver === 0 &&
       slice.focusMin === 0 &&
+      slice.xp === 0 &&
       Object.keys(slice.doneLog).length === 0;
     if (!pulled) {
       // Before the pull adopts my cloud slice, local is only the
@@ -190,6 +193,7 @@ const pushUser = async (userId: string, forceLedgers = false) => {
     if (
       slice.tasksEver === 0 &&
       slice.focusMin === 0 &&
+      slice.xp === 0 &&
       Object.keys(slice.doneLog).length === 0
     ) {
       return; // nothing to say — don't write an empty slice
@@ -209,11 +213,19 @@ interface LedgerSlice {
   doneLog?: Record<string, number>;
   tasksEver?: number;
   focusMin?: number;
+  // XP joined the slice (was a lossy max-merge on users.xp). Optional
+  // on the wire so a pre-cutover slice with no xp key reads as 0.
+  xp?: number;
 }
 
 const normalizeSlice = (
   raw: LedgerSlice | null | undefined,
-): { doneLog: Record<string, number>; tasksEver: number; focusMin: number } => {
+): {
+  doneLog: Record<string, number>;
+  tasksEver: number;
+  focusMin: number;
+  xp: number;
+} => {
   const doneLog: Record<string, number> = {};
   for (const [d, n] of Object.entries(raw?.doneLog ?? {})) {
     const v = Number(n);
@@ -223,6 +235,7 @@ const normalizeSlice = (
     doneLog,
     tasksEver: Number(raw?.tasksEver) || 0,
     focusMin: Number(raw?.focusMin) || 0,
+    xp: Number(raw?.xp) || 0,
   };
 };
 
@@ -240,6 +253,7 @@ const addSlices = (
     doneLog,
     tasksEver: a.tasksEver + b.tasksEver,
     focusMin: a.focusMin + b.focusMin,
+    xp: a.xp + b.xp,
   };
 };
 
@@ -264,6 +278,14 @@ const pushQuests = async (userId: string) => {
   }
   const quests = store.quests;
   if (quests.length === 0) return;
+  // Snapshot time — captured BEFORE the network write. On success it
+  // becomes lastPushedAt, so every completion with completedAt <= this
+  // is now known to be on the cloud. The pull merge reads it to tell an
+  // un-pushed local completion (keep — the cloud just hasn't caught up)
+  // from a genuine cross-device un-complete that already synced (adopt).
+  // A completion made DURING the await isn't in this snapshot and has a
+  // later completedAt, so it correctly still counts as un-pushed.
+  const pushedAt = new Date().toISOString();
   // Skip legacy non-UUID ids (the old `q_<ts>_<rand>` format from
   // pre-1019 builds). The cloud column is `uuid`; sending strings
   // that don't parse trips a 400 on every push. Those quests stay
@@ -298,7 +320,15 @@ const pushQuests = async (userId: string) => {
   const { error } = await supabase.from('quests').upsert(rows, {
     onConflict: 'id',
   });
-  if (error) console.warn('[sync] pushQuests', error.message);
+  if (error) {
+    // Swallowed (offline / transient) — the completion stays local and
+    // lastPushedAt is NOT advanced, so the pull's un-pushed guard keeps
+    // protecting it. The retry is the foreground/reconnect flush
+    // (pushDirtyNow) plus the next debounced store write.
+    console.warn('[sync] pushQuests', error.message);
+  } else {
+    useQuestStore.getState().markQuestsPushed(pushedAt);
+  }
 };
 
 // ── push: checkins (insert-only) ────────────────────────────────────────
@@ -473,6 +503,13 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       Number(userRow.tasks_ever_completed as number | null) || 0;
     let ledgerFocusMin =
       Number(userRow.focus_minutes_lifetime as number | null) || 0;
+    // XP: same delta-slice treatment. users.xp is the FROZEN pre-cutover
+    // base (updated clients no longer write it); every device's earned
+    // XP lives in its own slice, so the sum is exact even when two
+    // devices earn different amounts the same session (the old
+    // Math.max(local, cloud) lost the smaller — max(110,110)=110 when
+    // the truth was 120).
+    let ledgerXp = Number(userRow.xp as number | null) || 0;
     for (const sl of allSlices) {
       for (const [d, n] of Object.entries(sl.doneLog)) {
         const v = (ledgerDone[d] ?? 0) + n;
@@ -481,6 +518,7 @@ export const pullAll = async (userId: string): Promise<boolean> => {
       }
       ledgerTasksEver += sl.tasksEver;
       ledgerFocusMin += sl.focusMin;
+      ledgerXp += sl.xp;
     }
     // Subscription source-of-truth precedence (top wins):
     //   1. Local 'active' from the RC SDK customer-info listener
@@ -547,8 +585,12 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         (userRow.pet_name === 'Luna' ? 'Lumi' : userRow.pet_name) ??
         localState.petName,
       adhdType: userRow.adhd_type ?? localState.adhdType,
-      // XP is a monotonic lifetime total — max is the honest merge.
-      xp: Math.max(localState.xp, userRow.xp ?? 0),
+      // XP — EXACT cross-device total: frozen users.xp base + Σ
+      // per-device slices (ledgerXp, computed above). Was
+      // Math.max(local, cloud), which silently under-counted when two
+      // devices earned XP the same session; level math (levelFromXp)
+      // reads this derived total and stays consistent.
+      xp: Math.max(0, ledgerXp),
       // Streak is NOT monotonic — a blind max resurrected a streak the
       // user had already broken locally (local 0/1 vs a stale cloud
       // 15). Streak + lastActiveDate move together: adopt whichever
@@ -706,18 +748,26 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         prior?.recur != null &&
         (prior.lastSpawnedDate ?? '') >
           ((r.last_spawned_date as string | null) ?? '');
-      // FRESH-COMPLETION GUARD: a completion made seconds ago races
-      // the debounced push — a mid-session re-pull (offline toggle,
-      // re-sign-in) adopting the stale cloud `false` un-did it, and
-      // the forced xpPaid stamp then denied XP for re-completing. A
-      // local completion from the last few minutes outranks a stale
-      // cloud row; cross-device undo settles on the next pull cycle.
-      const freshLocalDone =
+      // UN-PUSHED-COMPLETION GUARD: a local completion the cloud row
+      // hasn't caught up to must NEVER be reverted — that's silent data
+      // loss (and the forced xpPaid stamp below then denies XP on
+      // re-complete). The old guard only held for 10 minutes, so an
+      // OFFLINE completion whose debounced push failed reverted on the
+      // next pull once that window passed. Now we compare the completion
+      // time to the last SUCCESSFUL quest push (lastPushedAt): if the
+      // completion is newer than the last push — or there's been no
+      // successful push at all — it hasn't reached the cloud yet, so
+      // local wins regardless of age. A genuine cross-device un-complete
+      // DID reach the cloud AFTER our push (completedAt <= lastPush) and
+      // is correctly adopted. Both are ISO strings → lexicographic
+      // compare is chronological.
+      const lastPush = useQuestStore.getState().lastPushedAt;
+      const localDoneUnpushed =
         !localRespawnNewer &&
         prior?.completed === true &&
         r.completed === false &&
         prior.completedAt != null &&
-        Date.now() - Date.parse(prior.completedAt) < 10 * 60000;
+        (lastPush == null || prior.completedAt > lastPush);
       byId.set(r.id, {
         id: r.id,
         title: r.title,
@@ -727,12 +777,12 @@ export const pullAll = async (userId: string): Promise<boolean> => {
         xpReward: r.xp_reward,
         completed: localRespawnNewer
           ? (prior?.completed ?? false)
-          : freshLocalDone
+          : localDoneUnpushed
             ? true
             : r.completed,
         completedAt: localRespawnNewer
           ? (prior?.completedAt ?? null)
-          : freshLocalDone
+          : localDoneUnpushed
             ? (prior?.completedAt ?? null)
             : r.completed_at,
         date: localRespawnNewer ? (prior?.date ?? r.date) : r.date,
@@ -770,6 +820,11 @@ export const pullAll = async (userId: string): Promise<boolean> => {
           Object.keys(prior.calendarEventIds).length > 0 && {
             calendarEventIds: prior.calendarEventIds,
           }),
+        // firstStep is DEVICE-LOCAL (no cloud column) — carry the prior
+        // local value across the pull. Without this it fell out of the
+        // rebuilt row on EVERY cold start, wiping the one small first
+        // step the user was looking at.
+        ...(prior?.firstStep != null && { firstStep: prior.firstStep }),
         // xpPaid: local stamp OR the cloud stamp OR completed (a
         // completed task has already been paid) — force true so a
         // re-complete after undo can never re-award XP/shards. For a
@@ -951,6 +1006,36 @@ export const pushAllNow = async (userId: string): Promise<void> => {
     // the cloud skin/traits/bond.
     pushPet(userId),
   ]);
+};
+
+/**
+ * Flush unsynced local work to the cloud NOW — the retry the debounced
+ * subscription pushes never had. Those pushes swallow network errors
+ * (offline / transient) and had no re-fire, so an offline completion
+ * silently reverted on the next pull (data loss). Wire this from
+ * app/_layout.tsx to AppState 'active' (and any reconnect signal) so
+ * returning to the foreground re-attempts the flush.
+ *
+ * Unlike the sign-out flush (pushAllNow, forceLedgers) this uses the
+ * NORMAL pushUser and only runs AFTER the pull has merged the cloud
+ * (pulledFor) — pre-pull local can be post-wipe defaults, and it must
+ * never fold ledger slices. Never throws; the inner pushes self-gate
+ * and log their own failures.
+ */
+export const pushDirtyNow = async (userId: string): Promise<void> => {
+  if (!isSupabaseConfigured) return;
+  if (useUserStore.getState().offlineMode) return;
+  // Only after this device merged the cloud — same gate the debounced
+  // pushes fire behind (see whenPulled in useCloudSync).
+  if (!useSyncStatus.getState().pulledFor[userId]) return;
+  await Promise.all([
+    pushUser(userId),
+    pushQuests(userId),
+    pushCheckins(userId),
+    pushPet(userId),
+  ]).catch((e) => {
+    console.warn('[sync] pushDirtyNow', e instanceof Error ? e.message : e);
+  });
 };
 
 export const useCloudSync = (session: Session | null) => {

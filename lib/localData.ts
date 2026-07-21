@@ -90,7 +90,7 @@ export const resetLocalUserData = (): void => {
     medsNudge: false,
     activeDaysThisMonth: 0,
     focusMinutesLifetime: 0,
-    deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0 },
+    deviceLedger: { doneLog: {}, tasksEver: 0, focusMin: 0, xp: 0 },
     // Post-wipe the slice counts from zero — the cloud copy is the
     // only record of this device's history, so the next pull (or the
     // sign-out force-flush) must fold it back in exactly once.
@@ -100,6 +100,9 @@ export const resetLocalUserData = (): void => {
     // Completion-history ledger — Patterns merges this into its
     // heatmap; the next account must not inherit it.
     doneLog: {},
+    // Timestamped completion history is the previous user's rhythm —
+    // the next account's learning engine must start blank.
+    completionLog: [],
     roomTint: 'none',
     // Calendar wiring is per-user consent — a new account silently
     // mirroring tasks into the previous user's calendars is a leak

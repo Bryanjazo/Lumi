@@ -176,8 +176,8 @@ export const UpgradePromptSheet = () => {
   const headlineBody = onTrial
     ? "Even Pro has a fair-use ceiling, but it resets soon. The quick sorts below still work in the meantime."
     : trialAlreadyUsed
-      ? `Subscribe to keep things unlimited — ${PRICING.annual.firstYearLabel}/yr first year, or ${PRICING.monthly.label}/mo.`
-      : "Want unlimited? Try 7 days of Pro free — no card, no charge, slide back to free if it's not for you.";
+      ? `Subscribe for the generous daily AI — ${PRICING.annual.firstYearLabel}/yr first year, or ${PRICING.monthly.label}/mo.`
+      : "Want more? Try 7 days of Pro free — no card, no charge, slide back to free if it's not for you.";
 
   const primaryCta = onTrial
     ? 'Got it'

@@ -2861,9 +2861,50 @@ function HomeInner() {
       raw: t.title,
       needsFollowup: false,
     });
-    return llmTasks.map((llmTask, i) =>
-      patchWithUnderstood(detTasks[i] ?? stub(llmTask), llmTask),
-    );
+    // Content-word overlap between an LLM task and a deterministic
+    // fragment. The LLM's title is a cleaned slice of the raw text
+    // ("call mom at 5" → "call mom"), so its content words should
+    // land inside the deterministic fragment's raw/title when they're
+    // truly the SAME task. ≥3-char words only, majority must hit.
+    const contentWords = (s: string): string[] =>
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 3);
+    const sameTask = (llmTask: UnderstoodTask, det: SmartTask): boolean => {
+      const words = contentWords(llmTask.title);
+      if (words.length === 0) return false;
+      const detWords = new Set([
+        ...contentWords(det.raw),
+        ...contentWords(det.title),
+      ]);
+      const hits = words.filter((w) => detWords.has(w)).length;
+      return hits / words.length >= 0.5;
+    };
+    return llmTasks.map((llmTask, i) => {
+      const base = detTasks[i];
+      if (!base) return patchWithUnderstood(stub(llmTask), llmTask);
+      // POSITIONAL-MERGE HAZARD: the LLM and the deterministic splitter
+      // don't always agree on how many fragments the input holds. When
+      // their splits diverge, detTasks[i] is NOT guaranteed to be the
+      // same task as llmTask — so inheriting its clock time (`at` /
+      // `timeOptions` / `date`) by mere array position pins one
+      // fragment's "at 5pm" onto an unrelated task. Only let the
+      // deterministic time survive when the content actually matches;
+      // otherwise strip those anchors so the LLM's own time wins
+      // (null ⇒ the task stays windowed, never wrongly anchored).
+      const safeBase = sameTask(llmTask, base)
+        ? base
+        : {
+            ...base,
+            at: null,
+            date: null,
+            timeMode: 'windowed' as const,
+            timeOptions: undefined,
+          };
+      return patchWithUnderstood(safeBase, llmTask);
+    });
   };
 
   /** Merge an UnderstoodTask onto a deterministic SmartTask. The
@@ -3083,8 +3124,23 @@ function HomeInner() {
           llmProposalRef.current = merged.map((t) => ({ ...t }));
           setPreviewTasks(merged);
           logCaptureRaw(text, merged, 'llm', gate.reason);
+        } else if (llmTasks) {
+          // NON-NULL EMPTY array — the LLM understood the input and
+          // decided there's NO task in it (pure emotion/vent). That's
+          // a real, correct answer, NOT a failure. Resurrecting the
+          // deterministic vent-derived task here is the bug: it turns
+          // "i'm so tired of this" into a to-do. So show no cards —
+          // just a calm acknowledgment in Lumi's voice, and leave the
+          // pill clear. (null, below, is the only true failure path.)
+          updateAiMetric(metricId, {
+            route: 'dym',
+            reason: 'vent-empty',
+            latencyMs: Date.now() - startedAt,
+          });
+          triggerEmpathize();
+          showToast('nothing to add there — i’m here.');
         } else {
-          // LLM failed or timed out — fall back to deterministic
+          // LLM failed or timed out (null) — fall back to deterministic
           // so the user still gets SOMETHING (better than nothing).
           updateAiMetric(metricId, {
             route: 'llm_fallback',
@@ -3663,6 +3719,21 @@ function HomeInner() {
       if (llmTasks && llmTasks.length > 0) {
         updateAiMetric(metricId, { latencyMs: Date.now() - startedAt });
         return smartTasksFromLlm(llmTasks, detTasks);
+      }
+      if (llmTasks) {
+        // NON-NULL EMPTY array — the LLM heard a pure vent, no task.
+        // Hands-free is worse than the pill here: falling through to
+        // the deterministic vent-task would AUTO-COMMIT a to-do the
+        // user never asked for, with no preview to catch it. So return
+        // nothing — useHeyLumi commits zero tasks — and let Lumi sit
+        // with them instead of manufacturing work.
+        updateAiMetric(metricId, {
+          route: 'dym',
+          reason: 'vent-empty',
+          latencyMs: Date.now() - startedAt,
+        });
+        triggerEmpathize();
+        return [];
       }
       updateAiMetric(metricId, {
         route: 'llm_fallback',

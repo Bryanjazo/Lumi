@@ -59,6 +59,17 @@ interface SpeechModule {
     }): void;
     stop(): void;
     abort(): void;
+    /** Cheap synchronous probe — true when the on-device recognition
+     *  SERVICE exists. Says nothing about whether a given locale's
+     *  offline model is installed (gate per-locale via
+     *  getSupportedLocales). May be absent on older module builds. */
+    supportsOnDeviceRecognition?(): boolean;
+    /** `installedLocales` = the locales with an on-device model
+     *  actually downloaded. May be absent on older module builds. */
+    getSupportedLocales?(opts?: object): Promise<{
+      locales: string[];
+      installedLocales: string[];
+    }>;
   };
   useSpeechRecognitionEvent: (
     event: string,
@@ -81,6 +92,46 @@ const noopHook: SpeechModule['useSpeechRecognitionEvent'] = () => {};
 const ExpoSpeechRecognitionModule = _speech?.ExpoSpeechRecognitionModule;
 const useSpeechRecognitionEvent =
   _speech?.useSpeechRecognitionEvent ?? noopHook;
+
+// ── On-device capability probe (mirror of lib/voice.ts) ────────────
+// The always-on WAKE mic MUST run on-device — the header above
+// promises "no audio leaves the phone during wake listening", so we
+// can never let the wake loop stream ambient room audio to Apple's
+// cloud recognizer. supportsOnDeviceRecognition() only tells us the
+// on-device SERVICE exists; it does NOT tell us the selected locale's
+// offline model is downloaded, so we also gate on installedLocales
+// (the same per-locale check the pill mic uses). Probed once at module
+// load; `installedLocalesCache` stays null until it resolves.
+//
+// `localesProbeSettled` is the extra bit the wake loop needs that
+// voice.ts doesn't: voice.ts can treat an unresolved probe as "just
+// use the cloud recognizer", but the wake loop must not — so it has to
+// distinguish "probe still running" (wait) from "probe finished/errored
+// and this locale is NOT confirmed on-device" (disable). It starts true
+// when there's no probe to await (older builds without the method).
+let installedLocalesCache: string[] | null = null;
+const _localesProbe = ExpoSpeechRecognitionModule?.getSupportedLocales?.();
+let localesProbeSettled = _localesProbe == null;
+void _localesProbe
+  ?.then((r) => {
+    installedLocalesCache = r.installedLocales ?? [];
+  })
+  .catch(() => {
+    // Probe failed — leave the cache null. A settled-but-null probe
+    // means we can't confirm on-device, which the wake gate treats as
+    // "disable", never "fall back to cloud".
+  })
+  .finally(() => {
+    localesProbeSettled = true;
+  });
+
+/** True only when the SELECTED capture locale has an on-device speech
+ *  model confirmed installed — the same per-locale gate lib/voice.ts
+ *  applies to the pill mic. */
+const onDeviceReady = (lang: string): boolean =>
+  (ExpoSpeechRecognitionModule?.supportsOnDeviceRecognition?.() ?? false) &&
+  installedLocalesCache != null &&
+  installedLocalesCache.includes(lang);
 
 /** Profile toggle calls this when the user flips Hey Lumi ON so the
  *  permission prompt happens at an explainable moment, not at some
@@ -278,16 +329,44 @@ export const useHeyLumi = (opts: HeyLumiOpts): HeyLumiController => {
       later(() => beginSession(mode), 250);
       return;
     }
+    // Same locale as the pill mic — "hey Lumi" is a proper noun and
+    // survives non-English recognizers.
+    const lang = useUserStore.getState().captureLang || 'en-US';
+    const onDevice = onDeviceReady(lang);
+    // PRIVACY GATE — the always-on WAKE mic must run on-device (header:
+    // "no audio leaves the phone during wake listening"). If on-device
+    // recognition isn't confirmed for this locale we DISABLE the wake
+    // loop rather than silently stream ambient room audio to Apple's
+    // cloud recognizer — we never fall back to the network path here.
+    // (The post-wake COMMAND capture is user-initiated and follows the
+    // pill mic's normal gating below: on-device when the model's
+    // installed, cloud otherwise.)
+    if (mode === 'wake' && !onDevice) {
+      if (installedLocalesCache == null && !localesProbeSettled) {
+        // Capability probe (fired at module load) hasn't resolved yet —
+        // wait a beat instead of disabling on a cold-start race or
+        // leaking to the cloud. The staleness guards above make the
+        // re-entry safe.
+        later(() => beginSession('wake'), 400);
+        return;
+      }
+      // On-device recognition genuinely isn't available for this locale
+      // — stand the feature down and let Home surface why (it flips the
+      // pref off). Honest over silently-cloud-streaming.
+      optsRef.current.onMicProblem();
+      return;
+    }
     try {
       setForeignVoiceSession(true);
       modeRef.current = mode;
       ExpoSpeechRecognitionModule.start({
-        // Same locale as the pill mic — "hey Lumi" is a proper noun
-        // and survives non-English recognizers.
-        lang: useUserStore.getState().captureLang || 'en-US',
+        lang,
         interimResults: true,
         continuous: true,
-        requiresOnDeviceRecognition: false,
+        // WAKE is guaranteed on-device by the gate above. COMMAND
+        // mirrors the pill mic: on-device when this locale's offline
+        // model is installed, else the network recognizer.
+        requiresOnDeviceRecognition: mode === 'wake' ? true : onDevice,
       });
     } catch {
       // Recognizer busy (phone call, another session winding down) —

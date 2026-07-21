@@ -642,22 +642,29 @@ export const AuthDoor = ({ initialMode }: Props) => {
             </View>
           )}
 
-          {/* Social row */}
+          {/* Social row. Apple is iOS-only: signInWithApple() hard-
+              throws "only available on iOS" on Android, which isn't a
+              cancel marker and would paint a red error banner on first
+              tap — so we never render the button off-iOS. Google stays
+              on both platforms; with one button the row's flex:1 button
+              simply spans full width. */}
           <View style={styles.socialRow}>
-            <Pressable
-              onPress={() => handleSocial('apple')}
-              disabled={loading}
-              style={[
-                styles.socialBtn,
-                styles.appleBtn,
-                loading && { opacity: 0.55 },
-              ]}
-            >
-              <AppleGlyph color={TC.void} />
-              <Text style={[styles.socialText, { color: TC.void }]}>
-                Apple
-              </Text>
-            </Pressable>
+            {Platform.OS === 'ios' && (
+              <Pressable
+                onPress={() => handleSocial('apple')}
+                disabled={loading}
+                style={[
+                  styles.socialBtn,
+                  styles.appleBtn,
+                  loading && { opacity: 0.55 },
+                ]}
+              >
+                <AppleGlyph color={TC.void} />
+                <Text style={[styles.socialText, { color: TC.void }]}>
+                  Apple
+                </Text>
+              </Pressable>
+            )}
             <Pressable
               onPress={() => handleSocial('google')}
               disabled={loading}

@@ -51,7 +51,7 @@ ALSO IN LUMI
 • Works fully offline: the understanding engine on your phone doesn't need the cloud
 
 FREE & PRO
-The core of Lumi is free, forever — capture, organize, focus, learn. Lumi Pro adds unlimited AI conversations and deeper insight, with a free trial to see if it earns its keep. Your free plan never expires.
+The core of Lumi is free, forever — capture, organize, focus, learn. Lumi Pro adds generous daily AI conversations and deeper insight, with a free trial to see if it earns its keep. Your free plan never expires.
 
 Built for ADHD brains. Made for anyone whose mind is loud.
 

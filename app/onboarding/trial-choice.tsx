@@ -34,8 +34,8 @@ import { PRICING } from '../../lib/subscription';
 import { isReduceMotionEnabled } from '../../lib/useReducedMotion';
 
 const BENEFITS: { glyph: string; text: string }[] = [
-  { glyph: '✦', text: 'Unlimited Untangle conversations' },
-  { glyph: '◐', text: 'Unlimited smart capture + AI sorting' },
+  { glyph: '✦', text: 'Generous daily Untangle conversations' },
+  { glyph: '◐', text: 'Generous daily smart capture + AI sorting' },
   { glyph: '◇', text: 'The full weekly recap narrative' },
   { glyph: '♡', text: 'Themes, deep insights, all unlocks' },
 ];
@@ -181,7 +181,7 @@ export default function TrialChoiceScreen() {
             7 days of Pro Lumi — on me.
           </Text>
           <Text style={styles.subtitle}>
-            See what unlimited feels like. No card, no charge. If it&apos;s
+            See what the full Pro AI feels like. No card, no charge. If it&apos;s
             not for you, you slide back to free — never locked, never
             nagged.
           </Text>
@@ -198,8 +198,9 @@ export default function TrialChoiceScreen() {
 
         <Text style={styles.smallPrint}>
           After 7 days, Lumi stays free — full daily loop, capped AI.
-          Upgrade to keep unlimited at {PRICING.annual.firstYearLabel}/yr
-          (first year) or {PRICING.monthly.label}/mo.
+          Upgrade to keep the generous daily AI at{' '}
+          {PRICING.annual.firstYearLabel}/yr (first year) or{' '}
+          {PRICING.monthly.label}/mo.
         </Text>
 
         <Pressable
