@@ -41,6 +41,7 @@ import {
   ScrollView,
   Pressable,
   Alert,
+  LayoutAnimation,
 } from 'react-native';
 import {
   SafeAreaView,
@@ -611,7 +612,7 @@ const DayTaskRow = ({
   isToday,
   isPast,
   nowMin,
-  inPeak,
+  isNext,
   styles,
   onMove,
 }: {
@@ -619,7 +620,10 @@ const DayTaskRow = ({
   isToday: boolean;
   isPast: boolean;
   nowMin: number;
-  inPeak: boolean;
+  /** THE single next-up task after now — the one hero the eye should
+   *  land on (Home's "one next right thing", imported into the thread).
+   *  Static ember emphasis; every other row rests in grayscale. */
+  isNext: boolean;
   styles: ReturnType<typeof makeStyles>;
   /** Alert day-picker for past rows (drag is disabled there). */
   onMove?: (it: TItem) => void;
@@ -681,21 +685,18 @@ const DayTaskRow = ({
   return (
     <Pressable
       onPress={done ? confirmUncomplete : undefined}
-      style={styles.dayRow}
+      style={[styles.dayRow, isNext && !done && !missed && styles.dayRowNext]}
     >
-      {/* Peak-hours sheen — tasks sitting in the sharp window get a
-          soft glow wash so "do the hard thing now" reads ambiently.
-          Skipped once a task is past due — a missed task shouldn't
-          glow like an invitation. */}
-      {inPeak && !done && !missed && (
-        <LinearGradient
-          colors={[hexA(C.glow, 0.05), 'rgba(0,0,0,0)']}
-          start={{ x: 0, y: 0.5 }}
-          end={{ x: 0.7, y: 0.5 }}
-          style={[StyleSheet.absoluteFill, { borderRadius: 10 }]}
-        />
-      )}
+      {/* Next-up HERO wash — the single colored resting row so the eye
+          has one place to land (Home's calm-first hero, in the thread).
+          A flat ember fill reusing the old peak-sheen's 0.05 alpha
+          recipe, but STATIC (no gradient, no pulse). Every other active
+          row now rests in grayscale; peak context lives only in the one
+          seam, so no row carries an ambient glow anymore. */}
       <View style={styles.dayMarkerCol}>
+        {/* 2px ember spine segment — visually ties the hero up to the
+            NowPulse sitting directly above it. */}
+        {isNext && !done && !missed && <View style={styles.dayNextAccent} />}
         <Pressable
           disabled={done || !canComplete}
           onPress={markDone}
@@ -743,6 +744,7 @@ const DayTaskRow = ({
           numberOfLines={2}
           style={[
             styles.dayRowTitle,
+            isNext && !done && !missed && styles.dayRowTitleNext,
             missed && { color: C.boneDim },
             done && {
               color: C.mute,
@@ -767,32 +769,26 @@ const DayTaskRow = ({
                 <Text style={styles.dayRowDur}>{dur(it.durMin ?? 30)}</Text>
               </>
             ) : (
-              <>
-                <Text style={[styles.peekSigil, { color: tierCol }]}>
-                  {it.tier ? IMPORTANCE[it.tier].sigil : '◆'}
-                </Text>
-                <Text style={styles.dayRowDur}>
-                  {dur(it.durMin ?? 30)}
-                  {it.recurring ? ' · repeating' : ''}
-                </Text>
-              </>
+              // Slimmed to ONE channel: duration only. Tier is already
+              // encoded by the radio ring's color (and the high-tier
+              // glow), so the sigil was a redundant voice — dropped.
+              // 'repeating' recedes to C.ash so it reads as a whisper,
+              // not a second competing label.
+              <Text style={styles.dayRowDur}>
+                {dur(it.durMin ?? 30)}
+                {it.recurring ? (
+                  <Text style={{ color: C.ash }}> · repeating</Text>
+                ) : null}
+              </Text>
             )}
           </View>
         )}
       </View>
-      {/* Grip only where the drag actually works — past days disable
-          the gesture (no gaps to land in), and showing the handle
-          there read as broken. Past open tasks get a real mover. */}
-      {!done && !!it.questId && !it.recurring && !isPast && (
-        <View style={[styles.peekHandle, { marginTop: 5 }]}>
-          {[0, 1, 2].map((r) => (
-            <View key={r} style={styles.peekHandleRow}>
-              <View style={styles.peekHandleDot} />
-              <View style={styles.peekHandleDot} />
-            </View>
-          ))}
-        </View>
-      )}
+      {/* No 6-dot grip on Day rows anymore — it was instructional
+          chrome repeated on every row. Drag still works via long-press
+          (activateAfterLongPress), and discovery lives in the one-time
+          drag-hint card. Past open tasks can't drag (no gaps to land
+          in), so they still get an explicit mover arrow. */}
       {!done && !!it.questId && !it.recurring && isPast && onMove && (
         <Pressable
           onPress={() => onMove(it)}
@@ -865,24 +861,42 @@ const DayView = ({
     // chronotype + anchors). Until the curve is trusted (≥14 sample
     // days) the copy hedges with "likely" instead of asserting.
     const trusted = curveSource === 'learned';
-    const seams = [
+    const allSeams = [
       peakStart != null && peakEnd != null
         ? {
             at: peakStart,
             tone: 'peak' as const,
-            label: `${trusted ? '' : 'likely '}peak energy · sharp until ${fmt(peakEnd)}`,
+            // Trimmed: drop the 'peak energy ·' scaffolding — the single
+            // muted seam doesn't need to announce itself twice.
+            label: `${trusted ? '' : 'likely '}sharp until ${fmt(peakEnd)}`,
           }
         : null,
       slumpStart != null
         ? {
             at: slumpStart,
             tone: 'dip' as const,
-            label: `${trusted ? 'the' : 'likely'} ${fmt(slumpStart)} dip · keep it light`,
+            label: `${trusted ? '' : 'likely '}${fmt(slumpStart)} dip · keep it light`,
           }
         : null,
     ]
       .filter((s): s is NonNullable<typeof s> => s != null)
       .sort((a, b) => a.at - b.at);
+    // Cap to at most ONE seam. Two loud uppercase tracked labels (peak
+    // AND dip) competing was half the ambient noise. Keep only the seam
+    // nearest 'now' — the one that's actually contextual — and off-today
+    // just keep the earliest. Decorative only; no curve data touched.
+    const seams =
+      allSeams.length <= 1
+        ? allSeams
+        : isToday
+          ? [
+              allSeams.reduce((best, s) =>
+                Math.abs(s.at - nowMin) < Math.abs(best.at - nowMin)
+                  ? s
+                  : best,
+              ),
+            ]
+          : [allSeams[0]];
 
     let runningEnd = 6 * 60;
     for (let i = 0; i < items.length; i++) {
@@ -943,14 +957,74 @@ const DayView = ({
     dIso,
   ]);
 
-  // Open water — minutes until the next not-done item after now.
-  const openAhead = useMemo(() => {
+  // THE single next-up quest after now — the hero the eye should land
+  // on (Home's "one next right thing", imported into the thread). Only a
+  // real task counts, never an anchor, so the emphasis lands on
+  // something the user actually has to do.
+  const nextItem = useMemo(() => {
     if (!isToday) return null;
-    const next = items.find((i) => i.min > nowMin && !i.done);
-    if (!next) return null;
-    const gap = next.min - nowMin;
-    return gap >= 15 ? gap : null;
+    return (
+      items.find((i) => i.kind === 'quest' && i.min > nowMin && !i.done) ??
+      null
+    );
   }, [items, isToday, nowMin]);
+
+  // Anchors collapse behind one quiet 'routine' line by default — the
+  // single biggest block of first-paint scaffolding on a light day.
+  // Tap expands to the full anchor set (data untouched, display only).
+  const [anchorsOpen, setAnchorsOpen] = useState(false);
+  const toggleAnchors = () => {
+    // LayoutAnimation only when motion is welcome; instant swap under
+    // Reduce Motion (no easeInEaseOut lurch).
+    if (!isReduceMotionEnabled()) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
+    setAnchorsOpen((o) => !o);
+  };
+  // The routine summary brackets the day with its first & last anchor
+  // (wake → wind-down). Data untouched — this is the collapsed DISPLAY
+  // of anchorItems, expanded back to the full set on tap.
+  const anchorList = useMemo(
+    () => items.filter((i) => i.kind === 'anchor'),
+    [items],
+  );
+  const anchorLabel = (t: string) =>
+    t.toLowerCase() === 'sleep' ? 'wind-down' : t.toLowerCase();
+  // Bracket the day by the WAKE and SLEEP anchors explicitly (by title),
+  // not by array position — a night-owl's post-midnight sleep can sort
+  // out of the ends, which flipped the summary to "wind-down 1:00 →
+  // dinner 6:30". Fall back to the row ends only if those anchors are
+  // absent.
+  const routineSummary = (() => {
+    if (anchorList.length === 0) return 'routine';
+    const wake =
+      anchorList.find((a) => a.title.toLowerCase() === 'wake') ??
+      anchorList[0];
+    const sleep =
+      anchorList.find((a) => a.title.toLowerCase() === 'sleep') ??
+      anchorList[anchorList.length - 1];
+    return `routine · ${anchorLabel(wake.title)} ${fmt(wake.min)} → ${anchorLabel(
+      sleep.title,
+    )} ${fmt(sleep.min)}`;
+  })();
+  // Which thread row carries the tappable summary — the first anchor's
+  // slot, so 'routine' sits where wake used to.
+  const firstAnchorIdx = rows.findIndex(
+    (r) => r.kind === 'item' && r.it.kind === 'anchor',
+  );
+
+  // Gaps render ONLY while dragging (idle dashed "room for one thing"
+  // boxes read as guilt-inducing empty todo slots), so they mount fresh
+  // AFTER beginDrag's synchronous measurement pass has already run —
+  // their drop-target rects wouldn't exist yet. Re-measure once they're
+  // on screen, the same rescue MonthView uses when its grid snaps into
+  // reach. Without this a drag would have no gap to land in.
+  useEffect(() => {
+    if (!ctl.draggingId) return;
+    const t = setTimeout(() => ctl.remeasure(), 90);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctl.draggingId]);
 
   return (
     <ScrollView
@@ -959,23 +1033,16 @@ const DayView = ({
         paddingHorizontal: 22,
         paddingTop: 4,
         paddingBottom: FLOATING_NAV_CLEARANCE,
-        // Light days own the whole sheet: flexGrow lets the thread
-        // container stretch to the viewport…
-        flexGrow: 1,
       }}
       showsVerticalScrollIndicator={false}
     >
-      {/* …and space-between breathes the rows apart to fill it —
-          morning near the top, wind-down near the bottom, a faint
-          echo of real time. Once the day has enough rows to exceed
-          the screen, spacing collapses to natural and it scrolls. */}
-      <View
-        style={{
-          position: 'relative',
-          flex: 1,
-          justifyContent: 'space-between',
-        }}
-      >
+      {/* Content clusters at the TOP now. space-between + flexGrow used
+          to breathe a few rows edge-to-edge to fill the sheet, which
+          maximized the ambiguous voids between floating labels and read
+          as "scattered / lots going on, nothing to grab". Top-aligned
+          reads far calmer, and the thread line now spans only the
+          actual content height instead of a full-height empty spine. */}
+      <View style={{ position: 'relative' }}>
         {/* the thread — one soft line down the marker column */}
         <LinearGradient
           colors={[hexA(C.ash, 0.4), hexA(C.bone, 0.07)]}
@@ -998,39 +1065,55 @@ const DayView = ({
                   <NowPulse />
                 </View>
                 <Text style={styles.dayNowLabel}>now · {fmt(nowMin)}</Text>
-                {openAhead != null && (
-                  <Text style={styles.dayNowSub}>
-                    {dur(openAhead)} of open water ahead
-                  </Text>
+                {/* One crisp clause pointing straight at the hero row
+                    directly below, instead of a second line of copy. */}
+                {nextItem != null && (
+                  <Text style={styles.dayNowSub}>next at {fmt(nextItem.min)}</Text>
                 )}
               </View>
             );
           }
           if (r.kind === 'seam') {
-            const seamCol = r.tone === 'peak' ? C.lichen : C.dusk;
+            // One muted voice for both peak & dip — demoted out of the
+            // lichen/dusk color scheme into boneDim so the seam stops
+            // competing with the ember hero. It's the only tracked label
+            // on screen now, so it no longer needs a color to be heard.
             return (
               <View key={`seam${i}`} style={styles.daySeamRow}>
                 <LinearGradient
-                  colors={[hexA(seamCol, 0.4), 'rgba(0,0,0,0)']}
+                  colors={[hexA(C.boneDim, 0.25), 'rgba(0,0,0,0)']}
                   start={{ x: 0, y: 0.5 }}
                   end={{ x: 1, y: 0.5 }}
                   style={{ flex: 1, height: 1 }}
                 />
-                <Text style={[styles.daySeamLabel, { color: seamCol }]}>
+                <Text style={[styles.daySeamLabel, { color: C.boneDim }]}>
                   {r.label}
                 </Text>
               </View>
             );
           }
           if (r.kind === 'gap') {
+            // Drag-only: an idle dashed "room for one thing" box reads as
+            // an unfilled todo slot demanding to be filled — pressure /
+            // guilt, the opposite of the never-a-wall contract. It's
+            // really just a drop target, so it appears only mid-drag.
+            // (The gap is still DETECTED + pushed in the rows memo so the
+            // rect can register the instant a drag starts.)
+            if (ctl.draggingId == null) return null;
             const over = ctl.overKey === r.key;
-            const dragging = ctl.draggingId != null;
+            const dragging = true;
             const preview = over ? ctl.dropPreview : null;
             return (
               <View
                 key={r.key}
                 ref={(ref) => ctl.registerTarget(r.key, ref)}
                 collapsable={false}
+                // These mount fresh when the drag starts, AFTER beginDrag's
+                // synchronous measurement pass — the 90ms remeasure timer
+                // below is a backstop, but a fast flick-and-release can beat
+                // it. onLayout fires within a frame of paint, so measure the
+                // instant the gap is real: no drop lands on an unmeasured gap.
+                onLayout={() => ctl.remeasure()}
                 style={[
                   styles.dayGap,
                   over && {
@@ -1075,8 +1158,13 @@ const DayView = ({
           }
           const it = r.it;
           if (it.kind === 'anchor') {
-            return (
-              <View key={`a${i}`} style={styles.dayAnchorRow}>
+            // Progressive disclosure: 5 always-on anchor rows were the
+            // single biggest block of first-paint scaffolding on a light
+            // day. Collapsed by default into one quiet 'routine' line
+            // (at the first anchor's slot); tap expands the full set.
+            // Non-first anchors render only when open.
+            const anchorRow = anchorsOpen ? (
+              <View style={styles.dayAnchorRow}>
                 <View style={styles.dayMarkerCol}>
                   <View style={styles.dayAnchorDot} />
                 </View>
@@ -1087,14 +1175,41 @@ const DayView = ({
                     : it.title.toLowerCase()}
                 </Text>
               </View>
+            ) : null;
+            if (i !== firstAnchorIdx) {
+              return anchorRow ? <View key={`a${i}`}>{anchorRow}</View> : null;
+            }
+            return (
+              <View key={`a${i}`}>
+                <Pressable
+                  onPress={toggleAnchors}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    anchorsOpen ? 'Hide your routine' : 'Show your routine'
+                  }
+                  accessibilityState={{ expanded: anchorsOpen }}
+                  style={styles.dayRoutineSummary}
+                >
+                  <View style={styles.dayMarkerCol}>
+                    <View style={[styles.dayAnchorDot, { opacity: 0.5 }]} />
+                  </View>
+                  <Text style={styles.dayRoutineText}>{routineSummary}</Text>
+                  <Text style={styles.dayRoutineCaret}>
+                    {anchorsOpen ? '▴' : '▾'}
+                  </Text>
+                </Pressable>
+                {anchorRow}
+              </View>
             );
           }
-          const inPeak =
-            peakStart != null &&
-            peakEnd != null &&
-            it.min >= peakStart &&
-            it.min < peakEnd &&
-            !it.done;
+          // THE hero — the single next-up quest after now gets static
+          // ember emphasis so the eye has one landing spot; every other
+          // row now rests in grayscale (peak context moved to the seam).
+          const isNext =
+            nextItem != null &&
+            it.kind === 'quest' &&
+            !!it.questId &&
+            it.questId === nextItem.questId;
           // No drag on past days — gaps are suppressed there, so the
           // gesture would have nowhere to land. (Today's missed rows
           // still drag forward into open gaps.)
@@ -1150,7 +1265,7 @@ const DayView = ({
                   isToday={isToday}
                   isPast={isPast}
                   nowMin={nowMin}
-                  inPeak={inPeak}
+                  isNext={isNext}
                   styles={styles}
                   onMove={onMovePast}
                 />
@@ -1159,17 +1274,10 @@ const DayView = ({
             </DragChip>
           );
         })}
-        {/* Organize hint — only once there are two movable tasks to
-            reorder, and never mid-drag (it would fight the ghost). */}
-        {!isPast &&
-          ctl.draggingId == null &&
-          items.filter(
-            (it) => !it.done && it.questId && !it.recurring,
-          ).length >= 2 && (
-            <Text style={styles.dayOrganizeHint}>
-              hold + drag a task onto another to reorder your day
-            </Text>
-          )}
+        {/* The always-on organize hint is retired — it was a third,
+            standing advertisement of the drag/reorder mechanic (on top
+            of the per-row grip, now also gone, and the one-time drag-hint
+            card). Discovery lives in that one-time card only. */}
       </View>
     </ScrollView>
   );
@@ -2911,9 +3019,34 @@ const makeStyles = (accent: Accent) =>
       flexDirection: 'row',
       alignItems: 'flex-start',
       gap: 11,
-      paddingVertical: 11,
+      // A touch more vertical rhythm now that rows are quieter (color
+      // gone) — titles get air, rows read calmer, not cramped.
+      paddingVertical: 13,
       paddingRight: 2,
       borderRadius: 10,
+    },
+    // Next-up HERO — the one colored resting row. Flat ember wash reusing
+    // the retired peak-sheen's 0.05 alpha, static (no gradient/pulse).
+    dayRowNext: {
+      backgroundColor: hexA(C.ember, 0.05),
+      borderRadius: 10,
+    },
+    // Title emphasis for the hero — a half-step up in weight/size; color
+    // stays bone so it's presence, not shouting.
+    dayRowTitleNext: {
+      fontFamily: fonts.interMed,
+      fontSize: 15,
+    },
+    // 2px ember spine segment over the thread line in the hero's marker
+    // column, tying it up to the NowPulse directly above.
+    dayNextAccent: {
+      position: 'absolute',
+      left: MARKER_W / 2 - 1,
+      top: 0,
+      bottom: 0,
+      width: 2,
+      borderRadius: 1,
+      backgroundColor: C.ember,
     },
     dayMarkerCol: {
       width: MARKER_W,
@@ -3118,6 +3251,27 @@ const makeStyles = (accent: Accent) =>
       fontStyle: 'italic',
       fontSize: 12,
       color: C.boneDim,
+    },
+    // Collapsed 'routine' summary line — a muted, tappable seam-like row
+    // standing in for the 5 anchor rows on first paint.
+    dayRoutineSummary: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      paddingVertical: 7,
+    },
+    dayRoutineText: {
+      flex: 1,
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 12.5,
+      color: C.mute,
+    },
+    dayRoutineCaret: {
+      fontFamily: fonts.inter,
+      fontSize: 10,
+      color: hexA(C.mute, 0.7),
+      paddingRight: 2,
     },
     dayEmpty: {
       paddingLeft: MARKER_W + 10,
