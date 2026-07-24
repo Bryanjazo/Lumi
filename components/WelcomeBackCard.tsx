@@ -78,6 +78,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     marginTop: 14,
+    // Breathing room below too — the follower card (hero / "nothing on
+    // the day yet") brings no top gap of its own, so without this the
+    // two cards collided into one dense block.
+    marginBottom: 14,
     overflow: 'hidden',
   },
   edgeLight: {
