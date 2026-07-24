@@ -77,6 +77,8 @@ import {
 import { useQuestStore, type Quest } from '../../store/questStore';
 import { useLearningDigest } from '../../lib/learning';
 import { completeQuestCore } from '../../lib/completeQuest';
+import { useFocusSession } from '../../lib/focusSession';
+import { useAmbientLunaMood } from '../../lib/luna-mood';
 import { todayKey } from '../../lib/gamification';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
 import { isReduceMotionEnabled } from '../../lib/useReducedMotion';
@@ -615,6 +617,8 @@ const DayTaskRow = ({
   isNext,
   styles,
   onMove,
+  onStartFocus,
+  focusedQuestId,
 }: {
   it: TItem;
   isToday: boolean;
@@ -627,6 +631,14 @@ const DayTaskRow = ({
   styles: ReturnType<typeof makeStyles>;
   /** Alert day-picker for past rows (drag is disabled there). */
   onMove?: (it: TItem) => void;
+  /** Begin a focus session on this task — wired ONLY to the hero row
+   *  so the day keeps exactly one action point. Same lib/focusSession
+   *  start() path Home's LumiFocusCard uses (see DayView). */
+  onStartFocus?: (it: TItem) => void;
+  /** questId of the currently-running focus session (or null). When
+   *  it matches the hero, the pill reads "in focus" instead of
+   *  offering to (re)start it. */
+  focusedQuestId?: string | null;
 }) => {
   const tierCol = it.tier ? IMPORTANCE[it.tier].color : C.boneDim;
   const done = it.done === true;
@@ -656,7 +668,17 @@ const DayTaskRow = ({
   // the clip effect, and un-completing springs the marker back off.
   const slide = useSharedValue(done ? 0 : 1);
   useEffect(() => {
-    slide.value = withSpring(done ? 0 : 1, {
+    const target = done ? 0 : 1;
+    // Reduce Motion: snap the marker straight to its seated/floating
+    // spot — no spring — mirroring how NowPulse and the anchor
+    // animations already read the SAME isReduceMotionEnabled() gate.
+    // The marker still lands in the right place (check on the line /
+    // ring off it); we just drop the slide, never the state change.
+    if (isReduceMotionEnabled()) {
+      slide.value = target;
+      return;
+    }
+    slide.value = withSpring(target, {
       damping: 13,
       stiffness: 160,
     });
@@ -781,6 +803,36 @@ const DayTaskRow = ({
                 ) : null}
               </Text>
             )}
+            {/* HERO-ONLY start affordance. The one next-up quest already
+                owns the day's single spot of ember; giving it (and only
+                it) a "start" pill keeps that one action point while
+                letting the user drop straight into a focus session —
+                the exact lib/focusSession start() path Home uses. When a
+                session is already running on THIS quest the pill reads
+                "in focus" (a quiet state, not a re-start), matching how
+                Home reflects a live session. It's a plain Pressable with
+                no animation, so Reduce Motion needs nothing extra. */}
+            {isNext && !missed && onStartFocus && canComplete && (
+              focusedQuestId === it.questId ? (
+                <View
+                  style={styles.dayStartPillOn}
+                  accessibilityRole="text"
+                  accessibilityLabel={`In focus: ${it.title}`}
+                >
+                  <Text style={styles.dayStartPillOnText}>in focus</Text>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => onStartFocus(it)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Start a focus session on ${it.title}`}
+                  style={styles.dayStartPill}
+                >
+                  <Text style={styles.dayStartPillText}>start</Text>
+                </Pressable>
+              )
+            )}
           </View>
         )}
       </View>
@@ -851,6 +903,34 @@ const DayView = ({
 }) => {
   const dIso = ymd(date);
   const hasQuests = items.some((i) => i.kind === 'quest');
+
+  // ── Hero focus-start wiring ──────────────────────────────────────
+  // Read once here (not per-row) — useAmbientLunaMood arms a 1-minute
+  // interval, so a per-row call would spawn one timer PER task. Only a
+  // single DayView is ever mounted, so this is one timer total. petName
+  // + mood feed the same start({...}) shape Home's LumiFocusCard passes.
+  const petName = useUserStore((s) => s.petName);
+  const ambientMood = useAmbientLunaMood();
+  const startFocus = useFocusSession((s) => s.start);
+  const focusedQuestId = useFocusSession((s) => s.current?.questId ?? null);
+  const handleStartFocus = useCallback(
+    (it: TItem) => {
+      if (!it.questId) return;
+      Haptics.selectionAsync();
+      // start() itself ends any in-flight session before opening this
+      // one (single-active-activity model), so we don't re-implement
+      // "a session is already running" here — same guarantee Home
+      // leans on. Duration mirrors the row's own displayed estimate.
+      void startFocus({
+        questId: it.questId,
+        taskTitle: it.title,
+        petName,
+        durationSec: (it.durMin ?? 30) * 60,
+        mood: ambientMood,
+      });
+    },
+    [startFocus, petName, ambientMood],
+  );
 
   const rows = useMemo((): DayRow[] => {
     const out: DayRow[] = [];
@@ -1066,9 +1146,16 @@ const DayView = ({
                 </View>
                 <Text style={styles.dayNowLabel}>now · {fmt(nowMin)}</Text>
                 {/* One crisp clause pointing straight at the hero row
-                    directly below, instead of a second line of copy. */}
+                    directly below. RELATIVE, not an absolute clock time —
+                    "next in 40m" spares the ADHD reader the clock-subtraction
+                    (now − then) that "next at 2:54" silently demanded. Same
+                    dur() format the NextBar already leads with; Math.max(1,…)
+                    so a hero starting this very minute never reads "next in
+                    0m". Today-only (nextItem is null on other days). */}
                 {nextItem != null && (
-                  <Text style={styles.dayNowSub}>next at {fmt(nextItem.min)}</Text>
+                  <Text style={styles.dayNowSub}>
+                    next in {dur(Math.max(1, nextItem.min - nowMin))}
+                  </Text>
                 )}
               </View>
             );
@@ -1268,6 +1355,8 @@ const DayView = ({
                   isNext={isNext}
                   styles={styles}
                   onMove={onMovePast}
+                  onStartFocus={handleStartFocus}
+                  focusedQuestId={focusedQuestId}
                 />
                 {overRow && ctl.dropEdge === 'after' && insertLine}
               </View>
@@ -2604,13 +2693,19 @@ function TimeInner() {
     nowMin < peakEnd;
   const isToday = sameDay(date, today);
   const dayQuestCount = items.filter((i) => i.kind === 'quest').length;
+  // Today's live load, in the SAME open/light/full/heavy vocabulary
+  // Week and Month already speak (loadOf sums quest tiers; anchors
+  // don't count). Appending it to the sub-line answers "how heavy is
+  // right now" without a tap — "now 2:14 · full". Day scale + today
+  // only; a past/future day's header stays its plain "N planned".
+  const todayLoadWord = loadWord(loadOf(items));
   const daySubContext =
     scale !== 'day'
       ? null
       : isToday
         ? inPeak
-          ? `peak window · now ${fmtNow(nowMin)}`
-          : `now ${fmtNow(nowMin)}`
+          ? `peak window · now ${fmtNow(nowMin)} · ${todayLoadWord}`
+          : `now ${fmtNow(nowMin)} · ${todayLoadWord}`
         : `${dayQuestCount} planned`;
 
   return (
@@ -3123,6 +3218,39 @@ const makeStyles = (accent: Accent) =>
       letterSpacing: 0.5,
       textTransform: 'uppercase',
       color: C.ember,
+    },
+    // Hero-only "start" pill — a filled ember chip (the day's one
+    // action point earns the solid fill the missed tag only outlines).
+    // Sits inline in the hero's meta row beside its duration.
+    dayStartPill: {
+      paddingHorizontal: 9,
+      paddingVertical: 3,
+      borderRadius: 100,
+      backgroundColor: hexA(C.ember, 0.16),
+      borderWidth: 1,
+      borderColor: hexA(C.ember, 0.5),
+    },
+    dayStartPillText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+      color: C.ember,
+    },
+    // "in focus" — the quiet running state (no border, muted) so it
+    // reads as a status, not a second thing to tap.
+    dayStartPillOn: {
+      paddingHorizontal: 9,
+      paddingVertical: 3,
+      borderRadius: 100,
+      backgroundColor: hexA(C.bone, 0.06),
+    },
+    dayStartPillOnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 10,
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+      color: C.mute,
     },
     dayNowRow: {
       flexDirection: 'row',
