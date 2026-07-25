@@ -126,6 +126,17 @@ export interface SmartTask {
    * morning, like last time" instead of looking arbitrary.
    */
   personalized?: Array<'window' | 'importance' | 'duration'>;
+  /**
+   * GROCERY CARRIER (additive — absent = zero behavior change). When a
+   * capture reads as a shopping list ("milk, eggs, bread"), the preview
+   * doesn't step the items through the one-by-one task flow; it carries
+   * the split items here so Home can route them to the dedicated
+   * grocery checklist pill instead of spawning quests. Only the preview
+   * confirm-card and commitTask read this field — everything else
+   * ignores it, so the normal capture pipeline is untouched. See
+   * classifyGroceryCapture + store/groceryStore.
+   */
+  grocery?: { items: string[] };
 }
 
 /**
@@ -2017,6 +2028,197 @@ export const countUnknownWords = (text: string): number => {
   });
   return unknown;
 };
+
+// ═════════════════════════════════════════════════════════════════════
+// Groceries — a shopping list isn't three day-tasks, it's ONE checklist.
+//
+// "milk, eggs, bread" today becomes a normal task card; the user wants
+// it to become a dedicated, checkable grocery pill on Home. This is the
+// deterministic, client-side classifier that flags such captures + splits
+// the items. ZERO tokens, ZERO edge-function redeploy. It only FLAGS and
+// SPLITS — the preview confirm-card is the safety net, so precision need
+// not be perfect (a misclassified mixed dump is one tap to fix). We stay
+// conservative on the vocab-only path to avoid hijacking single errands
+// ("get milk", "buy a birthday gift").
+// ═════════════════════════════════════════════════════════════════════
+
+// Explicit shopping cues — presence alone routes to the grocery pill.
+const GROCERY_CUE_RE =
+  /\b(?:grocer(?:y|ies)|grocery\s+(?:list|run|shop(?:ping)?)|shopping\s+list|(?:from|at)\s+the\s+(?:store|grocery|supermarket|market)|supermarket)\b/i;
+
+// A pragmatic pantry lexicon. Enough coverage that a real list lights up
+// the vocab-fraction test; not exhaustive (the confirm card catches the
+// rest). Includes common multi-word items ("paper towels", "dog food").
+const GROCERY_VOCAB = new Set([
+  // dairy + eggs
+  'milk', 'eggs', 'egg', 'butter', 'cheese', 'yogurt', 'yoghurt', 'cream',
+  'creamer', 'tofu',
+  // bakery + grains
+  'bread', 'bagels', 'bagel', 'buns', 'rolls', 'tortillas', 'muffins',
+  'rice', 'pasta', 'noodles', 'flour', 'oats', 'oatmeal', 'cereal',
+  'crackers', 'chips',
+  // protein
+  'chicken', 'beef', 'pork', 'bacon', 'sausage', 'ham', 'turkey', 'fish',
+  'salmon', 'shrimp', 'tuna',
+  // produce
+  'bananas', 'banana', 'apples', 'apple', 'oranges', 'orange', 'grapes',
+  'berries', 'strawberries', 'blueberries', 'lemons', 'lemon', 'limes',
+  'lime', 'avocado', 'avocados', 'tomatoes', 'tomato', 'onions', 'onion',
+  'garlic', 'ginger', 'potatoes', 'potato', 'carrots', 'carrot', 'lettuce',
+  'spinach', 'kale', 'broccoli', 'peppers', 'pepper', 'cucumber', 'celery',
+  'mushrooms', 'corn', 'peas', 'beans', 'salad',
+  // pantry + condiments
+  'sugar', 'salt', 'oil', 'vinegar', 'ketchup', 'mustard', 'mayo',
+  'mayonnaise', 'sauce', 'salsa', 'soup', 'honey', 'jam', 'peanut butter',
+  'nutella', 'spices', 'stock', 'broth',
+  // drinks
+  'coffee', 'tea', 'juice', 'water', 'soda', 'wine', 'beer',
+  // snacks + sweets
+  'cookies', 'snacks', 'nuts', 'chocolate', 'candy', 'granola', 'popcorn',
+  // household + personal
+  'napkins', 'paper towels', 'toilet paper', 'detergent', 'soap',
+  'dish soap', 'shampoo', 'conditioner', 'toothpaste', 'sponges', 'foil',
+  'trash bags', 'ziploc', 'diapers', 'wipes',
+  // pets
+  'dog food', 'cat food', 'litter',
+]);
+
+// Multi-word vocab phrases — tested as substrings ("2 rolls of paper
+// towels" contains "paper towels"). Derived once from the set.
+const GROCERY_VOCAB_PHRASES = Array.from(GROCERY_VOCAB).filter((v) =>
+  v.includes(' '),
+);
+
+// A leading buy-verb ("buy", "grab", "pick up", "need") introduces the
+// list or an item — strip it so "buy milk" becomes "milk".
+const GROCERY_LEAD_VERB_RE =
+  /^\s*(?:i\s+)?(?:need\s+to\s+|have\s+to\s+|gotta\s+|wanna\s+)?(?:buy|get|grab|pick\s+up|order|shop\s+for|need|add|want)\b\s*/i;
+
+// Store / cue phrases stripped from anywhere in the text before we split
+// into items ("groceries from the store: milk, eggs" → "milk, eggs").
+const GROCERY_STRIP_RE =
+  /\b(?:grocery\s+(?:list|run|shop(?:ping)?)|shopping\s+list|(?:from|at)\s+the\s+(?:grocery\s+store|store|supermarket|market)|at\s+the\s+grocery|supermarket|grocer(?:y|ies))\b/gi;
+
+/** Does a single fragment name a grocery item? Substring match for
+ *  multi-word phrases, token match (with a light plural fold) for the
+ *  rest — so "2 apples", "a dozen eggs", "dog food" all count. */
+const fragmentIsGrocery = (frag: string): boolean => {
+  const lc = frag.toLowerCase();
+  for (const phrase of GROCERY_VOCAB_PHRASES) {
+    if (lc.includes(phrase)) return true;
+  }
+  const words = lc.replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+  return words.some(
+    (w) =>
+      GROCERY_VOCAB.has(w) ||
+      (w.endsWith('s') && GROCERY_VOCAB.has(w.slice(0, -1))),
+  );
+};
+
+/**
+ * Split a grocery capture into clean item strings. Strips a leading
+ * label ("groceries:"), a leading buy-verb, and store/cue phrases; then
+ * splits on comma / newline / semicolon / "and" / "&" / "+"; then peels
+ * a per-item leading verb ("…and get bread" → "bread") and trims
+ * punctuation. Items are kept lowercase-natural (NOT title-cased) so the
+ * checklist reads calm. Case-insensitive de-dupe within the split.
+ */
+export const splitGroceryItems = (text: string): string[] => {
+  let t = normalizeTyping(text).trim();
+  // Leading list label — "groceries: …", "shopping list - …".
+  t = t.replace(
+    /^\s*(?:groceries|grocery\s+list|shopping\s+list)\s*[:\-–—]\s*/i,
+    '',
+  );
+  t = t.replace(GROCERY_LEAD_VERB_RE, '');
+  t = t.replace(GROCERY_STRIP_RE, ' ');
+  const parts = t.split(/\s*(?:,|\n|;|\band\b|&|\+|\/)\s*/i);
+  const items: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of parts) {
+    const item = raw
+      .replace(GROCERY_LEAD_VERB_RE, '')
+      .replace(/^[\s.,;:!?–—-]+|[\s.,;:!?–—-]+$/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (item.length < 1) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(item);
+  }
+  return items;
+};
+
+/**
+ * Flag + split a capture that reads as a grocery list. Returns the split
+ * items when EITHER an explicit cue is present ("groceries", "from the
+ * store", …) OR the text is a list of ≥2 fragments where a strong
+ * fraction match the pantry vocab. Returns null otherwise — notably a
+ * lone "get milk" (single errand) is NOT routed. Detection is a flag,
+ * not a verdict: the preview confirm-card lets the user drop misfires.
+ */
+// A fragment that's purely a date/time (and names no grocery) is NOT an
+// item — it's the leftover "when" of an errand ("grocery run at 5" →
+// "at 5"). Drop these so "grocery shopping saturday 2pm" doesn't route
+// "saturday 2pm" onto the checklist.
+const GROCERY_DATEISH_RE =
+  /\b(?:today|tomorrow|tonight|mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|weekend|morning|afternoon|evening|noon|midnight|later|soon|at\s+\d|\d\s*(?:am|pm)|\d:\d\d)\b/i;
+
+export const classifyGroceryCapture = (
+  text: string,
+): { items: string[] } | null => {
+  const t = text.trim();
+  if (!t) return null;
+  const hasCue = GROCERY_CUE_RE.test(t);
+  const items = splitGroceryItems(t).filter(
+    (it) => !(GROCERY_DATEISH_RE.test(it) && !fragmentIsGrocery(it)),
+  );
+  if (items.length === 0) return null;
+  const groceryHits = items.filter(fragmentIsGrocery).length;
+  if (hasCue) {
+    // Explicit cue, but still guard against single-errand phrasings
+    // ("do the groceries", "grocery run") that leave no real item:
+    // route only when there's a recognized grocery OR a genuine list
+    // (≥2 fragments). A bare cue with one non-grocery fragment stays a
+    // task.
+    if (groceryHits >= 1 || items.length >= 2) return { items };
+    return null;
+  }
+  // No cue → demand a real list: ≥2 items AND a strong grocery fraction.
+  if (items.length < 2) return null;
+  if (groceryHits >= 2 && groceryHits / items.length >= 0.5) return { items };
+  return null;
+};
+
+/** Does an already-cleaned task title read as the LLM's collapsed
+ *  "Buy groceries" carrier? The server title_clean prompt folds a
+ *  shopping run into a single groceries task + a note listing items;
+ *  Home converts that into a grocery carrier so the LLM path routes to
+ *  the pill too — no prompt edit / redeploy needed. */
+export const looksLikeGroceryTitle = (title: string): boolean =>
+  /^\s*(?:buy|get|grab|pick\s+up|order|do(?:\s+the)?)?\s*grocer(?:y|ies)(?:\s+(?:list|run|shopping|shop))?\s*$/i.test(
+    title.trim(),
+  );
+
+/** Build the single grocery-carrier SmartTask that stands in for a
+ *  shopping list in the preview queue. It is intentionally inert on
+ *  every task dimension (someday window, no time, low importance) — the
+ *  only field that matters is `grocery`. commitTask short-circuits on
+ *  it, so these values never reach a Quest. */
+export const groceryCarrier = (items: string[], raw: string): SmartTask => ({
+  title: 'groceries',
+  importance: 'low',
+  energyDemand: 'low',
+  timeMode: 'someday',
+  at: null,
+  date: null,
+  window: 'someday',
+  recur: null,
+  raw,
+  needsFollowup: false,
+  grocery: { items },
+});
 
 // ═════════════════════════════════════════════════════════════════════
 // Main entry point

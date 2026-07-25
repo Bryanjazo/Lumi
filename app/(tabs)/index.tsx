@@ -60,6 +60,7 @@ import {
 } from '../../constants/windows';
 import { useUserStore } from '../../store/userStore';
 import { useQuestStore, selectTodayQuests, Quest } from '../../store/questStore';
+import { useGroceryStore, type GroceryItem } from '../../store/groceryStore';
 import {
   useSuggestionsStore,
   type Suggestion,
@@ -71,6 +72,7 @@ import {
 } from '../../lib/learning';
 import { useTour, useTourTarget } from '../../components/SpotlightTour';
 import { useAccent, accentFor, type Accent } from '../../lib/theme';
+import { useReducedMotion } from '../../lib/useReducedMotion';
 import {
   parseSmartCapture,
   routeCapture,
@@ -78,6 +80,10 @@ import {
   countUnknownWords,
   difficultyFromImportance,
   pickWindowForDemand,
+  classifyGroceryCapture,
+  splitGroceryItems,
+  looksLikeGroceryTitle,
+  groceryCarrier,
   type CaptureContext,
   type SmartTask,
 } from '../../lib/capture';
@@ -606,6 +612,113 @@ const WaitingRow = memo(function WaitingRow({
         </Pressable>
       )}
     </Pressable>
+  );
+});
+
+/** One grocery checklist row — a square honey checkbox, tap-to-edit
+ *  item text, and a × to remove. Cloned from waitingRow geometry, one
+ *  notch tighter, lit in honey. Memoized at module level like WaitingRow
+ *  so keystrokes elsewhere in the 7k-line Home tree don't re-reconcile
+ *  every row. The square check (vs the piles' rounded one) is the visual
+ *  signal "checklist, not quest" — honey outline, never importance/red.
+ *
+ *  Motion: the check fill scales 0.9→1 over ~120ms when the item is
+ *  ticked, gated behind Reduce Motion (instant switch when reduced; the
+ *  selection haptic still fires). No list reorder on check — checked
+ *  rows strike in place (reduce-motion-safe + non-disorienting). */
+const GroceryRow = memo(function GroceryRow({
+  item,
+  hs,
+  editing,
+  editText,
+  reduceMotion,
+  onToggle,
+  onStartEdit,
+  onChangeEdit,
+  onCommitEdit,
+  onRemove,
+}: {
+  item: GroceryItem;
+  hs: HomeStyles;
+  editing: boolean;
+  editText: string;
+  reduceMotion: boolean;
+  onToggle: (id: string) => void;
+  onStartEdit: (item: GroceryItem) => void;
+  onChangeEdit: (text: string) => void;
+  onCommitEdit: () => void;
+  onRemove: (item: GroceryItem) => void;
+}) {
+  // Pop the fill in on check. Start settled so an already-checked row
+  // (on mount / re-open) doesn't animate. Reduce Motion pins it to 1.
+  const fill = useRef(new Animated.Value(item.checked ? 1 : 0)).current;
+  useEffect(() => {
+    if (reduceMotion) {
+      fill.setValue(item.checked ? 1 : 0);
+      return;
+    }
+    Animated.timing(fill, {
+      toValue: item.checked ? 1 : 0,
+      duration: 120,
+      useNativeDriver: true,
+    }).start();
+  }, [item.checked, reduceMotion, fill]);
+
+  return (
+    <View style={hs.groceryRow}>
+      <Pressable
+        onPress={() => onToggle(item.id)}
+        hitSlop={10}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: item.checked }}
+        accessibilityLabel={
+          item.checked ? `Grabbed: ${item.text}` : `Mark grabbed: ${item.text}`
+        }
+        style={[hs.groceryCheck, item.checked && hs.groceryCheckOn]}
+      >
+        <Animated.Text
+          style={[
+            hs.groceryCheckGlyph,
+            { opacity: fill, transform: [{ scale: fill.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }] },
+          ]}
+        >
+          ✓
+        </Animated.Text>
+      </Pressable>
+      {editing ? (
+        <TextInput
+          value={editText}
+          onChangeText={onChangeEdit}
+          onBlur={onCommitEdit}
+          onSubmitEditing={onCommitEdit}
+          autoFocus
+          returnKeyType="done"
+          style={[hs.groceryItem, hs.groceryItemInput]}
+          accessibilityLabel={`Edit item: ${item.text}`}
+        />
+      ) : (
+        <Pressable
+          style={{ flex: 1, minWidth: 0 }}
+          onPress={() => onStartEdit(item)}
+          hitSlop={4}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${item.text}`}
+        >
+          <Text style={[hs.groceryItem, item.checked && hs.groceryItemDone]}>
+            {item.text}
+          </Text>
+        </Pressable>
+      )}
+      <Pressable
+        onPress={() => onRemove(item)}
+        hitSlop={10}
+        accessibilityRole="button"
+        accessibilityLabel={`Remove ${item.text}`}
+        style={hs.groceryRemove}
+      >
+        <Text style={hs.groceryRemoveGlyph}>×</Text>
+      </Pressable>
+    </View>
   );
 });
 
@@ -1539,6 +1652,25 @@ function HomeInner() {
   const [waitingOpen, setWaitingOpen] = useState(false);
   // The tucked-into-someday card, same calm-first collapsed default.
   const [somedayOpen, setSomedayOpen] = useState(false);
+
+  // ── Groceries pill (a device-local checklist, NOT quests) ─────────
+  const groceries = useGroceryStore((s) => s.items);
+  const groceryOpen = useGroceryStore((s) => s.open);
+  const groceryHydrated = useGroceryStore((s) => s.hasHydrated);
+  const reduceMotion = useReducedMotion();
+  // Inline add-item field text (kept focused across adds for rapid
+  // multi-add). Inline edit target + its live text.
+  const [groceryAddText, setGroceryAddText] = useState('');
+  const [groceryEditId, setGroceryEditId] = useState<string | null>(null);
+  const [groceryEditText, setGroceryEditText] = useState('');
+  // Undo affordance after a remove — mirrors previewDismissUndo.
+  const [groceryUndo, setGroceryUndo] = useState<GroceryItem | null>(
+    null,
+  );
+  const groceryUndoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Working copy of a grocery carrier's items while the confirm card is
+  // up — the user can drop lines before adding the rest to the list.
+  const [groceryDraft, setGroceryDraft] = useState<string[] | null>(null);
   // Someday → real-date sheet target. When set, the MoveBackToDateSheet
   // opens for this task.
   const [movingBack, setMovingBack] = useState<Quest | null>(null);
@@ -2648,6 +2780,16 @@ function HomeInner() {
     t: SmartTask,
     opts?: { silent?: boolean },
   ): { movedToISO: string | null } => {
+    // GROCERY GUARD (belt-and-suspenders) — a grocery carrier must NEVER
+    // fall through to addQuest / windows / Time radar / calendar mirror.
+    // The confirm-card route normally intercepts carriers before here,
+    // but any accept path (Accept-all, per-task) that reaches commitTask
+    // with a carrier writes the items to the grocery checklist and
+    // returns before a single Quest is created.
+    if (t.grocery) {
+      useGroceryStore.getState().addItems(t.grocery.items);
+      return { movedToISO: null };
+    }
     const hasTime = t.at != null;
 
     // Length: prefer what the LLM extracted / the user picked. If
@@ -3068,8 +3210,55 @@ function HomeInner() {
     anchors,
   });
 
+  /**
+   * Convert any collapsed "Buy groceries" + note task into a grocery
+   * carrier (the LLM / deterministic path produces these for mixed
+   * dumps), then float carriers to the front so the grocery confirm
+   * card owns the preview slot before the one-by-one task flow. A
+   * pure-grocery capture is already short-circuited to a carrier
+   * upstream; this catches the mixed-dump case.
+   */
+  const withGroceryCarriers = (tasks: SmartTask[]): SmartTask[] => {
+    const mapped = tasks.map((t) => {
+      if (t.grocery) return t;
+      if (looksLikeGroceryTitle(t.title) && t.note) {
+        const items = splitGroceryItems(t.note);
+        if (items.length >= 1) return groceryCarrier(items, t.raw || t.title);
+      }
+      return t;
+    });
+    const carriers = mapped.filter((t) => t.grocery);
+    if (carriers.length === 0) return mapped;
+    // Collapse multiple carriers into one (a dump can't produce two
+    // separate grocery lists worth two pills).
+    const mergedItems = carriers.flatMap((c) => c.grocery!.items);
+    const single = groceryCarrier(mergedItems, carriers[0].raw);
+    return [single, ...mapped.filter((t) => !t.grocery)];
+  };
+
   const parseAndPreview = (text: string, spellFixed = false): boolean => {
     const ctx: CaptureContext = buildCaptureCtx();
+
+    // ── Groceries short-circuit ──────────────────────────────────────
+    // A capture that reads as a shopping list ("milk, eggs, bread") is
+    // ONE checklist, not N day-tasks. Detect it deterministically FIRST
+    // (zero tokens, instant, offline) and route to a single grocery
+    // carrier — the confirm card then lets the user drop misfires before
+    // anything lands. Skips the LLM entirely for a clean list.
+    const groc = classifyGroceryCapture(text);
+    if (groc) {
+      llmProposalRef.current = null;
+      setSortingRaw(null);
+      setAiPending(false);
+      setPreviewTasks([groceryCarrier(groc.items, text)]);
+      lastMetricIdRef.current = recordAiMetric({
+        route: 'local',
+        reason: 'groceries',
+        latencyMs: 0,
+        edited: false,
+      });
+      return true;
+    }
 
     const detTasks = parseSmartCapture(text, ctx);
     if (detTasks.length === 0) return false;
@@ -3122,8 +3311,11 @@ function HomeInner() {
           // Keep the model's first guess so Accept-all can diff the
           // committed tasks against it and record the corrections.
           llmProposalRef.current = merged.map((t) => ({ ...t }));
-          setPreviewTasks(merged);
-          logCaptureRaw(text, merged, 'llm', gate.reason);
+          // Route any collapsed "Buy groceries" task to the grocery
+          // pill via a carrier (mixed dump: groceries + real tasks).
+          const finalMerged = withGroceryCarriers(merged);
+          setPreviewTasks(finalMerged);
+          logCaptureRaw(text, finalMerged, 'llm', gate.reason);
         } else if (llmTasks) {
           // NON-NULL EMPTY array — the LLM understood the input and
           // decided there's NO task in it (pure emotion/vent). That's
@@ -3146,9 +3338,13 @@ function HomeInner() {
             route: 'llm_fallback',
             latencyMs: Date.now() - startedAt,
           });
-          setPreviewTasks(personalizeTasks(detTasks, recentCorrections(20), {
-        strongWindow: digest.pattern?.strong ?? null,
-      }));
+          setPreviewTasks(
+            withGroceryCarriers(
+              personalizeTasks(detTasks, recentCorrections(20), {
+                strongWindow: digest.pattern?.strong ?? null,
+              }),
+            ),
+          );
         }
       });
     } else {
@@ -3160,9 +3356,11 @@ function HomeInner() {
         latencyMs: 0,
         edited: false,
       });
-      const localTasks = personalizeTasks(detTasks, recentCorrections(20), {
-        strongWindow: digest.pattern?.strong ?? null,
-      });
+      const localTasks = withGroceryCarriers(
+        personalizeTasks(detTasks, recentCorrections(20), {
+          strongWindow: digest.pattern?.strong ?? null,
+        }),
+      );
       setPreviewTasks(localTasks);
       logCaptureRaw(
         text,
@@ -4376,6 +4574,133 @@ function HomeInner() {
     Haptics.selectionAsync();
   };
 
+  // ── Grocery confirm-card handlers ────────────────────────────────
+  // A grocery carrier always sits at index 0 (withGroceryCarriers floats
+  // it there); the confirm card renders in place of the one-by-one flow.
+  // Keep a working copy of its items so the user can drop misfires
+  // before committing (nothing is silent — this is the "add these to
+  // your grocery list?" safety net).
+  const groceryCarrierTask =
+    previewTasks && previewTasks[0]?.grocery ? previewTasks[0] : null;
+  useEffect(() => {
+    if (groceryCarrierTask?.grocery) {
+      setGroceryDraft(groceryCarrierTask.grocery.items);
+    } else {
+      setGroceryDraft(null);
+    }
+  }, [groceryCarrierTask]);
+
+  const dropGroceryDraftItem = (i: number) => {
+    Haptics.selectionAsync();
+    setGroceryDraft((cur) => (cur ? cur.filter((_, idx) => idx !== i) : cur));
+  };
+
+  // Confirm → append to the checklist, show a calm count toast, and
+  // remove the carrier from the preview (any real tasks behind it then
+  // flow through the normal LumiSuggestCard). ZERO quests created.
+  const confirmGroceryCarrier = () => {
+    const items = groceryDraft ?? [];
+    if (items.length === 0) return;
+    // Honest count: addItems drops case-insensitive dupes of items
+    // already unchecked on the list, so trust the actual delta, not the
+    // draft length ("added 2" when one was already there was a lie).
+    const before = useGroceryStore.getState().items.length;
+    useGroceryStore.getState().addItems(items);
+    const added = useGroceryStore.getState().items.length - before;
+    useGroceryStore.getState().setOpen(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    showToast(
+      added === 0
+        ? 'already on your list'
+        : `added ${added} to your groceries`,
+    );
+    setGroceryDraft(null);
+    setPreviewTasks((cur) => {
+      const rest = (cur ?? []).filter((t) => !t.grocery);
+      return rest.length ? rest : null;
+    });
+    setEditingIdx(null);
+  };
+
+  // "not groceries — keep as a task" — drop the carrier flag and revert
+  // to the normal task preview by re-parsing the original text (skipping
+  // the grocery classifier), so a misclassified dump becomes ordinary
+  // tasks the user can accept one by one.
+  const escapeGroceryCarrier = () => {
+    Haptics.selectionAsync();
+    const carrier = groceryCarrierTask;
+    if (!carrier) return;
+    const reparsed = parseSmartCapture(carrier.raw, buildCaptureCtx());
+    const fallback: SmartTask =
+      reparsed[0] ??
+      groceryCarrier([], carrier.raw); // never happens; keeps types happy
+    const normal = reparsed.length > 0 ? reparsed : [{ ...fallback, grocery: undefined }];
+    setGroceryDraft(null);
+    setPreviewTasks((cur) => {
+      const rest = (cur ?? []).filter((t) => !t.grocery);
+      return [...normal, ...rest];
+    });
+  };
+
+  // ── Grocery pill handlers (the persistent Home checklist) ─────────
+  const onGroceryToggle = useCallback((id: string) => {
+    Haptics.selectionAsync();
+    useGroceryStore.getState().toggle(id);
+  }, []);
+  // Latest edit id + text in a ref so the commit callback can stay
+  // ref-stable (empty deps → GroceryRow's memo holds during editing)
+  // yet read the current value without a stale closure.
+  const groceryEditRef = useRef<{ id: string | null; text: string }>({
+    id: null,
+    text: '',
+  });
+  const onGroceryStartEdit = useCallback((item: GroceryItem) => {
+    Haptics.selectionAsync();
+    groceryEditRef.current = { id: item.id, text: item.text };
+    setGroceryEditId(item.id);
+    setGroceryEditText(item.text);
+  }, []);
+  const onGroceryChangeEdit = useCallback((text: string) => {
+    groceryEditRef.current.text = text;
+    setGroceryEditText(text);
+  }, []);
+  const onGroceryCommitEdit = useCallback(() => {
+    const { id, text } = groceryEditRef.current;
+    if (id != null) useGroceryStore.getState().editItem(id, text);
+    groceryEditRef.current = { id: null, text: '' };
+    setGroceryEditId(null);
+    setGroceryEditText('');
+  }, []);
+  const onGroceryRemove = useCallback((item: GroceryItem) => {
+    Haptics.selectionAsync();
+    useGroceryStore.getState().remove(item.id);
+    // Stash the WHOLE item (id + checked state + timestamps), not just
+    // its text — undo restores it exactly, so a grabbed item comes back
+    // grabbed instead of quietly resetting to unchecked.
+    setGroceryUndo(item);
+    if (groceryUndoTimer.current) clearTimeout(groceryUndoTimer.current);
+    groceryUndoTimer.current = setTimeout(() => setGroceryUndo(null), 6000);
+  }, []);
+  const restoreGroceryUndo = () => {
+    if (!groceryUndo) return;
+    useGroceryStore.getState().restoreItem(groceryUndo);
+    setGroceryUndo(null);
+    Haptics.selectionAsync();
+  };
+  const submitGroceryAdd = () => {
+    const text = groceryAddText.trim();
+    if (!text) return;
+    // Honest feedback: a case-insensitive dupe of an unchecked item is
+    // dropped by the store, so only celebrate when a row actually
+    // landed — a silent no-op with a success haptic reads as a bug.
+    const before = useGroceryStore.getState().items.length;
+    useGroceryStore.getState().addItem(text);
+    const added = useGroceryStore.getState().items.length > before;
+    if (added) Haptics.selectionAsync();
+    else showToast('already on your list');
+    setGroceryAddText(''); // field stays focused (blurOnSubmit={false})
+  };
+
   const commitScheduledSuggestion = (rule: import('../../constants/recur').RecurRule) => {
     if (!scheduleSuggestion) return;
     const s = scheduleSuggestion;
@@ -5097,14 +5422,82 @@ function HomeInner() {
           </View>
         )}
 
+        {/* ── Grocery confirm card — "add these to your grocery list?"
+            Renders in place of the one-by-one task flow whenever a
+            grocery carrier is at the head of the preview (a shopping
+            list detected in the capture). Items are pre-selected and
+            droppable; confirming routes them to the checklist pill and
+            creates ZERO quests. The escape link reverts to a normal
+            task preview for a misclassified dump. Never silent — this
+            is the safety net that honors the no-guessing contract. */}
+        {!sortingRaw && groceryCarrierTask && groceryDraft && (
+          <View style={styles.groceryConfirmCard}>
+            <View style={styles.groceryConfirmHead}>
+              <View style={styles.groceryBadge}>
+                <Text style={styles.groceryBadgeGlyph}>≣</Text>
+              </View>
+              <Text style={styles.groceryConfirmTitle}>
+                add these to your grocery list?
+              </Text>
+            </View>
+            {groceryDraft.map((item, i) => (
+              <View key={`${item}-${i}`} style={styles.groceryConfirmRow}>
+                <Text style={styles.groceryConfirmDot}>·</Text>
+                <Text style={styles.groceryConfirmItem} numberOfLines={2}>
+                  {item}
+                </Text>
+                <Pressable
+                  onPress={() => dropGroceryDraftItem(i)}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Drop ${item}`}
+                  style={styles.groceryRemove}
+                >
+                  <Text style={styles.groceryRemoveGlyph}>×</Text>
+                </Pressable>
+              </View>
+            ))}
+            <Pressable
+              onPress={confirmGroceryCarrier}
+              disabled={groceryDraft.length === 0}
+              style={[
+                styles.groceryConfirmBtn,
+                groceryDraft.length === 0 && { opacity: 0.4 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Add ${groceryDraft.length} to grocery list`}
+            >
+              <Text style={styles.groceryConfirmBtnText}>
+                add to grocery list · {groceryDraft.length}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={escapeGroceryCarrier}
+              hitSlop={6}
+              style={styles.groceryConfirmEscape}
+              accessibilityRole="button"
+              accessibilityLabel="Not groceries — keep as a task"
+            >
+              <Text style={styles.groceryConfirmEscapeText}>
+                not groceries — keep as a task
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* ── Lumi suggests — preview after brain-dump. Sequential
             LumiSuggestCard rendering: shows the first task with a
             "1 of N" badge, user accepts/dismisses → next task slides
             in. Bulk "Accept all remaining" button below for users
             who don't want to step through one-by-one. Hidden while
             sortingRaw is set so we never render the (possibly
-            deterministic) preview before the LLM has spoken. */}
-        {!sortingRaw && previewTasks && previewTasks[0] && (
+            deterministic) preview before the LLM has spoken. A grocery
+            carrier at the head is handled by the confirm card above,
+            so skip it here. */}
+        {!sortingRaw &&
+          previewTasks &&
+          previewTasks[0] &&
+          !previewTasks[0].grocery && (
           <View style={{ marginTop: 14 }}>
             <LumiSuggestCard
               // Remount per task — the card seeds duration / window /
@@ -5236,6 +5629,112 @@ function HomeInner() {
               onDismiss={dismissSuggestionFromCard}
             />
           </View>
+        )}
+
+        {/* ── GROCERIES — a dedicated checklist pill ─────────────────
+            A live reference list captured from "milk, eggs, bread":
+            square honey checkboxes, tap-to-edit rows, inline add, and a
+            "clear grabbed" link. NOT quests — checking an item earns no
+            XP and never touches the day. Sits above the waiting/someday
+            piles (more present than tucked work) but below the hero.
+            Born from a capture; never renders empty (no manual "start a
+            list" — capture + inline-add are the on-ramps). Checked rows
+            strike in place, no reorder. No guilt on unchecked items. */}
+        {groceries.length > 0 && groceryHydrated && !rescueActive && (
+          <View style={styles.groceriesCard}>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                useGroceryStore.getState().setOpen(!groceryOpen);
+              }}
+              style={styles.groceriesHead}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: groceryOpen }}
+            >
+              <View style={styles.groceryBadge}>
+                <Text style={styles.groceryBadgeGlyph}>≣</Text>
+              </View>
+              <Text style={styles.groceriesHeadTitle}>
+                {groceries.some((g) => !g.checked)
+                  ? `groceries · ${
+                      groceries.filter((g) => !g.checked).length
+                    } to grab`
+                  : 'groceries — all grabbed'}
+              </Text>
+              <View style={{ flex: 1 }} />
+              <Text style={styles.groceriesChev}>
+                {groceryOpen ? '▴' : '▾'}
+              </Text>
+            </Pressable>
+            {groceryOpen && (
+              <>
+                {groceries.map((item) => (
+                  <GroceryRow
+                    key={item.id}
+                    item={item}
+                    hs={styles}
+                    editing={groceryEditId === item.id}
+                    editText={groceryEditId === item.id ? groceryEditText : ''}
+                    reduceMotion={reduceMotion}
+                    onToggle={onGroceryToggle}
+                    onStartEdit={onGroceryStartEdit}
+                    onChangeEdit={onGroceryChangeEdit}
+                    onCommitEdit={onGroceryCommitEdit}
+                    onRemove={onGroceryRemove}
+                  />
+                ))}
+                {/* Inline add — a dumb text field: literal append, no
+                    parsing / LLM / task pipeline. Keeps focus for rapid
+                    multi-add (blurOnSubmit=false). */}
+                <View style={styles.groceryAddRow}>
+                  <Text style={styles.groceryAddPlus}>+</Text>
+                  <TextInput
+                    value={groceryAddText}
+                    onChangeText={setGroceryAddText}
+                    onSubmitEditing={submitGroceryAdd}
+                    blurOnSubmit={false}
+                    returnKeyType="done"
+                    placeholder="add item"
+                    placeholderTextColor={hexA(C.honey, 0.5)}
+                    style={styles.groceryAddInput}
+                    accessibilityLabel="Add a grocery item"
+                  />
+                </View>
+                <View style={styles.groceriesFooter}>
+                  <Text style={styles.groceriesFooterText}>
+                    tap to check off — Lumi keeps the list
+                  </Text>
+                  {groceries.some((g) => g.checked) && (
+                    <Pressable
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        useGroceryStore.getState().clearChecked();
+                      }}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear grabbed items"
+                    >
+                      <Text style={styles.groceriesClear}>clear grabbed</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </>
+            )}
+          </View>
+        )}
+        {groceryUndo && (
+          <Pressable
+            onPress={restoreGroceryUndo}
+            style={styles.dymHint}
+            accessibilityRole="button"
+            accessibilityLabel={`Put ${groceryUndo.text} back`}
+          >
+            <Text style={[styles.dymHintText, { flex: 1 }]} numberOfLines={1}>
+              removed “{groceryUndo.text}”
+            </Text>
+            <Text style={styles.dymHintClear}>undo</Text>
+          </Pressable>
         )}
 
         {/* ── "N more waiting — Lumi's holding them" ─────────────────
@@ -7711,6 +8210,237 @@ const makeStyles = (accent: Accent) =>
       fontStyle: 'italic',
       fontSize: 12,
       color: C.mute,
+    },
+
+    // ── GROCERIES — the waiting card's honey-lit checklist sibling. ─
+    // Clones doneTodayCard/waitingHead/waitingRow geometry; every value
+    // is an existing token or hexA(C.honey,*). Square checkboxes signal
+    // "checklist, not quest"; the fill is honey, never importance/red.
+    groceriesCard: {
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: hexA(C.honey, 0.28),
+      backgroundColor: hexA(C.honey, 0.04),
+      marginTop: 14,
+      overflow: 'hidden',
+    },
+    groceriesHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+    },
+    groceryBadge: {
+      width: 20,
+      height: 20,
+      borderRadius: 6,
+      backgroundColor: hexA(C.honey, 0.16),
+      borderWidth: 1,
+      borderColor: hexA(C.honey, 0.5),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    groceryBadgeGlyph: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11,
+      color: C.honey,
+      lineHeight: 13,
+      marginTop: -1,
+    },
+    groceriesHeadTitle: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 15.5,
+      color: C.honey,
+      letterSpacing: -0.2,
+      flexShrink: 1,
+    },
+    groceriesChev: {
+      color: hexA(C.honey, 0.7),
+      fontSize: 12,
+    },
+    groceryRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 11,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.honey, 0.14),
+    },
+    // Square check (r6) — the deliberate difference from the piles'
+    // rounded/circular checks: this is a list you tick, not a quest.
+    groceryCheck: {
+      width: 18,
+      height: 18,
+      borderRadius: 6,
+      borderWidth: 1.5,
+      borderColor: hexA(C.honey, 0.55),
+      backgroundColor: hexA(C.void, 0.4),
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    groceryCheckOn: {
+      backgroundColor: C.honey,
+      borderColor: C.honey,
+    },
+    groceryCheckGlyph: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11,
+      color: C.void,
+      lineHeight: 12,
+    },
+    groceryItem: {
+      flex: 1,
+      fontFamily: fonts.interMed,
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.15,
+    },
+    groceryItemInput: {
+      paddingVertical: 0,
+    },
+    // Strike + fade in place on check (clone historyTitle) — no reorder.
+    groceryItemDone: {
+      color: C.boneDim,
+      textDecorationLine: 'line-through',
+      textDecorationColor: hexA(C.honey, 0.6),
+    },
+    groceryRemove: {
+      width: 24,
+      height: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    groceryRemoveGlyph: {
+      fontFamily: fonts.inter,
+      fontSize: 18,
+      color: hexA(C.honey, 0.7),
+      lineHeight: 20,
+    },
+    groceryAddRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 11,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.honey, 0.14),
+    },
+    groceryAddPlus: {
+      width: 18,
+      textAlign: 'center',
+      fontFamily: fonts.interSemi,
+      fontSize: 16,
+      color: hexA(C.honey, 0.8),
+      flexShrink: 0,
+    },
+    groceryAddInput: {
+      flex: 1,
+      fontFamily: fonts.interMed,
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.15,
+      paddingVertical: 0,
+    },
+    groceriesFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+      paddingVertical: 11,
+      paddingHorizontal: 16,
+      borderTopWidth: 1,
+      borderTopColor: hexA(C.honey, 0.14),
+    },
+    groceriesFooterText: {
+      textAlign: 'center',
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 11.5,
+      color: hexA(C.honey, 0.85),
+    },
+    groceriesClear: {
+      fontFamily: fonts.interSemi,
+      fontSize: 11.5,
+      color: C.honey,
+      letterSpacing: 0.2,
+    },
+
+    // ── Grocery confirm card — "add these to your grocery list?" ────
+    // The capture safety net, styled in the same honey so it reads as
+    // "this is going to the grocery pill", not a normal task suggestion.
+    groceryConfirmCard: {
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: hexA(C.honey, 0.32),
+      backgroundColor: hexA(C.honey, 0.05),
+      marginTop: 14,
+      paddingHorizontal: 16,
+      paddingTop: 14,
+      paddingBottom: 12,
+    },
+    groceryConfirmHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      marginBottom: 6,
+    },
+    groceryConfirmTitle: {
+      fontFamily: fonts.fraunces,
+      fontStyle: 'italic',
+      fontSize: 15.5,
+      color: C.honey,
+      letterSpacing: -0.2,
+      flexShrink: 1,
+    },
+    groceryConfirmRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 7,
+    },
+    groceryConfirmDot: {
+      width: 10,
+      textAlign: 'center',
+      fontFamily: fonts.interSemi,
+      fontSize: 15,
+      color: hexA(C.honey, 0.7),
+      flexShrink: 0,
+    },
+    groceryConfirmItem: {
+      flex: 1,
+      fontFamily: fonts.interMed,
+      fontSize: 14.5,
+      color: C.bone,
+      letterSpacing: -0.15,
+    },
+    groceryConfirmBtn: {
+      marginTop: 12,
+      borderRadius: 100,
+      backgroundColor: C.honey,
+      paddingVertical: 12,
+      alignItems: 'center',
+    },
+    groceryConfirmBtnText: {
+      fontFamily: fonts.interSemi,
+      fontSize: 14,
+      color: C.void,
+      letterSpacing: 0.2,
+    },
+    groceryConfirmEscape: {
+      marginTop: 10,
+      alignItems: 'center',
+      paddingVertical: 4,
+    },
+    groceryConfirmEscapeText: {
+      fontFamily: fonts.inter,
+      fontSize: 12.5,
+      color: C.mute,
+      textDecorationLine: 'underline',
     },
 
     // ── DONE TODAY — the waiting card's lichen-lit sibling. ────────
